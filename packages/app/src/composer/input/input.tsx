@@ -51,6 +51,7 @@ import {
 } from "@/composer/input/toolbar-rails";
 import { ArrowUp, Mic, MicOff, CornerDownLeft, Plus, Square } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useDictation } from "@/hooks/use-dictation";
 import { hasFinePointer } from "@/hooks/pointer-capabilities";
 import { DictationOverlay } from "@/components/dictation-controls";
@@ -1302,6 +1303,26 @@ function shouldShowFullscreenControl(
   return compact && !readOnly && !overlayVisible && renderedLines > 2;
 }
 
+function useDictationHostSettings(serverId: string | undefined) {
+  const serverInfo = useSessionStore(
+    useCallback(
+      (state) => {
+        if (!serverId) {
+          return null;
+        }
+        return state.sessions[serverId]?.serverInfo ?? null;
+      },
+      [serverId],
+    ),
+  );
+
+  const { config: daemonConfig } = useDaemonConfig(
+    serverInfo?.features?.speechSettings ? (serverId ?? null) : null,
+  );
+  const dictationWrap = daemonConfig?.features?.dictation.wrap;
+  return { serverInfo, dictationWrap };
+}
+
 export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
   function MessageInput(props, ref) {
     const {
@@ -1540,17 +1561,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       getNativeElement: () => (isWeb ? getTextInputNativeElement(textInputRef.current) : null),
     }));
     const sendAfterTranscriptRef = useRef(false);
-    const serverInfo = useSessionStore(
-      useCallback(
-        (state) => {
-          if (!voiceServerId) {
-            return null;
-          }
-          return state.sessions[voiceServerId]?.serverInfo ?? null;
-        },
-        [voiceServerId],
-      ),
-    );
+    const { serverInfo, dictationWrap } = useDictationHostSettings(voiceServerId);
 
     useEffect(() => {
       if (appliedTextReplacementKeyRef.current === textReplacement.key) return;
@@ -1584,6 +1595,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         sendAfterTranscriptRef.current = false;
         applyDictationTranscript(text, {
           value: valueRef.current,
+          wrap: dictationWrap,
           defaultSendBehavior,
           isAgentRunning,
           onQueue,
@@ -1594,7 +1606,16 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           autoSend,
         });
       },
-      [replaceText, onSubmit, onQueue, attachments, cwd, isAgentRunning, defaultSendBehavior],
+      [
+        replaceText,
+        onSubmit,
+        onQueue,
+        attachments,
+        cwd,
+        isAgentRunning,
+        defaultSendBehavior,
+        dictationWrap,
+      ],
     );
 
     const handleDictationError = useCallback(

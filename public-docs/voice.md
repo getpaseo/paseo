@@ -23,6 +23,38 @@ This keeps credentials and execution in your environment and avoids introducing 
 - Voice LLM orchestration: hidden agent session using your configured provider (`claude`, `codex`, or `opencode`)
 - Tooling path: MCP stdio bridge for voice tools and agent control
 
+## Dictation blocks
+
+Paseo wraps composer dictation in a Markdown block marked `speech-to-text` by
+default. Agents can use the marker to recognize spoken input and interpret
+likely transcription errors. Consecutive dictations merge until you type after
+the block. Dictate and send uses the same format.
+
+In **Settings > Voice > Dictation**, turn off **Wrap dictation in a block** for
+plain text or turn off **Merge consecutive dictations** for a separate block
+per transcription. Open **Block markers** to edit the prefix and suffix. Use
+**Reset markers** and **Save** to restore the default Markdown markers.
+
+The corresponding `config.json` keys and their defaults are:
+
+````json
+{
+  "features": {
+    "dictation": {
+      "wrap": {
+        "enabled": true,
+        "prefix": "```speech-to-text\n",
+        "suffix": "\n```",
+        "mergeConsecutive": true
+      }
+    }
+  }
+}
+````
+
+Paseo inserts the markers literally, including any spaces and newlines. Use
+markers such as `<dictation>` and `</dictation>` to choose a different format.
+
 ## Local Speech
 
 Local speech defaults to model IDs `parakeet-tdt-0.6b-v2-int8` (STT) and `kokoro-en-v0_19` (TTS, speaker 0 / voice 00).

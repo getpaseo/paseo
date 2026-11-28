@@ -1847,6 +1847,42 @@ describe("DaemonConfigStore speech settings", () => {
     return { paseoHome, store, applied, persisted };
   }
 
+  test("reads default wrapping and round-trips per-field overrides without trimming", async () => {
+    const { paseoHome, store } = createSpeechStore({
+      features: { dictation: { wrap: { mergeConsecutive: false } } },
+    });
+    expect(store.get().features?.dictation.wrap).toEqual({
+      enabled: true,
+      prefix: "```speech-to-text\n",
+      suffix: "\n```",
+      mergeConsecutive: false,
+    });
+
+    const wrap = { enabled: false, prefix: "<dictation>\n", suffix: " " };
+    const result = await store.patch({ features: { dictation: { wrap } } });
+    expect(result.features?.dictation.wrap).toEqual({ ...wrap, mergeConsecutive: false });
+    expect(loadPersistedConfig(paseoHome).features?.dictation?.wrap).toEqual({
+      ...wrap,
+      mergeConsecutive: false,
+    });
+
+    await store.patch({ features: { dictation: { stt: { language: "en" } } } });
+    expect(store.get().features?.dictation.wrap).toEqual({ ...wrap, mergeConsecutive: false });
+    const reset = await store.patch({
+      features: {
+        dictation: { wrap: { enabled: null, prefix: null, suffix: "", mergeConsecutive: null } },
+      },
+    });
+    expect(reset.features?.dictation.wrap).toEqual({
+      enabled: true,
+      prefix: "```speech-to-text\n",
+      suffix: "",
+      mergeConsecutive: true,
+    });
+    await store.patch({ features: { dictation: { wrap: { suffix: null } } } });
+    expect(loadPersistedConfig(paseoHome).features?.dictation?.wrap).toBeUndefined();
+  });
+
   test("reads, patches, and clears local STT language without losing it on other saves", async () => {
     const { paseoHome, store } = createSpeechStore({
       features: { dictation: { stt: { language: "fr" } } },

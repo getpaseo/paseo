@@ -21,6 +21,14 @@ Paseo 对语音提供一流的支持，可用于口述输入，以及与编程�
 - 语音 LLM 编排：使用你配置的 Provider（`claude`、`codex` 或 `opencode`）的隐藏 Agent 会话
 - 工具路径：用于语音工具和 Agent 控制的 MCP stdio 桥
 
+## 听写文本块 {#dictation-blocks}
+
+Paseo 默认将消息框中的听写内容放入标记为 `speech-to-text` 的 Markdown 文本块。Agent 可以根据标记识别口述内容，并判断可能的转录错误。连续听写会合并，直到你在文本块后输入内容。听写后直接发送也使用相同格式。
+
+在**设置 > 语音 > 听写**中，关闭**将听写内容放入文本块**可插入纯文本，关闭**合并连续听写**可为每次听写创建独立的文本块。展开**文本块标记**可修改前缀和后缀。点击**重置标记**并保存即可恢复默认 Markdown 标记。
+
+在 `config.json` 中，`features.dictation.wrap` 支持 `enabled`、`mergeConsecutive`、`prefix` 和 `suffix`。前两个默认开启。默认前缀为三个反引号、`speech-to-text` 和换行符，默认后缀为换行符和三个反引号。自定义标记会保留其中的空格和换行。
+
 ## 本地语音 {#local-speech}
 
 本地语音默认使用模型 ID `parakeet-tdt-0.6b-v2-int8`（STT）和 `kokoro-en-v0_19`（TTS，speaker 0 / voice 00）。

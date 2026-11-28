@@ -9,6 +9,7 @@ import {
   providerOption,
   readSpeechSite,
   resetSpeechSite,
+  resetDictationWrap,
   saveSpeechSite,
   withUnwritableDaemonConfig,
 } from "../support/helpers/voice-settings";
@@ -67,6 +68,53 @@ test("configures an env-pinned OpenAI site and keeps the saved key on later save
     });
   } finally {
     await resetSpeechSite("voiceMode.stt");
+  }
+});
+
+test("configures dictation block defaults, custom markers, and merging", async ({
+  page,
+}, testInfo) => {
+  await openVoiceSettings(page);
+  const wrap = page.getByRole("switch", { name: "Wrap dictation in a block" });
+  const merge = page.getByRole("switch", { name: "Merge consecutive dictations" });
+  await expect(wrap).toBeChecked();
+  await expect(merge).toBeChecked();
+
+  await page.getByRole("button", { name: "Block markers" }).click();
+  const prefix = page.getByRole("textbox", { name: "Prefix" });
+  const suffix = page.getByRole("textbox", { name: "Suffix" });
+  const save = page.getByRole("button", { name: "Save", exact: true });
+  await expect(prefix).toHaveValue("```speech-to-text\n");
+  await expect(suffix).toHaveValue("\n```");
+  await page.screenshot({ path: testInfo.outputPath("dictation-block-voice.png") });
+
+  try {
+    await prefix.fill("<dictation>\n");
+    await suffix.fill("\n</dictation>");
+    await save.click();
+    await expect(save).toBeDisabled();
+    await merge.click();
+    await expect(merge).not.toBeChecked();
+
+    await page.reload();
+    await expect(merge).not.toBeChecked();
+    await page.getByRole("button", { name: "Block markers" }).click();
+    await expect(prefix).toHaveValue("<dictation>\n");
+    await expect(suffix).toHaveValue("\n</dictation>");
+
+    await page.getByRole("button", { name: "Reset markers" }).click();
+    await expect(prefix).toHaveValue("```speech-to-text\n");
+    await expect(suffix).toHaveValue("\n```");
+    await save.click();
+    await expect(save).toBeDisabled();
+
+    await wrap.click();
+    await expect(wrap).not.toBeChecked();
+    await expect(merge).toHaveCount(0);
+    await wrap.click();
+    await expect(merge).not.toBeChecked();
+  } finally {
+    await resetDictationWrap();
   }
 });
 

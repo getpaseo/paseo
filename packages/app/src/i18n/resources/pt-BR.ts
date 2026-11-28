@@ -2617,6 +2617,12 @@ export const ptBR: TranslationResources = {
         title: "Ditado",
         enabled: "Ditado",
         enabledHint: "Fale na caixa de mensagem em vez de digitar",
+        wrapEnabled: "Colocar o ditado em um bloco",
+        mergeConsecutive: "Mesclar ditados consecutivos",
+        markers: "Delimitadores do bloco",
+        prefix: "Prefixo",
+        suffix: "Sufixo",
+        resetMarkers: "Redefinir delimitadores",
       },
       voiceMode: {
         title: "Modo de voz",

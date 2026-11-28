@@ -2549,6 +2549,12 @@ export const zhCN: TranslationResources = {
         title: "听写",
         enabled: "听写",
         enabledHint: "对着消息框说话，无需打字",
+        wrapEnabled: "将听写内容放入文本块",
+        mergeConsecutive: "合并连续听写",
+        markers: "文本块标记",
+        prefix: "前缀",
+        suffix: "后缀",
+        resetMarkers: "重置标记",
       },
       voiceMode: {
         title: "语音模式",

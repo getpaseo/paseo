@@ -676,6 +676,34 @@ test("local STT language survives wire reads and patches", () => {
   expect(MutableDaemonConfigPatchSchema.parse(patch)).toEqual(patch);
 });
 
+test("dictation wrapping round-trips without requiring the field on older daemons", () => {
+  const wrap = {
+    enabled: false,
+    prefix: " \n<dictation>",
+    suffix: "</dictation>\n ",
+    mergeConsecutive: true,
+  };
+  const patch = { features: { dictation: { wrap } } };
+  expect(MutableDaemonConfigPatchSchema.parse(JSON.parse(JSON.stringify(patch)))).toEqual(patch);
+
+  const legacy = {
+    providers: {},
+    relay: { enabled: false },
+    mcp: { enabled: true, injectIntoAgents: true },
+    features: {
+      dictation: { enabled: true, stt: { provider: "local" } },
+      voiceMode: { enabled: false, stt: { provider: "local" }, tts: { provider: "local" } },
+    },
+  };
+  expect(MutableDaemonConfigSchema.parse(legacy).features?.dictation.wrap).toBeUndefined();
+  expect(
+    MutableDaemonConfigSchema.parse({
+      ...legacy,
+      features: { ...legacy.features, dictation: { ...legacy.features.dictation, wrap } },
+    }).features?.dictation.wrap,
+  ).toEqual(wrap);
+});
+
 test("speech config reads remain compatible with clients before features and future providers", () => {
   const oldSchema = MutableDaemonConfigSchema.omit({ features: true, envOverrides: true });
   const oldRead = oldSchema.parse({

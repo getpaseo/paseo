@@ -2600,6 +2600,12 @@ export const ja: TranslationResources = {
         title: "音声入力",
         enabled: "音声入力",
         enabledHint: "入力する代わりにメッセージ欄に話しかけます",
+        wrapEnabled: "音声入力をブロックで囲む",
+        mergeConsecutive: "連続した音声入力をまとめる",
+        markers: "ブロックの区切り",
+        prefix: "開始文字列",
+        suffix: "終了文字列",
+        resetMarkers: "区切りをリセット",
       },
       voiceMode: {
         title: "ボイスモード",

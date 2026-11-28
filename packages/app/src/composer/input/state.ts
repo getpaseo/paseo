@@ -1,5 +1,10 @@
 import type { SendShortcut } from "@/hooks/use-settings";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import {
+  DEFAULT_DICTATION_WRAP,
+  type DictationWrapSettings,
+} from "@getpaseo/protocol/speech/rpc-schemas";
+import { insertWrappedDictation } from "./dictation-wrap";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import type { MessagePayload, TextReplacement } from "@/composer/types";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
@@ -57,6 +62,7 @@ interface SendActionContext {
 
 interface DictationTranscriptContext {
   value: string;
+  wrap?: DictationWrapSettings;
   defaultSendBehavior: SendBehavior;
   isAgentRunning: boolean;
   onQueue: ((payload: MessagePayload) => void) | undefined;
@@ -69,15 +75,17 @@ interface DictationTranscriptContext {
 
 export function applyDictationTranscript(text: string, ctx: DictationTranscriptContext): void {
   if (!text) return;
+  // COMPAT(dictationWrap): absent on daemons that predate the setting.
+  const wrap = ctx.wrap ?? DEFAULT_DICTATION_WRAP;
   const shouldPad = ctx.value.length > 0 && !/\s$/.test(ctx.value);
-  const nextValue = `${ctx.value}${shouldPad ? " " : ""}${text}`;
+  const nextValue = wrap.enabled
+    ? insertWrappedDictation(ctx.value, text, wrap)
+    : `${ctx.value}${shouldPad ? " " : ""}${text}`;
+  // Manual submit and queue trim the editing newline. Auto-send uses nextValue directly.
+  const draft = wrap.enabled && !nextValue.endsWith("\n") ? `${nextValue}\n` : nextValue;
+  ctx.replaceText(draft);
 
-  if (!ctx.autoSend) {
-    ctx.replaceText(nextValue);
-    return;
-  }
-
-  ctx.replaceText(nextValue);
+  if (!ctx.autoSend) return;
 
   if (ctx.defaultSendBehavior === "queue" && ctx.isAgentRunning && ctx.onQueue) {
     ctx.onQueue({ text: nextValue, attachments: ctx.attachments, cwd: ctx.cwd });

@@ -2586,6 +2586,12 @@ export const ko: TranslationResources = {
         title: "받아쓰기",
         enabled: "받아쓰기",
         enabledHint: "입력하는 대신 메시지 상자에 말하세요",
+        wrapEnabled: "받아쓰기를 블록으로 감싸기",
+        mergeConsecutive: "연속된 받아쓰기 합치기",
+        markers: "블록 구분자",
+        prefix: "시작 문자열",
+        suffix: "끝 문자열",
+        resetMarkers: "구분자 초기화",
       },
       voiceMode: {
         title: "음성 모드",

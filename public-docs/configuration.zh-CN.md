@@ -122,6 +122,8 @@ Agent Provider，包括 Paseo 自带的一等 Provider 和你在 `agents.provide
 
 语音通过 `features.dictation` 和 `features.voiceMode` 配置，Provider 凭据放在 `providers` 下。
 
+关于 `features.dictation.wrap`，请参阅[听写文本块](/docs/voice#dictation-blocks)。
+
 语音的设计理念、架构以及完整的本地和 OpenAI 设置示例，见[语音文档](/docs/voice)。
 
 ## 内置的 Web UI {#bundled-web-ui}

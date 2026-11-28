@@ -82,6 +82,19 @@ export async function resetSpeechSite(siteId: SpeechSiteId): Promise<void> {
   }
 }
 
+export async function resetDictationWrap(): Promise<void> {
+  const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+  try {
+    await client.patchDaemonConfig({
+      features: {
+        dictation: { wrap: { enabled: null, prefix: null, suffix: null, mergeConsecutive: null } },
+      },
+    });
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+}
+
 /** Makes the daemon's config file unreadable for the duration of `run`. */
 export async function withUnwritableDaemonConfig(run: () => Promise<void>): Promise<void> {
   const paseoHome = process.env.E2E_PASEO_HOME;

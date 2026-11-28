@@ -2632,6 +2632,12 @@ export const es: TranslationResources = {
         title: "Dictado",
         enabled: "Dictado",
         enabledHint: "Habla en el cuadro de mensaje en lugar de escribir",
+        wrapEnabled: "Envolver el dictado en un bloque",
+        mergeConsecutive: "Combinar dictados consecutivos",
+        markers: "Delimitadores del bloque",
+        prefix: "Prefijo",
+        suffix: "Sufijo",
+        resetMarkers: "Restablecer delimitadores",
       },
       voiceMode: {
         title: "Modo de voz",
