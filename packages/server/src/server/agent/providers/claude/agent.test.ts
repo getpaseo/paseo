@@ -4059,6 +4059,288 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
+  test("zero input counters on message_delta keep the message_start usage on a later turn", async () => {
+    // Claude Code only takes delta input counters above zero, so its result keeps the
+    // message_start counts that an Anthropic-compatible gateway zeroes on message_delta.
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent(),
+        createMessageDeltaEvent(25),
+        createSuccessResult(),
+      ],
+      [
+        createMessageStartEvent({
+          input_tokens: 61_489,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 266_816,
+        }),
+        createMessageDeltaUsageEvent({
+          input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+          output_tokens: 4_790,
+        }),
+        createSuccessResult({
+          usage: {
+            input_tokens: 61_489,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 266_816,
+            output_tokens: 4_790,
+            iterations: [],
+          },
+          modelUsage: {
+            "glm-5.2": { contextWindow: 1_000_000 },
+          },
+          uuid: "result-2",
+        }),
+      ],
+    ]);
+
+    try {
+      await collectStreamEvents(session, "turn 1");
+      const events = await collectStreamEvents(session, "turn 2");
+
+      const usedTokens = events
+        .filter((event) => event.type === "usage_updated")
+        .map((event) => event.usage.contextWindowUsedTokens);
+      expect(usedTokens).toEqual([328_305, 333_095]);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "turn_completed",
+          usage: expect.objectContaining({ contextWindowUsedTokens: 333_095 }),
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("a later single-request result supplies the context its stream left empty", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent(),
+        createMessageDeltaEvent(25),
+        createSuccessResult(),
+      ],
+      [
+        createMessageStartEvent({
+          input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        }),
+        createMessageDeltaEvent(4_790),
+        createSuccessResult({
+          total_cost_usd: 0.1,
+          usage: {
+            input_tokens: 61_489,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 266_816,
+            output_tokens: 4_790,
+            iterations: [],
+          },
+          modelUsage: {
+            "glm-5.2": { contextWindow: 1_000_000 },
+          },
+          uuid: "result-2",
+        }),
+      ],
+    ]);
+
+    try {
+      await collectStreamEvents(session, "turn 1");
+      const events = await collectStreamEvents(session, "turn 2");
+
+      expect(events.filter((event) => event.type === "usage_updated")).toEqual([]);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "turn_completed",
+          usage: expect.objectContaining({ contextWindowUsedTokens: 333_095 }),
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("keeps the last request context when empty iterations totals several requests", async () => {
+    // Real Claude Code 2.1.310 sums both requests even with iterations: [].
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent({
+          input_tokens: 100,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 20,
+        }),
+        createMessageDeltaEvent(10),
+        createMessageStartEvent({
+          input_tokens: 200,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 40,
+        }),
+        createMessageDeltaEvent(15),
+        createSuccessResult({
+          usage: {
+            input_tokens: 300,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 60,
+            output_tokens: 25,
+            iterations: [],
+          },
+        }),
+      ],
+    ]);
+
+    try {
+      const result = await session.run("read a file and reply");
+
+      expect(result.usage?.contextWindowUsedTokens).toBe(255);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("does not report the result total of several requests whose stream input was empty", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent({
+          input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        }),
+        createMessageDeltaEvent(10),
+        createMessageStartEvent({
+          input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        }),
+        createMessageDeltaEvent(15),
+        createSuccessResult({
+          usage: {
+            input_tokens: 300,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 60,
+            output_tokens: 25,
+            iterations: [],
+          },
+        }),
+      ],
+    ]);
+
+    try {
+      const events = await collectStreamEvents(session, "read a file and reply");
+
+      expect(events.filter((event) => event.type === "usage_updated")).toEqual([]);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "turn_completed",
+          usage: {
+            inputTokens: 300,
+            cachedInputTokens: 60,
+            outputTokens: 25,
+            totalCostUsd: 0.25,
+            contextWindowMaxTokens: 200_000,
+          },
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("uses the last result iteration when the stream input was empty", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent(),
+        createMessageDeltaEvent(25),
+        createSuccessResult(),
+      ],
+      [
+        createMessageStartEvent({
+          input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        }),
+        createMessageDeltaEvent(15),
+        createMessageStartEvent({
+          input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        }),
+        createMessageDeltaEvent(8),
+        createSuccessResult({
+          usage: {
+            input_tokens: 4,
+            cache_creation_input_tokens: 17_252,
+            cache_read_input_tokens: 16_999,
+            output_tokens: 23,
+            iterations: [
+              {
+                input_tokens: 1,
+                cache_creation_input_tokens: 253,
+                cache_read_input_tokens: 16_999,
+                output_tokens: 8,
+              },
+            ],
+          },
+          uuid: "result-2",
+        }),
+      ],
+    ]);
+
+    try {
+      await session.run("turn 1");
+      const secondTurn = await session.run("turn 2");
+
+      expect(secondTurn.usage?.contextWindowUsedTokens).toBe(17_261);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("a later compaction keeps post tokens over a single request's result total", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent(),
+        createMessageDeltaEvent(25),
+        createSuccessResult(),
+      ],
+      [
+        createMessageStartEvent({
+          input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        }),
+        createMessageDeltaEvent(300),
+        createCompactBoundary(),
+        createSuccessResult({
+          usage: {
+            input_tokens: 14_000,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 990,
+            output_tokens: 300,
+            iterations: [],
+          },
+          uuid: "result-2",
+        }),
+      ],
+    ]);
+
+    try {
+      await session.run("turn 1");
+      const secondTurn = await session.run("/compact");
+
+      expect(secondTurn.usage?.contextWindowUsedTokens).toBe(704);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("message_start stream events emit usage_updated with per-request usage", async () => {
     const session = await createSessionForTurns([
       [createInitMessage(), createMessageStartEvent(), createSuccessResult()],

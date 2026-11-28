@@ -2341,11 +2341,17 @@ function readStreamRequestInputUsage(
   };
 }
 
+function readPositiveUsageCount(usage: Record<string, unknown>, key: string): number | undefined {
+  const count = readUsageCount(usage, key);
+  return count === undefined || count === 0 ? undefined : count;
+}
+
 /**
  * The input counters on `message_delta.usage` are cumulative whole-request totals and are
- * optional. Mirror the Anthropic SDK's MessageStream: a counter present on the delta replaces
- * the `message_start` value, a missing counter keeps it. Translating gateways report
- * `input_tokens: 0` on `message_start` and only know the real count by `message_delta`.
+ * optional. Mirror Claude Code's own accumulator, which produces the result totals: a delta
+ * counter above zero replaces the `message_start` value, a missing or zero counter keeps it.
+ * Translating gateways report `input_tokens: 0` on `message_start` and only know the real count
+ * by `message_delta`; others repeat the real counts on `message_start` and zero them on the delta.
  */
 function mergeStreamDeltaInputUsage(
   current: StreamRequestInputUsage,
@@ -2356,11 +2362,12 @@ function mergeStreamDeltaInputUsage(
     return current;
   }
   return {
-    inputTokens: readUsageCount(usage, "input_tokens") ?? current.inputTokens,
+    inputTokens: readPositiveUsageCount(usage, "input_tokens") ?? current.inputTokens,
     cacheCreationInputTokens:
-      readUsageCount(usage, "cache_creation_input_tokens") ?? current.cacheCreationInputTokens,
+      readPositiveUsageCount(usage, "cache_creation_input_tokens") ??
+      current.cacheCreationInputTokens,
     cacheReadInputTokens:
-      readUsageCount(usage, "cache_read_input_tokens") ?? current.cacheReadInputTokens,
+      readPositiveUsageCount(usage, "cache_read_input_tokens") ?? current.cacheReadInputTokens,
   };
 }
 
@@ -2444,6 +2451,8 @@ class ClaudeContextUsageState {
   private streamRequestInputUsage: StreamRequestInputUsage | undefined;
   private streamRequestOutputTokens: number | undefined;
   private compactedContextWindowUsedTokens: number | undefined;
+  private compactedThisTurn = false;
+  private streamRequestCount = 0;
   private completedResultTurns = 0;
 
   constructor(initialContextWindowMaxTokens?: number) {
@@ -2454,6 +2463,8 @@ class ClaudeContextUsageState {
     this.streamRequestInputUsage = undefined;
     this.streamRequestOutputTokens = undefined;
     this.compactedContextWindowUsedTokens = undefined;
+    this.compactedThisTurn = false;
+    this.streamRequestCount = 0;
   }
 
   setInitialContextWindowMaxTokens(contextWindowMaxTokens: number | undefined): void {
@@ -2475,6 +2486,7 @@ class ClaudeContextUsageState {
     }
     const eventType = readTrimmedString(streamEvent.type);
     if (eventType === "message_start") {
+      this.streamRequestCount += 1;
       const inputUsage = readStreamRequestInputUsage(streamEvent);
       if (!inputUsage) {
         return null;
@@ -2528,7 +2540,7 @@ class ClaudeContextUsageState {
 
       const activeResultUsageTokens =
         readActiveUsageTokens(message.usage) ??
-        (this.completedResultTurns === 0 ? readLegacyResultUsageTokens(message.usage) : undefined);
+        (this.resultTotalIsContextUsage() ? readLegacyResultUsageTokens(message.usage) : undefined);
       const usedTokens =
         this.streamUsedTokens() ?? activeResultUsageTokens ?? this.compactedContextWindowUsedTokens;
       if (usedTokens !== undefined) {
@@ -2537,8 +2549,25 @@ class ClaudeContextUsageState {
       return usage;
     } finally {
       this.compactedContextWindowUsedTokens = undefined;
+      this.compactedThisTurn = false;
+      this.streamRequestCount = 0;
       this.completedResultTurns += 1;
     }
+  }
+
+  /**
+   * The result totals every request in the turn, even with `iterations: []`, so its flat usage
+   * is the context only when the turn streamed a single request and did not compact. Without
+   * stream frames only the first result is trusted.
+   */
+  private resultTotalIsContextUsage(): boolean {
+    if (this.compactedThisTurn) {
+      return false;
+    }
+    if (this.streamRequestCount === 0) {
+      return this.completedResultTurns === 0;
+    }
+    return this.streamRequestCount === 1;
   }
 
   private streamUsedTokens(): number | undefined {
@@ -2546,12 +2575,16 @@ class ClaudeContextUsageState {
     if (!inputUsage || typeof this.streamRequestOutputTokens !== "number") {
       return undefined;
     }
-    const usedTokens =
+    const inputTokens =
       inputUsage.inputTokens +
       inputUsage.cacheCreationInputTokens +
-      inputUsage.cacheReadInputTokens +
-      this.streamRequestOutputTokens;
-    return usedTokens > 0 ? usedTokens : undefined;
+      inputUsage.cacheReadInputTokens;
+    // Every request sends a prompt, so zero input means the gateway has not reported it.
+    // Output alone is not the context.
+    if (inputTokens === 0) {
+      return undefined;
+    }
+    return inputTokens + this.streamRequestOutputTokens;
   }
 
   private createUsageUpdatedEvent(contextWindowUsedTokens: number): AgentStreamEvent {
@@ -2572,6 +2605,7 @@ class ClaudeContextUsageState {
     this.streamRequestInputUsage = undefined;
     this.streamRequestOutputTokens = undefined;
     this.compactedContextWindowUsedTokens = postTokens;
+    this.compactedThisTurn = true;
     const usage: AgentUsage = {};
     if (this.contextWindowMaxTokens !== undefined) {
       usage.contextWindowMaxTokens = this.contextWindowMaxTokens;
