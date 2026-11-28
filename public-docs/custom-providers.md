@@ -158,6 +158,8 @@ Create as many entries as you want against the same first-class provider. Each o
 
 Any agent that speaks [ACP](https://agentclientprotocol.com) over stdio can be added with `extends: "acp"` and a `command`. Paseo spawns the process, sends an `initialize` JSON-RPC request, and the agent reports its capabilities, modes, and models at runtime.
 
+Before configuring instructions, see [System prompts](/docs/configuration#system-prompts) for the ACP adapter's limitations and supported alternatives.
+
 ```json
 {
   "agents": {
