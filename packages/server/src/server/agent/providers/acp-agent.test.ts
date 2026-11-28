@@ -109,6 +109,7 @@ interface ACPSessionInternals {
   activeForegroundTurnId: string | null;
   configOptions: SessionConfigOption[];
   translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
+  extNotification(method: string, params: Record<string, unknown>): Promise<void>;
   acpMcpServers(): unknown[];
 }
 
@@ -5084,6 +5085,7 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
     handle: AgentPersistenceHandle;
     loadSession?: ReturnType<typeof vi.fn>;
     unstableResumeSession?: ReturnType<typeof vi.fn>;
+    provider?: string;
   }) {
     const loadSession =
       args.loadSession ??
@@ -5118,9 +5120,9 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
 
     // Pass handle through the typed constructor option (no private-field casts).
     const session = new TestSession(
-      { provider: "claude-acp", cwd: "/tmp/paseo-acp-test" },
+      { provider: args.provider ?? "claude-acp", cwd: "/tmp/paseo-acp-test" },
       {
-        provider: "claude-acp",
+        provider: args.provider ?? "claude-acp",
         logger: createTestLogger(),
         defaultCommand: ["claude", "--acp"],
         defaultModes: [],
@@ -5139,6 +5141,394 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
 
     return { session, loadSession, unstableResumeSession };
   }
+
+  test("maps Grok native subagent notifications and routes child ACP updates to child timelines", async () => {
+    const { session } = makeTestSession({
+      capabilities: { loadSession: true },
+      handle: { sessionId: "root-session", provider: "acp" },
+      provider: "acp",
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "root-session";
+
+    await internals.extNotification("_x.ai/session_notification", {
+      sessionId: "root-session",
+      update: {
+        sessionUpdate: "subagent_spawned",
+        subagent_id: "sub-1",
+        child_session_id: "child-session",
+        parent_session_id: "root-session",
+        subagent_type: "explore",
+        description: "Inspect the code",
+      },
+    });
+    await session.sessionUpdate({
+      sessionId: "child-session",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        messageId: "shared-id",
+        content: { type: "text", text: "Child prompt" },
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId: "child-session",
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        messageId: "shared-id",
+        content: { type: "text", text: "Child reasoning" },
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId: "child-session",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "shared-tool",
+        title: "Read file",
+        kind: "read",
+        status: "in_progress",
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId: "child-session",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "shared-id",
+        content: { type: "text", text: "Child output" },
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId: "root-session",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "shared-id",
+        content: { type: "text", text: "Parent output" },
+      } as SessionUpdate,
+    });
+
+    expect(events[0]).toMatchObject({
+      type: "provider_subagent",
+      provider: "acp",
+      event: {
+        type: "upsert",
+        id: "child-session",
+        title: "explore",
+        description: "Inspect the code",
+        status: "running",
+        toolCallId: "sub-1",
+        parentSubagentId: null,
+      },
+    });
+    const childItems = events.flatMap((event) =>
+      event.type === "provider_subagent" && event.event.type === "timeline"
+        ? [event.event.item]
+        : [],
+    );
+    expect(childItems).toEqual([
+      { type: "user_message", text: "Child prompt", messageId: "shared-id" },
+      { type: "reasoning", text: "Child reasoning" },
+      expect.objectContaining({ type: "tool_call", callId: "shared-tool" }),
+      { type: "assistant_message", text: "Child output", messageId: "shared-id" },
+    ]);
+    expect(events).toContainEqual({
+      type: "timeline",
+      provider: "acp",
+      item: { type: "assistant_message", text: "Parent output", messageId: "shared-id" },
+    });
+  });
+
+  test("tracks nested Grok subagents and terminalizes only the declared child", async () => {
+    const { session } = makeTestSession({
+      capabilities: { loadSession: true },
+      handle: { sessionId: "root-session", provider: "acp" },
+      provider: "acp",
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "root-session";
+    const announce = (input: {
+      subagent_id: string;
+      child_session_id: string;
+      parent_session_id: string;
+      sessionUpdate: "subagent_spawned" | "subagent_finished";
+      status?: "completed" | "failed" | "cancelled";
+    }) =>
+      internals.extNotification("_x.ai/session_notification", {
+        sessionId: "root-session",
+        update: input,
+      });
+
+    await announce({
+      sessionUpdate: "subagent_spawned",
+      subagent_id: "child-id",
+      child_session_id: "child-session",
+      parent_session_id: "root-session",
+    });
+    await announce({
+      sessionUpdate: "subagent_spawned",
+      subagent_id: "grandchild-id",
+      child_session_id: "grandchild-session",
+      parent_session_id: "child-session",
+    });
+    await announce({
+      sessionUpdate: "subagent_finished",
+      subagent_id: "child-id",
+      child_session_id: "child-session",
+      parent_session_id: "root-session",
+      status: "failed",
+    });
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "grandchild-session",
+          parentSubagentId: "child-session",
+        }),
+      }),
+    );
+    expect(events.at(-1)).toMatchObject({
+      type: "provider_subagent",
+      event: { type: "upsert", id: "child-session", status: "failed" },
+    });
+    await internals.extNotification("_x.ai/session_notification", {
+      sessionId: "child-session",
+      update: {
+        sessionUpdate: "subagent_finished",
+        subagent_id: "grandchild-id",
+        child_session_id: "grandchild-session",
+        status: "completed",
+      },
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: "provider_subagent",
+      event: { type: "upsert", id: "grandchild-session", status: "completed" },
+    });
+  });
+
+  test("replays Grok child session history after declared children and preserves event order", async () => {
+    let session!: ACPAgentSession;
+    const loadSession = vi.fn(async ({ sessionId }: { sessionId: string }) => {
+      if (sessionId === "root-session") {
+        await asInternals<ACPSessionInternals>(session).extNotification("_x.ai/session/update", {
+          sessionId: "root-session",
+          update: {
+            sessionUpdate: "subagent_spawned",
+            subagent_id: "sub-1",
+            child_session_id: "child-session",
+            parent_session_id: "root-session",
+            subagent_type: "explore",
+            description: "Inspect code",
+          },
+        });
+      } else {
+        await session.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "user_message_chunk",
+            messageId: "child-user",
+            content: { type: "text", text: "Child prompt" },
+          } as SessionUpdate,
+        });
+        await session.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            messageId: "child-assistant",
+            content: { type: "text", text: "Child answer" },
+          } as SessionUpdate,
+        });
+      }
+      return { sessionId, modes: null, models: null, configOptions: [] };
+    });
+    const created = makeTestSession({
+      capabilities: { loadSession: true },
+      handle: { sessionId: "root-session", provider: "acp" },
+      loadSession,
+      provider: "acp",
+    });
+    session = created.session;
+
+    await session.initializeResumedSession();
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+
+    expect(loadSession.mock.calls.map(([args]) => args.sessionId)).toEqual([
+      "root-session",
+      "child-session",
+    ]);
+    expect(history).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "acp",
+        event: expect.objectContaining({ type: "upsert", id: "child-session", status: "running" }),
+      },
+      {
+        type: "provider_subagent",
+        provider: "acp",
+        event: {
+          type: "timeline",
+          id: "child-session",
+          item: { type: "user_message", text: "Child prompt", messageId: "child-user" },
+        },
+      },
+      {
+        type: "provider_subagent",
+        provider: "acp",
+        event: {
+          type: "timeline",
+          id: "child-session",
+          item: { type: "assistant_message", text: "Child answer", messageId: "child-assistant" },
+        },
+      },
+    ]);
+  });
+
+  test("ignores malformed and undeclared Grok subagent updates", async () => {
+    const { session } = makeTestSession({
+      capabilities: { loadSession: true },
+      handle: { sessionId: "root-session", provider: "acp" },
+      provider: "acp",
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "root-session";
+    await internals.extNotification("_x.ai/session_notification", {
+      sessionId: "root-session",
+      update: { sessionUpdate: "subagent_spawned", child_session_id: "missing-fields" },
+    });
+    await session.sessionUpdate({
+      sessionId: "unknown-child",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Ignore" },
+      } as SessionUpdate,
+    });
+    expect(events).toEqual([]);
+  });
+
+  test("binds Grok lifecycle identity and rejects cross-branch and root declarations", async () => {
+    const { session } = makeTestSession({
+      capabilities: { loadSession: true },
+      handle: { sessionId: "root-session", provider: "acp" },
+      provider: "acp",
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "root-session";
+    const announce = (
+      child: string,
+      native: string,
+      parent = "root-session",
+      source = "root-session",
+      extra = {},
+    ) =>
+      internals.extNotification("_x.ai/session_notification", {
+        sessionId: source,
+        update: {
+          sessionUpdate: "subagent_spawned",
+          subagent_id: native,
+          child_session_id: child,
+          parent_session_id: parent,
+          ...extra,
+        },
+      });
+    await announce("child", "native-child");
+    await announce("sibling", "native-sibling");
+    expect(events).toHaveLength(2);
+    await announce("root-session", "root-cycle");
+    await announce("duplicate-native", "native-child");
+    await announce("child", "conflicting-native");
+    await announce("child", "native-child");
+    await announce("grandchild", "native-grandchild", "child", "sibling");
+    await announce("child", "native-child", "sibling", "root-session", {
+      sessionUpdate: "subagent_finished",
+      status: "failed",
+    });
+    await announce("child", "native-child", "root-session", "sibling", {
+      sessionUpdate: "subagent_finished",
+      status: "failed",
+    });
+    await announce("child", "native-child", "root-session", "root-session", {
+      sessionUpdate: "subagent_finished",
+    });
+    expect(events).toHaveLength(2);
+    await announce("child", "native-child", "root-session", "root-session", {
+      sessionUpdate: "subagent_finished",
+      status: "cancelled",
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: "provider_subagent",
+      provider: "acp",
+      event: { id: "child", status: "canceled" },
+    });
+  });
+
+  test("preserves Grok root replay and sibling history when one child is unavailable", async () => {
+    let session!: ACPAgentSession;
+    const loadSession = vi.fn(async ({ sessionId }: { sessionId: string }) => {
+      if (sessionId === "root-session") {
+        for (const id of ["missing-child", "available-child"]) {
+          await asInternals<ACPSessionInternals>(session).extNotification("_x.ai/session/update", {
+            sessionId,
+            update: {
+              sessionUpdate: "subagent_spawned",
+              subagent_id: id,
+              child_session_id: id,
+              parent_session_id: sessionId,
+            },
+          });
+        }
+        await session.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: "Root prompt" },
+          },
+        });
+      } else if (sessionId === "missing-child") {
+        throw { code: -32602, message: "Session does not exist" };
+      } else {
+        await session.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Sibling answer" },
+          },
+        });
+      }
+      return { sessionId, modes: null, models: null, configOptions: [] };
+    });
+    ({ session } = makeTestSession({
+      capabilities: { loadSession: true },
+      handle: { sessionId: "root-session", provider: "acp" },
+      provider: "acp",
+      loadSession,
+    }));
+    await session.initializeResumedSession();
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+    expect(loadSession.mock.calls.map(([args]) => args.sessionId)).toEqual([
+      "root-session",
+      "missing-child",
+      "available-child",
+    ]);
+    expect(history[2]).toMatchObject({
+      type: "timeline",
+      provider: "acp",
+      item: { type: "user_message", text: "Root prompt" },
+    });
+    expect(history[3]).toMatchObject({
+      type: "provider_subagent",
+      provider: "acp",
+      event: { id: "available-child", item: { text: "Sibling answer" } },
+    });
+  });
 
   test("loadSession is always called with sessionId, cwd, and mcpServers even when mcpServers is empty", async () => {
     const { session, loadSession } = makeTestSession({

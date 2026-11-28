@@ -524,6 +524,53 @@ interface ACPAgentClientOptions {
   now?: () => number;
 }
 
+interface GrokSubagentState {
+  id: string;
+  nativeSubagentId: string;
+  parentSubagentId: string | null;
+  title: string | null;
+  description: string | null;
+  subtitle: string | null;
+  status: "running" | "completed" | "failed" | "canceled";
+  pendingUserMessage: PendingUserMessage | null;
+  fallbackAssistantMessageId: string | null;
+  toolCalls: Map<string, ACPToolSnapshot>;
+}
+
+const grokSubagentNotificationSchema = z.object({
+  sessionId: z.string().min(1),
+  update: z.object({
+    sessionUpdate: z.enum(["subagent_spawned", "subagent_progress", "subagent_finished"]),
+    subagent_id: z.string().min(1),
+    child_session_id: z.string().min(1),
+    parent_session_id: z.string().min(1).optional(),
+    subagent_type: z.string().optional(),
+    description: z.string().optional(),
+    role: z.string().optional(),
+    model: z.string().optional(),
+    status: z.enum(["completed", "failed", "cancelled"]).optional(),
+  }),
+  _meta: z
+    .object({
+      eventId: z.string().optional(),
+      agentTimestampMs: z.number().finite().min(-8.64e15).max(8.64e15).optional(),
+    })
+    .optional(),
+});
+
+function grokTerminalStatus(
+  status: "completed" | "failed" | "cancelled",
+): GrokSubagentState["status"] {
+  switch (status) {
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return "canceled";
+    case "completed":
+      return "completed";
+  }
+}
+
 interface ACPAgentSessionOptions {
   provider: string;
   usageProvider?: string;
@@ -2056,7 +2103,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private submittedUserMessageTurnId: string | null = null;
   private readonly toolCalls = new Map<string, ACPToolSnapshot>();
   private readonly terminalEntries = new Map<string, TerminalEntry>();
-  private readonly persistedHistory: AgentTimelineItem[] = [];
+  private readonly persistedHistory: AgentStreamEvent[] = [];
+  private readonly grokSubagentBySessionId = new Map<string, GrokSubagentState>();
   private readonly initialHandle?: AgentPersistenceHandle;
   private readonly resumePurpose: AgentResumePurpose;
 
@@ -2219,6 +2267,16 @@ export class ACPAgentSession implements AgentSession, ACPClient {
             mcpServers: this.acpMcpServers(),
           }),
         );
+        this.deliverTranslatedEvents(this.flushPendingUserMessage());
+        const loadedChildSessions = new Set<string>();
+        while (true) {
+          const child = [...this.grokSubagentBySessionId.values()].find(
+            (candidate) => !loadedChildSessions.has(candidate.id),
+          );
+          if (!child) break;
+          loadedChildSessions.add(child.id);
+          await this.replayGrokSubagentHistory(child);
+        }
         this.deliverTranslatedEvents(this.flushPendingUserMessage());
         this.replayingHistory = false;
         this.historyPending = this.persistedHistory.length > 0;
@@ -2415,9 +2473,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const history = [...this.persistedHistory];
     this.persistedHistory.length = 0;
     this.historyPending = false;
-    for (const item of history) {
-      yield { type: "timeline", provider: this.provider, item };
-    }
+    yield* history;
   }
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
@@ -3247,6 +3303,191 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return promise;
   }
 
+  private async replayGrokSubagentHistory(child: GrokSubagentState): Promise<void> {
+    try {
+      await this.runACPRequest(() =>
+        this.connection!.loadSession({
+          sessionId: child.id,
+          cwd: this.config.cwd,
+          mcpServers: this.acpMcpServers(),
+        }),
+      );
+    } catch (error) {
+      if (!isACPError(error)) throw error;
+      this.logger.warn(
+        { err: error, sessionId: child.id },
+        "Could not replay Grok subagent history",
+      );
+    }
+    this.flushGrokSubagentUserMessage(child);
+  }
+
+  private handleGrokSubagentNotification(params: Record<string, unknown>): void {
+    const parsed = grokSubagentNotificationSchema.safeParse(params);
+    if (!parsed.success) return;
+    const notification = parsed.data;
+    const child = this.grokSubagentBySessionId.get(notification.update.child_session_id);
+    const parentSessionId =
+      notification.update.parent_session_id ??
+      (notification.update.sessionUpdate === "subagent_finished" && child
+        ? (child.parentSubagentId ?? this.sessionId)
+        : null);
+    if (!parentSessionId) return;
+    if (notification.sessionId !== this.sessionId && notification.sessionId !== parentSessionId)
+      return;
+    const parent = this.resolveGrokSubagentParent(parentSessionId);
+    if (parent === undefined) return;
+    const timestampMs = notification._meta?.agentTimestampMs;
+    if (notification.update.sessionUpdate === "subagent_spawned") {
+      this.registerGrokSubagent(notification.update, parent, timestampMs);
+      return;
+    }
+
+    if (
+      !child ||
+      child.nativeSubagentId !== notification.update.subagent_id ||
+      child.parentSubagentId !== (parent?.id ?? null) ||
+      child.status !== "running"
+    ) {
+      return;
+    }
+    if (notification.update.sessionUpdate === "subagent_progress") {
+      this.emitGrokSubagentUpsert(child, timestampMs);
+      return;
+    }
+    if (!notification.update.status) return;
+    child.status = grokTerminalStatus(notification.update.status);
+    this.flushGrokSubagentUserMessage(child);
+    this.emitGrokSubagentUpsert(child, timestampMs);
+  }
+
+  private resolveGrokSubagentParent(parentSessionId: string): GrokSubagentState | null | undefined {
+    if (parentSessionId === this.sessionId) return null;
+    return this.grokSubagentBySessionId.get(parentSessionId);
+  }
+
+  private registerGrokSubagent(
+    update: z.infer<typeof grokSubagentNotificationSchema>["update"],
+    parent: GrokSubagentState | null,
+    timestampMs?: number,
+  ): void {
+    if (update.child_session_id === this.sessionId) return;
+    if (this.grokSubagentBySessionId.has(update.child_session_id)) return;
+    if (
+      [...this.grokSubagentBySessionId.values()].some(
+        (child) => child.nativeSubagentId === update.subagent_id,
+      )
+    )
+      return;
+    const child: GrokSubagentState = {
+      id: update.child_session_id,
+      nativeSubagentId: update.subagent_id,
+      parentSubagentId: parent?.id ?? null,
+      title: update.subagent_type ?? null,
+      description: update.description ?? null,
+      subtitle: [update.role, update.model].filter(Boolean).join(" · ") || null,
+      status: "running",
+      pendingUserMessage: null,
+      fallbackAssistantMessageId: null,
+      toolCalls: new Map(),
+    };
+    this.grokSubagentBySessionId.set(update.child_session_id, child);
+    this.emitGrokSubagentUpsert(child, timestampMs);
+  }
+
+  private emitGrokSubagentUpsert(child: GrokSubagentState, timestampMs?: number): void {
+    const timestamp = timestampMs === undefined ? undefined : new Date(timestampMs).toISOString();
+    const event: Extract<AgentStreamEvent, { type: "provider_subagent" }> = {
+      type: "provider_subagent",
+      provider: this.provider,
+      event: {
+        type: "upsert",
+        id: child.id,
+        parentSubagentId: child.parentSubagentId,
+        title: child.title,
+        description: child.description,
+        subtitle: child.subtitle,
+        status: child.status,
+        toolCallId: child.nativeSubagentId,
+        ...(timestamp ? { timestamp } : {}),
+      },
+    };
+    this.deliverTranslatedEvents([event]);
+  }
+
+  private flushGrokSubagentUserMessage(child: GrokSubagentState): void {
+    const pending = child.pendingUserMessage;
+    child.pendingUserMessage = null;
+    if (!pending) return;
+    const item: AgentTimelineItem = {
+      type: "user_message",
+      text: pending.text,
+      ...(pending.messageId ? { messageId: pending.messageId } : {}),
+    };
+    this.deliverTranslatedEvents([
+      {
+        type: "provider_subagent",
+        provider: this.provider,
+        event: { type: "timeline", id: child.id, item },
+      },
+    ]);
+  }
+
+  private translateGrokSubagentUpdate(child: GrokSubagentState, update: SessionUpdate): void {
+    if (update.sessionUpdate === "user_message_chunk") {
+      const text = contentBlockToText(update.content);
+      if (!text) return;
+      child.fallbackAssistantMessageId = null;
+      const messageId = update.messageId ?? undefined;
+      if (child.pendingUserMessage && child.pendingUserMessage.messageId !== messageId) {
+        this.flushGrokSubagentUserMessage(child);
+      }
+      if (!child.pendingUserMessage) child.toolCalls.clear();
+      child.pendingUserMessage ??= { text: "", ...(messageId ? { messageId } : {}) };
+      child.pendingUserMessage.text += text;
+      return;
+    }
+
+    this.flushGrokSubagentUserMessage(child);
+    let item: AgentTimelineItem | null = null;
+    if (update.sessionUpdate === "agent_message_chunk") {
+      const text = contentBlockToText(update.content);
+      if (text) {
+        child.fallbackAssistantMessageId =
+          update.messageId ?? child.fallbackAssistantMessageId ?? randomUUID();
+        item = { type: "assistant_message", text, messageId: child.fallbackAssistantMessageId };
+      }
+    } else if (update.sessionUpdate === "agent_thought_chunk") {
+      child.fallbackAssistantMessageId = null;
+      const text = contentBlockToText(update.content);
+      if (text) item = { type: "reasoning", text };
+    } else if (update.sessionUpdate === "tool_call") {
+      child.fallbackAssistantMessageId = null;
+      const snapshot = mergeToolSnapshot(update.toolCallId, update);
+      child.toolCalls.set(update.toolCallId, snapshot);
+      item = mapToolSnapshotToTimeline(snapshot, new Map());
+    } else if (update.sessionUpdate === "tool_call_update") {
+      const snapshot = mergeToolSnapshot(
+        update.toolCallId,
+        update,
+        child.toolCalls.get(update.toolCallId),
+      );
+      child.toolCalls.set(update.toolCallId, snapshot);
+      item = mapToolSnapshotToTimeline(snapshot, new Map());
+    } else if (update.sessionUpdate === "plan") {
+      item = mapPlanToTimeline(update);
+    }
+    if (item) {
+      this.deliverTranslatedEvents([
+        {
+          type: "provider_subagent",
+          provider: this.provider,
+          event: { type: "timeline", id: child.id, item },
+        },
+      ]);
+    }
+  }
+
   async sessionUpdate(params: SessionNotification): Promise<void> {
     this.logger.trace(
       {
@@ -3262,6 +3503,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
     if (params.sessionId !== this.sessionId) {
+      const child = this.grokSubagentBySessionId.get(params.sessionId);
+      if (!child) return;
+      this.translateGrokSubagentUpdate(child, params.update);
       return;
     }
 
@@ -3283,8 +3527,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private deliverTranslatedEvents(events: AgentStreamEvent[]): void {
     if (this.replayingHistory) {
       for (const event of events) {
-        if (event.type === "timeline") {
-          this.persistedHistory.push(event.item);
+        if (event.type === "timeline" || event.type === "provider_subagent") {
+          this.persistedHistory.push(event);
         }
       }
       return;
@@ -3306,6 +3550,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       },
       "provider.acp.extension_notification",
     );
+    if (["_x.ai/session_notification", "_x.ai/session/update"].includes(method)) {
+      this.handleGrokSubagentNotification(params);
+    }
 
     const parsedCommands = this.extensionCommandsParser?.(method, params);
     if (parsedCommands) {
