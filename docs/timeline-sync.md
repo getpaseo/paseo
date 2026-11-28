@@ -350,7 +350,7 @@ The daemon decides whether a delivery is a message or a tool call, and clients r
 - A peer message is an `agent_message` tool call whose `agentMessage` carries sender and text. The
   wire has no sender on `user_message`, so clients present it as a "Sent by" bubble.
 - Lifecycle notifications (`agent_finished`, `agent_errored`, `agent_needs_permission`,
-  `agent_closed`, `agent_still_working`), schedule fires (`heartbeat`), and change-request updates
+  `agent_closed`), schedule fires (`heartbeat`), and change-request updates
   are plain tool calls. `plain_text` detail carries the sender in `label`, the body in `text`, and
   the icon. Clients render the heading from the tool name, so no notification event reaches them.
 

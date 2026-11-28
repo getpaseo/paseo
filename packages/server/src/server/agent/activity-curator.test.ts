@@ -123,9 +123,9 @@ describe("curateAgentActivity", () => {
           kind: "agent-notification",
           agentId: "agt_child",
           title: "Child",
-          event: "still-working",
+          event: "permission-required",
         },
-        "Child is waiting on CI.",
+        "Child needs approval.",
       ),
       // A row an older daemon persisted with notification metadata.
       {
@@ -145,8 +145,8 @@ describe("curateAgentActivity", () => {
         "Take ownership.\nRead the handoff.",
         "[Agent finished] agt_child",
         "Child is done.",
-        "[Agent still working] Child",
-        "Child is waiting on CI.",
+        "[Agent needs permission] Child",
+        "Child needs approval.",
         "[Agent errored] agt_old",
         "Old failure.",
       ].join("\n"),

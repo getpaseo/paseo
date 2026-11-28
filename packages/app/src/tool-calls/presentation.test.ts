@@ -120,7 +120,6 @@ it.each([
   ["agent_errored", "Agent errored"],
   ["agent_needs_permission", "Agent needs permission"],
   ["agent_closed", "Agent closed"],
-  ["agent_still_working", "Agent still working"],
 ] as const)("presents the %s notification from its plain-text detail", (toolName, heading) => {
   const detail = {
     type: "plain_text" as const,

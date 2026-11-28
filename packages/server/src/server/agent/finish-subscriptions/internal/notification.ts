@@ -1,10 +1,5 @@
 import type { AgentPermissionRequest } from "../../agent-sdk-types.js";
-import type { PendingWork } from "../index.js";
 export type FinishNotificationReason =
-  /** The turn ended while work that will wake the child is pending. The subscription stays. */
-  | "ended its turn but is still working"
-  /** The follow limit passed while the child was still working. The subscription ends. */
-  | "is still working"
   | "host unreachable"
   | "host removed"
   | "finished"
@@ -23,21 +18,7 @@ export const finishNotificationEvents = {
   "was closed": "closed",
   "is unavailable": "closed",
   "was canceled": "errored",
-  "ended its turn but is still working": "still-working",
-  "is still working": "still-working",
 } as const;
-
-/** Permission requests and the still-working notice leave the subscription in place. */
-export function endsSubscription(reason: FinishNotificationReason): boolean {
-  return reason !== "needs permission" && reason !== "ended its turn but is still working";
-}
-
-const PENDING_WORK_DESCRIPTIONS: Record<PendingWork, string> = {
-  turn: "a turn in progress",
-  "background work": "background work that will wake it",
-  "queued messages": "queued messages",
-  "delegated agents": "agents it is waiting on",
-};
 
 const FINISH_NOTIFICATION_MESSAGE_LIMIT = 4000;
 
@@ -48,7 +29,6 @@ interface FinishNotificationBodyInput {
   reason: FinishNotificationReason;
   lastAssistantMessage: string | null;
   permissionRequest?: AgentPermissionRequest;
-  pendingWork?: readonly PendingWork[];
 }
 
 export function formatFinishNotificationBody(params: FinishNotificationBodyInput): string {
@@ -59,20 +39,9 @@ export function formatFinishNotificationBody(params: FinishNotificationBodyInput
         : `Could not observe child agent ${params.childAgentId} on host ${params.serverId} after three failed attempts.`;
     return `${host}\n\nStatus of child agent ${params.childAgentId} (${params.title}) is unknown.\n\nServer: ${params.serverId}\n\nThis finish subscription has ended. Reassess the delegated work; reconnecting will not resume notifications.`;
   }
-  const work = params.pendingWork?.length
-    ? `: ${params.pendingWork.map((item) => PENDING_WORK_DESCRIPTIONS[item]).join(", ")}`
-    : "";
-  const statusLine = `Agent ${params.childAgentId} (${params.title}) ${params.reason}${work}.`;
+  const statusLine = `Agent ${params.childAgentId} (${params.title}) ${params.reason}.`;
   const sections = [statusLine];
   if (params.serverId) sections.push(`Server: ${params.serverId}`);
-  if (params.reason === "ended its turn but is still working")
-    sections.push(
-      "This is not its final reply. You will be notified when it finishes, errors, or needs permission.",
-    );
-  if (params.reason === "is still working")
-    sections.push(
-      "This finish subscription has ended without a final reply. Check the agent with `get_agent_status`.",
-    );
   if (params.reason === "needs permission" && params.permissionRequest) {
     sections.push(
       "Respond with `respond_to_permission` using the `agentId` and `requestId` below.",

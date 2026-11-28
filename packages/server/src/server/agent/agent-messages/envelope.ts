@@ -23,7 +23,7 @@ const agentNotificationSourceSchema = z.object({
   agentId: agentIdSchema,
   serverId: z.string().min(1).optional(),
   title: z.string().min(1).optional(),
-  event: z.enum(["finished", "errored", "permission-required", "closed", "still-working"]),
+  event: z.enum(["finished", "errored", "permission-required", "closed"]),
 });
 /** Senders a delivery names. A schedule fire is marked by the schedule module alone. */
 const promptSourceSchema = z.discriminatedUnion("kind", [
@@ -54,7 +54,6 @@ const NOTIFICATION_TOOL_NAMES: Record<AgentNotificationEvent, string> = {
   errored: "agent_errored",
   "permission-required": "agent_needs_permission",
   closed: "agent_closed",
-  "still-working": "agent_still_working",
 };
 
 /**
@@ -193,9 +192,10 @@ function parseLegacyEnvelope(text: string): AgentMessage | null {
   if (!envelope || !attributes || attributes.get("version") !== "1") return null;
   const body = unescapeXml(envelope[2]);
   if (body === null) return null;
-  // These envelopes reported a child that ended its turn while still working as "message".
+  // #10864 sent a child's interim "ended its turn" notice with the neutral "message" event,
+  // which clients showed as a message from the child.
   if (attributes.get("kind") === "agent-notification" && attributes.get("event") === "message")
-    attributes.set("event", "still-working");
+    attributes.set("kind", "agent-message");
   return toMessage(attributes, body);
 }
 

@@ -43,7 +43,7 @@ describe("daemon E2E (real claude) - finish notification across a background wak
     if (!canRun) context.skip();
   });
 
-  test("the caller hears the child is still working, then gets its autonomous final reply", async () => {
+  test("the caller hears nothing until the child's autonomous final reply", async () => {
     const logger = pino({ level: "silent" });
     const cwd = mkdtempSync(path.join(tmpdir(), "daemon-real-claude-finish-wake-"));
     const callerPrompts: string[] = [];
@@ -86,23 +86,11 @@ describe("daemon E2E (real claude) - finish notification across a background wak
       });
 
       await vi.waitFor(() => expect(callerPrompts).toHaveLength(1), {
-        timeout: 180_000,
+        timeout: 360_000,
         interval: 250,
       });
-      const interim = parseAgentMessage(callerPrompts[0]!);
-      expect(interim.source).toMatchObject({
-        kind: "agent-notification",
-        agentId: childId,
-        event: "still-working",
-      });
-      expect(interim.text).toContain("ended its turn but is still working");
-      expect(interim.text).toContain("background work that will wake it");
-
-      await vi.waitFor(() => expect(callerPrompts).toHaveLength(2), {
-        timeout: 180_000,
-        interval: 250,
-      });
-      const final = parseAgentMessage(callerPrompts[1]!);
+      // The turn that replied SPAWNED ended with the background task still running: no notice.
+      const final = parseAgentMessage(callerPrompts[0]!);
       expect(final.source).toMatchObject({
         kind: "agent-notification",
         agentId: childId,
@@ -111,6 +99,7 @@ describe("daemon E2E (real claude) - finish notification across a background wak
       expect(final.text).toContain("Background child) finished.");
       expect(final.text).toContain(token);
       expect(daemon.daemon.agentManager.getAgent(childId)?.lifecycle).toBe("idle");
+      expect(callerPrompts).toHaveLength(1);
     } finally {
       await client.close();
       await daemon.close();

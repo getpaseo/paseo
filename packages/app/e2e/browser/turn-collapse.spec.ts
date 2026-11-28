@@ -315,7 +315,7 @@ async function callPaseoToolAs(
   }
 }
 
-test("a delegated child's notices are compact tool calls, not received messages", async ({
+test("a delegated child reports once, as a compact tool call, when its own delegate is done", async ({
   page,
 }, testInfo) => {
   const frames: string[] = [];
@@ -324,8 +324,11 @@ test("a delegated child's notices are compact tool calls, not received messages"
       if (typeof payload === "string") frames.push(payload);
     });
   });
+  const childNoticeFrames = () => frames.filter((frame) => frame.includes('"label":"Child"'));
   const parent = await seedMockAgentWorkspace({ repoPrefix: "child-notices-", title: "Lead" });
   try {
+    await openAgentRoute(page, parent);
+    await expectComposerVisible(page);
     const child = await callPaseoToolAs(parent.agentId, "create_agent", {
       workspaceId: parent.workspaceId,
       title: "Child",
@@ -333,29 +336,37 @@ test("a delegated child's notices are compact tool calls, not received messages"
       settings: { modeId: "load-test" },
       initialPrompt: "Delegate the slow part",
     });
-    // The child's own delegate outlives the child's turn, so that turn ends while still working.
-    await callPaseoToolAs(String(child.agentId), "create_agent", {
+    const childId = String(child.agentId);
+    // The child's own delegate outlives the child's first turn.
+    const grandchild = await callPaseoToolAs(childId, "create_agent", {
       workspaceId: parent.workspaceId,
       title: "Grandchild",
       provider: "mock/ten-second-stream",
       settings: { modeId: "load-test" },
       initialPrompt: "Take your time",
     });
-    await openAgentRoute(page, parent);
-    await expectComposerVisible(page);
+    await parent.client.waitForAgentUpsert(childId, (agent) => agent.status === "running");
+    await parent.client.waitForAgentUpsert(childId, (agent) => agent.status === "idle", 30_000);
 
-    const stillWorking = page.getByRole("button", { name: /^Agent still working.*Child/ });
-    await expect(stillWorking).toBeVisible({ timeout: 30_000 });
+    // The child ended its turn while waiting on its delegate: the parent hears nothing yet.
+    await page.waitForTimeout(1_500);
+    const delegate = await parent.client.waitForAgentUpsert(String(grandchild.agentId), () => true);
+    expect(delegate.status, "the delegate must still be running").toBe("running");
+    expect(childNoticeFrames()).toEqual([]);
+    await expect(page.getByRole("button", { name: /^Agent .*Child/ })).toHaveCount(0);
+
     const finished = page.getByRole("button", { name: /^Agent finished.*Child/ });
     await expect(finished).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByRole("button", { name: /^Agent .*Child/ })).toHaveCount(1);
     await expect(page.getByText(/Sent by/)).toHaveCount(0);
     await expect(page.getByText(/<agent-response>/)).toHaveCount(0);
     await finished.scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath("child-notices.png") });
     // Notification events stay on the daemon: clients get only plain tool calls.
     expect(frames.filter((frame) => frame.includes('"agentMessage"'))).toEqual([]);
-    expect(frames.some((frame) => frame.includes('"name":"agent_still_working"'))).toBe(true);
-    expect(frames.some((frame) => frame.includes('"name":"agent_finished"'))).toBe(true);
+    expect(childNoticeFrames().some((frame) => frame.includes('"name":"agent_finished"'))).toBe(
+      true,
+    );
   } finally {
     await parent.cleanup();
   }

@@ -78,7 +78,7 @@ describe("canonical turn membership", () => {
     expect(continuesTurn(previous, trigger)).toBe(false);
     trigger.payload.data.name = "agent_message";
     expect(continuesTurn(previous, trigger)).toBe(false);
-    trigger.payload.data.name = "agent_still_working";
+    trigger.payload.data.name = "agent_finished";
     expect(continuesTurn(previous, trigger)).toBe(false);
   });
 

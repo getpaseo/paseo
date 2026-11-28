@@ -199,16 +199,19 @@ notification. Clean shutdown can also flush an already queued callback while ret
 so that callback can repeat after restart. This is an at-least-once wakeup, without turn attribution or exactly-once delivery.
 
 A turn end is not always a settled child. When the child ends its turn with work that will start its
-next turn by itself, the caller gets one `still-working` notice ("ended its turn but is still working") and
-the subscription keeps following the child. That work is a running turn, queued messages, a pending
-provider wake-up (`AgentSession.hasPendingWakeup`: Claude background tasks, task notifications, and
-one-shot wake-ups), or the child's own outstanding finish subscriptions as a caller. Heartbeats,
-recurring crons, change-request watches, and other daemon background items never count: they are
-external triggers, not work the caller is waiting for. While following, turn ends and work changes stay
-silent until nothing is pending, which sends `finished` and removes the subscription. `followingSince`
-is stored before the notice is sent, so restarts resume following without repeating it, and following
-ends after 24 hours with an "is still working" notice. Remote children and providers without the probe
-report their first turn end as `finished`.
+next turn by itself, the caller hears nothing and the subscription follows the child until it settles.
+That work is a running turn, queued messages, a pending provider wake-up
+(`AgentSession.hasPendingWakeup`: Claude background tasks, task notifications, and one-shot
+wake-ups), or the child's own outstanding finish subscriptions as a caller. Heartbeats, recurring
+crons, change-request watches, and other daemon background items never count: they are external
+triggers, not work the caller is waiting for. While following, turn ends and work changes stay silent
+until nothing is pending, which sends `finished` and removes the subscription. Errors, permission
+requests, and closes still report as they happen. `followingSince` is stored when following starts,
+so a restart keeps following instead of waiting for another turn end. After 24 hours of following,
+the caller gets `finished` with the child's last reply, so a task that never ends (a dev server, for
+example) cannot hold the caller forever. Remote children and providers without the probe report
+their first turn end as `finished`. There is no interim notice, because it would only wake the caller
+to wait again.
 
 Permission requests are notification checkpoints, not the end of that subscription. The caller is notified again after a permission response when the child finishes, errors, or requests another permission.
 The permission notification includes the normalized request plus the child and request IDs, so the caller can inspect it and respond without fetching agent status.

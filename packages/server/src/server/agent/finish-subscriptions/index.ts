@@ -7,7 +7,6 @@ import type { FinishObservationResult } from "./internal/observation-buffer.js";
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
 import { getParentAddressFromLabels } from "@getpaseo/protocol/agent-labels";
 import {
-  endsSubscription,
   formatFinishNotificationBody,
   finishNotificationEvents,
   type FinishNotificationReason,
@@ -28,8 +27,8 @@ export interface FinishSubscription {
   /** Creation subscriptions stop reporting after the child is detached. */
   requireParentOwnership?: boolean;
   /**
-   * Set once the child ended a turn while it was still working and the caller was told so.
-   * The subscription then follows the child until it settles or the follow limit passes.
+   * Set once the child ended a turn with work pending that will start its next turn. The
+   * subscription then follows the child silently until it settles or the follow limit passes.
    */
   followingSince?: string;
 }
@@ -59,7 +58,7 @@ interface Dependencies extends FinishObservation {
   serverId: string;
   logger: Logger;
   retryDelayMs?: number;
-  /** How long a child that is still working is followed before the subscription gives up. */
+  /** How long a child with pending work is followed before its last reply is reported. */
   followLimitMs?: number;
 }
 export interface FinishRegistration {
@@ -227,7 +226,6 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
           reason,
           lastAssistantMessage: result?.lastMessage ?? null,
           permissionRequest: request,
-          pendingWork: notice.work,
         }),
         source: {
           kind: "agent-notification",
@@ -374,7 +372,8 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
         current.sent = true;
       }
       // A removal failure retries only the commit, never the already accepted callback.
-      if (notice && endsSubscription(notice.reason)) return end(true);
+      // A permission request is a checkpoint; the caller still hears how the child ends.
+      if (notice && notice.reason !== "needs permission") return end(true);
       current = undefined;
       retries = 0;
       warned = false;

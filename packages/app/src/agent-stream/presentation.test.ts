@@ -783,13 +783,13 @@ it("presents received agent messages as attributed bubbles with the original tur
   });
 });
 
-it("presents a still-working notification as a compact tool call, not a received message", () => {
-  const call = toolCall("notice", "agent_still_working");
+it("presents a finished notification as a compact tool call, not a received message", () => {
+  const call = toolCall("notice", "agent_finished");
   if (call.payload.source !== "agent") throw new Error("Expected agent tool");
   call.payload.data.detail = {
     type: "plain_text",
     label: "Child",
-    text: "Agent child (Child) ended its turn but is still working.",
+    text: "Agent child (Child) finished.",
     icon: "bot",
   };
   const result = createStreamPresentation()({

@@ -9,7 +9,6 @@ describe("timeline turn triggers", () => {
     "agent_errored",
     "agent_needs_permission",
     "agent_closed",
-    "agent_still_working",
   ])("a delivered %s prompt starts a turn", (name) => {
     expect(isTimelineTurnTrigger({ type: "tool_call", name })).toBe(true);
   });

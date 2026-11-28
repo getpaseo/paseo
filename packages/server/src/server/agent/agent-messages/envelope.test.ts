@@ -165,7 +165,6 @@ describe("projection", () => {
     ["errored", "agent_errored", "Agent errored"],
     ["permission-required", "agent_needs_permission", "Agent needs permission"],
     ["closed", "agent_closed", "Agent closed"],
-    ["still-working", "agent_still_working", "Agent still working"],
   ] as const)("a %s notification is a plain tool call", (event, name, displayName) => {
     const text = "Agent child (Child) finished.\n\n<agent-response>\nDone\n</agent-response>";
     const [item] = project(
@@ -279,7 +278,7 @@ describe("legacy envelopes in provider transcripts", () => {
         'kind="agent-notification" source-agent-id="child" message-id="m2" source-agent-title="Child" event="finished"',
         "Done",
       ),
-      // #10864 reported a child that is still working with the neutral "message" event.
+      // #10864 sent a child's interim turn-end notice with the neutral "message" event.
       legacy(
         'kind="agent-notification" source-agent-id="child" message-id="m3" source-agent-title="Child" event="message"',
         "Still going",
@@ -305,12 +304,7 @@ describe("legacy envelopes in provider transcripts", () => {
       },
       {
         id: "m3",
-        source: {
-          kind: "agent-notification" as const,
-          agentId: "child",
-          title: "Child",
-          event: "still-working" as const,
-        },
+        source: { kind: "agent-message" as const, agentId: "child", title: "Child" },
         text: "Still going",
       },
       {

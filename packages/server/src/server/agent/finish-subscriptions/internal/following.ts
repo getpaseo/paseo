@@ -3,7 +3,7 @@ import type { FinishSubscription, FinishSubscriptionStore, PendingWork } from ".
 import type { FinishObservationResult } from "./observation-buffer.js";
 import type { FinishNotificationReason } from "./notification.js";
 
-/** The followed child is still working when the follow limit passes. */
+/** The followed child still has pending work when the follow limit passes. */
 export const FOLLOW_LIMIT = Symbol("follow limit");
 export type FollowOutcome = FinishObservationResult | typeof FOLLOW_LIMIT;
 
@@ -11,7 +11,6 @@ export type FollowOutcome = FinishObservationResult | typeof FOLLOW_LIMIT;
 export interface Notice {
   reason: FinishNotificationReason;
   result: FinishObservationResult | null;
-  work: readonly PendingWork[];
 }
 
 interface Options {
@@ -26,9 +25,10 @@ interface Options {
 
 /**
  * Separates "the turn ended" from "the child has stopped". A watch waits for its prompt's turn.
- * If that turn ends while the child still has pending work, the caller is told once and the
- * watch follows the child: later turn ends and work changes stay silent until the child
- * settles, which reports `finished`, or until the follow limit passes.
+ * If that turn ends while the child still has pending work, the watch follows the child without
+ * telling the caller: later turn ends and work changes stay silent until the child settles,
+ * which reports `finished`. When the follow limit passes first, the caller gets `finished`
+ * with the child's last reply, as it would have when that turn ended.
  */
 export function createFollowing(options: Options) {
   let since = options.records
@@ -49,7 +49,7 @@ export function createFollowing(options: Options) {
 
   async function follow(): Promise<void> {
     const followingSince = new Date().toISOString();
-    // Written before the notice is sent, so a restart never repeats it.
+    // A restart keeps following instead of waiting for another turn end.
     for (const record of options.records) await options.store.put({ ...record, followingSince });
     since = followingSince;
   }
@@ -93,18 +93,15 @@ export function createFollowing(options: Options) {
     },
     /** Returns nothing when the outcome is not worth telling the caller. */
     async decide(outcome: FollowOutcome): Promise<Notice | undefined> {
-      if (outcome === FOLLOW_LIMIT)
-        return { reason: "is still working", result: latest, work: options.pendingWork() };
+      if (outcome === FOLLOW_LIMIT) return { reason: "finished", result: latest };
       latest = outcome;
       const reason = options.reasonFor(outcome);
-      if (reason !== "finished") return { reason, result: outcome, work: [] };
+      if (reason !== "finished") return { reason, result: outcome };
       // Before the prompt's turn ends, a work change says nothing about its outcome.
       if (outcome.workChanged && !since) return undefined;
-      const work = options.pendingWork();
-      if (!work.length) return { reason, result: outcome, work };
-      if (since) return undefined;
-      await follow();
-      return { reason: "ended its turn but is still working", result: outcome, work };
+      if (!options.pendingWork().length) return { reason, result: outcome };
+      if (!since) await follow();
+      return undefined;
     },
   };
 }

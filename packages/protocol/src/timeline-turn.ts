@@ -20,7 +20,6 @@ const DELIVERED_PROMPT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "agent_errored",
   "agent_needs_permission",
   "agent_closed",
-  "agent_still_working",
 ]);
 
 export function isTimelineTurnTrigger(item: { type: string; name?: string }): boolean {
