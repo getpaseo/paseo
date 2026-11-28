@@ -5,6 +5,7 @@
 #include "GpuiModules.h"
 
 #include "CodeBlockHighlighter.hpp"
+#include "CodeBlockLanguages.hpp"
 #include "MD4CParser.hpp"
 #include "MarkdownASTNode.hpp"
 #include "TextLinkRecognizer.hpp"
@@ -17,8 +18,11 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <limits>
 #include <memory>
@@ -222,28 +226,38 @@ std::optional<boost::wregex> compileJsRegex(
   }
 }
 
-folly::dynamic astToDynamic(const Markdown::MarkdownASTNode& node) {
-  folly::dynamic obj = folly::dynamic::object("type", nodeTypeName(node.type));
+struct HighlightedCodeEntry {
+  std::string code;
+  std::vector<std::tuple<int64_t, int64_t, int64_t>> tokens;
+};
 
-  if (node.type == Markdown::NodeType::CodeBlock) {
-    std::string code = node.content;
-    if (code.empty() && !node.children.empty()) {
-      for (const auto& child : node.children) {
-        if (child) {
-          code += child->content;
-        }
+using HighlightMap = std::unordered_map<const Markdown::MarkdownASTNode*, HighlightedCodeEntry>;
+
+std::string extractCodeText(const Markdown::MarkdownASTNode& node) {
+  std::string code = node.content;
+  if (code.empty() && !node.children.empty()) {
+    for (const auto& child : node.children) {
+      if (child) {
+        code += child->content;
       }
     }
+  }
+  return code;
+}
+
+void collectCodeHighlights(const Markdown::MarkdownASTNode& node, HighlightMap& out) {
+  if (node.type == Markdown::NodeType::CodeBlock) {
+    std::string code = extractCodeText(node);
+    std::string lang;
+    if (auto it = node.attributes.find("language"); it != node.attributes.end()) {
+      lang = it->second;
+    }
+    HighlightedCodeEntry entry;
     if (!code.empty()) {
-      obj["content"] = code;
-      std::string lang;
-      if (auto it = node.attributes.find("language"); it != node.attributes.end()) {
-        lang = it->second;
-      }
       auto tokens = Markdown::highlightCode(code, lang);
       if (!tokens.empty()) {
         std::vector<size_t> utf16Bytes = utf16ToUtf8Bytes(code);
-        folly::dynamic tokArr = folly::dynamic::array();
+        entry.tokens.reserve(tokens.size());
         for (const auto& tok : tokens) {
           if (tok.end <= tok.start || tok.end >= utf16Bytes.size()) {
             continue;
@@ -253,14 +267,73 @@ folly::dynamic astToDynamic(const Markdown::MarkdownASTNode& node) {
           if (endByte <= startByte) {
             continue;
           }
-          folly::dynamic entry = folly::dynamic::array(
+          entry.tokens.emplace_back(
               static_cast<int64_t>(startByte),
               static_cast<int64_t>(endByte),
               static_cast<int64_t>(tok.type));
-          tokArr.push_back(std::move(entry));
         }
-        if (!tokArr.empty()) {
+      }
+      entry.code = std::move(code);
+    }
+    out.emplace(&node, std::move(entry));
+    return;
+  }
+  for (const auto& child : node.children) {
+    if (child) {
+      collectCodeHighlights(*child, out);
+    }
+  }
+}
+
+folly::dynamic astToDynamic(
+    const Markdown::MarkdownASTNode& node,
+    const std::vector<std::optional<boost::wregex>>& linkVariants,
+    const HighlightMap* prehighlighted) {
+  folly::dynamic obj = folly::dynamic::object("type", nodeTypeName(node.type));
+
+  if (node.type == Markdown::NodeType::CodeBlock) {
+    if (prehighlighted != nullptr) {
+      if (auto it = prehighlighted->find(&node); it != prehighlighted->end()) {
+        if (!it->second.code.empty()) {
+          obj["content"] = it->second.code;
+        }
+        if (!it->second.tokens.empty()) {
+          folly::dynamic tokArr = folly::dynamic::array();
+          for (const auto& [s, e, t] : it->second.tokens) {
+            tokArr.push_back(folly::dynamic::array(s, e, t));
+          }
           obj["tokens"] = std::move(tokArr);
+        }
+      }
+    } else {
+      std::string code = extractCodeText(node);
+      if (!code.empty()) {
+        obj["content"] = code;
+        std::string lang;
+        if (auto it = node.attributes.find("language"); it != node.attributes.end()) {
+          lang = it->second;
+        }
+        auto tokens = Markdown::highlightCode(code, lang);
+        if (!tokens.empty()) {
+          std::vector<size_t> utf16Bytes = utf16ToUtf8Bytes(code);
+          folly::dynamic tokArr = folly::dynamic::array();
+          for (const auto& tok : tokens) {
+            if (tok.end <= tok.start || tok.end >= utf16Bytes.size()) {
+              continue;
+            }
+            size_t startByte = utf16Bytes[tok.start];
+            size_t endByte = utf16Bytes[tok.end];
+            if (endByte <= startByte) {
+              continue;
+            }
+            tokArr.push_back(folly::dynamic::array(
+                static_cast<int64_t>(startByte),
+                static_cast<int64_t>(endByte),
+                static_cast<int64_t>(tok.type)));
+          }
+          if (!tokArr.empty()) {
+            obj["tokens"] = std::move(tokArr);
+          }
         }
       }
     }
@@ -268,19 +341,49 @@ folly::dynamic astToDynamic(const Markdown::MarkdownASTNode& node) {
     obj["content"] = node.content;
   }
 
-  if (!node.attributes.empty()) {
+  if (!node.attributes.empty() || node.type == Markdown::NodeType::CodeBlock) {
     folly::dynamic attrs = folly::dynamic::object();
     for (const auto& [k, v] : node.attributes) {
       attrs[k] = v;
     }
-    obj["attributes"] = std::move(attrs);
+    if (node.type == Markdown::NodeType::CodeBlock) {
+      if (auto it = node.attributes.find("language"); it != node.attributes.end() && !it->second.empty()) {
+        std::string display = Markdown::displayNameForLanguage(it->second);
+        if (!display.empty()) {
+          attrs["displayLanguage"] = std::move(display);
+        }
+      }
+    }
+    if (node.type == Markdown::NodeType::Link && !linkVariants.empty()) {
+      if (auto it = node.attributes.find("url"); it != node.attributes.end() && !it->second.empty()) {
+        std::wstring wideUrl;
+        std::vector<size_t> dummy;
+        utf8ToWideWithUtf16Offsets(it->second, wideUrl, dummy);
+        for (size_t idx = 0; idx < linkVariants.size(); idx++) {
+          if (!linkVariants[idx]) {
+            continue;
+          }
+          try {
+            boost::wsmatch m;
+            if (boost::regex_search(wideUrl, m, *linkVariants[idx])) {
+              attrs["linkVariant"] = std::to_string(idx);
+              break;
+            }
+          } catch (...) {
+          }
+        }
+      }
+    }
+    if (!attrs.empty()) {
+      obj["attributes"] = std::move(attrs);
+    }
   }
 
   if (!node.children.empty() && node.type != Markdown::NodeType::CodeBlock) {
     folly::dynamic children = folly::dynamic::array();
     for (const auto& child : node.children) {
       if (child) {
-        children.push_back(astToDynamic(*child));
+        children.push_back(astToDynamic(*child, linkVariants, prehighlighted));
       }
     }
     obj["children"] = std::move(children);
@@ -660,9 +763,15 @@ std::shared_ptr<const std::string> buildSnapshotJson(
     }
   }
 
+  std::vector<std::optional<boost::wregex>> variantRegexes;
+  variantRegexes.reserve(props.markdownStyle.linkVariants.size());
+  for (const auto& entry : props.markdownStyle.linkVariants) {
+    variantRegexes.push_back(compileJsRegex(entry.pattern, false, false));
+  }
+
   folly::dynamic snapshot = folly::dynamic::object();
   if (ast) {
-    snapshot["ast"] = astToDynamic(*ast);
+    snapshot["ast"] = astToDynamic(*ast, variantRegexes, nullptr);
   } else {
     snapshot["ast"] = folly::dynamic::object("type", "Document");
   }
@@ -704,6 +813,77 @@ facebook::react::Size measureMarkdownImpl(
 
 extern "C" void rn_gpui_markdown_set_measure_fn(RnGpuiMarkdownMeasureFn fn) {
   gMeasureFn.store(fn, std::memory_order_release);
+}
+
+extern "C" int rn_gpui_markdown_bench_stages(
+    const char* markdown,
+    bool is_gfm,
+    const char* style_json,
+    double* out_parse_ns,
+    double* out_highlight_ns,
+    double* out_serialize_ns,
+    char** out_json,
+    size_t* out_json_len) {
+  if (!markdown || !style_json) {
+    return 1;
+  }
+  using clock = std::chrono::steady_clock;
+
+  Markdown::Md4cFlags mdFlags;
+  mdFlags.admonitions = is_gfm;
+  mdFlags.hardSoftBreaks = true;
+
+  auto t0 = clock::now();
+  Markdown::MD4CParser parser;
+  auto ast = parser.parse(std::string(markdown), mdFlags, is_gfm);
+  auto t1 = clock::now();
+
+  HighlightMap highlights;
+  if (ast) {
+    collectCodeHighlights(*ast, highlights);
+  }
+  auto t2 = clock::now();
+
+  folly::dynamic styleDyn = folly::parseJson(style_json);
+  std::vector<std::optional<boost::wregex>> noVariants;
+  folly::dynamic snapshot = folly::dynamic::object();
+  snapshot["ast"] = ast ? astToDynamic(*ast, noVariants, &highlights)
+                        : folly::dynamic::object("type", "Document");
+  snapshot["style"] = std::move(styleDyn);
+  snapshot["isGFM"] = is_gfm;
+  snapshot["allowTrailingMargin"] = false;
+  snapshot["selectable"] = true;
+  snapshot["enableImagePress"] = false;
+  snapshot["enableCodeBlockPress"] = false;
+  snapshot["enableTaskListItemToggle"] = false;
+  snapshot["numberOfLines"] = 0;
+  std::string encoded = folly::toJson(snapshot);
+  auto t3 = clock::now();
+
+  if (out_parse_ns) {
+    *out_parse_ns = std::chrono::duration<double, std::nano>(t1 - t0).count();
+  }
+  if (out_highlight_ns) {
+    *out_highlight_ns = std::chrono::duration<double, std::nano>(t2 - t1).count();
+  }
+  if (out_serialize_ns) {
+    *out_serialize_ns = std::chrono::duration<double, std::nano>(t3 - t2).count();
+  }
+  if (out_json && out_json_len) {
+    char* buf = static_cast<char*>(std::malloc(encoded.size() + 1));
+    if (!buf) {
+      return 2;
+    }
+    std::memcpy(buf, encoded.data(), encoded.size());
+    buf[encoded.size()] = '\0';
+    *out_json = buf;
+    *out_json_len = encoded.size();
+  }
+  return 0;
+}
+
+extern "C" void rn_gpui_markdown_bench_free(char* ptr) {
+  std::free(ptr);
 }
 
 namespace rngpui::markdown {

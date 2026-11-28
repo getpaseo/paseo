@@ -11,7 +11,7 @@ pub struct MarkdownSnapshot {
     pub ast: AstNode,
     #[serde(default)]
     pub style: MarkdownStyle,
-    #[serde(default)]
+    #[serde(default, rename = "isGFM")]
     pub is_gfm: bool,
     #[serde(default)]
     pub allow_trailing_margin: bool,
@@ -424,6 +424,21 @@ pub struct ImageStyle {
 
 #[derive(Clone, Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct LinkVariantStyle {
+    #[serde(default)]
+    pub pattern: String,
+    #[serde(default)]
+    pub color: u32,
+    #[serde(default = "default_true")]
+    pub underline: bool,
+    #[serde(default)]
+    pub background_color: u32,
+    #[serde(default)]
+    pub font_family: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct MarkdownStyle {
     #[serde(default)]
     pub paragraph: BlockStyle,
@@ -447,6 +462,8 @@ pub struct MarkdownStyle {
     pub code_block: CodeBlockStyle,
     #[serde(default)]
     pub link: LinkStyle,
+    #[serde(default)]
+    pub link_variants: Vec<LinkVariantStyle>,
     #[serde(default)]
     pub strong: StrongStyle,
     #[serde(default)]
@@ -478,18 +495,7 @@ pub fn normalize_font_family(family: &str) -> String {
         .trim_matches(|c| c == '"' || c == '\'');
     match first {
         "" | "normal" | "System" | "sans-serif" | "system-ui" | "-apple-system"
-        | "BlinkMacSystemFont" | "Segoe UI" | "Roboto" => {
-            #[cfg(target_os = "linux")]
-            {
-                // DejaVu Sans only ships Regular and Bold on many Linux installs;
-                // Nimbus Sans (URW base35) ships Regular, Bold, Italic, and Bold Italic.
-                "Nimbus Sans".to_string()
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                String::new()
-            }
-        }
+        | "BlinkMacSystemFont" | "Segoe UI" | "Roboto" => String::new(),
         "monospace" | "ui-monospace" | "Menlo" | "Consolas" | "Monaco" | "Courier New"
         | "Courier" => "monospace".to_string(),
         other => other.to_string(),

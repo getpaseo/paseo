@@ -1,7 +1,7 @@
-mod interaction;
-mod layout;
-mod model;
-mod render;
+pub mod interaction;
+pub mod layout;
+pub mod model;
+pub mod render;
 
 use crate::interaction::InteractionState;
 use crate::layout::{layout_document, LaidOutDocument};

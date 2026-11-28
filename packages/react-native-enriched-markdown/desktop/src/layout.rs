@@ -1,6 +1,6 @@
 use crate::model::{
     argb_or, normalize_font_family, parse_font_weight, text_align_of, AstNode, BlockStyle,
-    MarkdownSnapshot, MarkdownStyle,
+    LinkVariantStyle, MarkdownSnapshot, MarkdownStyle,
 };
 use react_native_gpui::host_component::{
     measure_rich_text, measure_text, rich_text_range_rects, RichParagraph, RichTextAlign,
@@ -102,9 +102,11 @@ pub struct LaidOutCodeBlock {
     pub height: f32,
     pub content_width: f32,
     pub content_height: f32,
-    pub padding: f32,
+    pub inset: f32,
     pub header_height: f32,
+    pub header_font_size: f32,
     pub language: String,
+    pub display_language: String,
     pub code: String,
     pub paragraph: RichParagraph,
     pub bg_color: u32,
@@ -112,6 +114,7 @@ pub struct LaidOutCodeBlock {
     pub border_width: f32,
     pub border_radius: f32,
     pub header_text_color: u32,
+    pub divider_color: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -396,6 +399,15 @@ impl<'a> InlineBuilder<'a> {
                 } else {
                     code_family
                 };
+                // Match iOS CodeRenderer.m and Android CodeSpan.kt:
+                // explicit code.fontSize wins; otherwise scale the surrounding block font size.
+                next.size = if self.style.code.font_size > 0.0 {
+                    self.style.code.font_size
+                } else if self.style.code.font_scale > 0.0 {
+                    ctx.size * self.style.code.font_scale
+                } else {
+                    ctx.size
+                };
                 if next.link_url.is_none() && self.style.code.color >> 24 != 0 {
                     next.color = self.style.code.color;
                 }
@@ -415,19 +427,42 @@ impl<'a> InlineBuilder<'a> {
                 let recognized = node.attr("recognizedLink") == Some("true");
                 let has_code_child = node.children_slice().iter().any(|c| c.node_type == "Code");
                 let source_type = if has_code_child {
-                    "inlineCode"
+                    "inline-code"
                 } else if recognized {
-                    "recognized"
+                    "text"
                 } else {
-                    "link"
+                    "markdown"
                 };
-                if !self.style.link.font_family.is_empty() {
-                    next.family = normalize_font_family(&self.style.link.font_family);
+                let mut link_family = self.style.link.font_family.as_str();
+                let mut link_color = argb_or(self.style.link.color, 0xFF25_63EB);
+                let mut link_underline =
+                    self.style.link.underline || (self.style.link.color >> 24 == 0);
+                let mut link_bg = self.style.link.background_color;
+                let variant_idx = node
+                    .attr("linkVariant")
+                    .and_then(|s| s.parse::<usize>().ok());
+                if let Some(variant) = variant_idx
+                    .and_then(|idx| self.style.link_variants.get(idx))
+                    .or_else(|| matching_link_variant(&self.style.link_variants, &url))
+                {
+                    if !variant.font_family.is_empty() {
+                        link_family = &variant.font_family;
+                    }
+                    if variant.color >> 24 != 0 {
+                        link_color = variant.color;
+                    }
+                    link_underline = variant.underline;
+                    if variant.background_color >> 24 != 0 {
+                        link_bg = variant.background_color;
+                    }
                 }
-                next.color = argb_or(self.style.link.color, 0xFF25_63EB);
-                next.underline = self.style.link.underline || (self.style.link.color >> 24 == 0);
-                if self.style.link.background_color >> 24 != 0 {
-                    next.background_color = self.style.link.background_color;
+                if !link_family.is_empty() {
+                    next.family = normalize_font_family(link_family);
+                }
+                next.color = link_color;
+                next.underline = link_underline;
+                if link_bg >> 24 != 0 {
+                    next.background_color = link_bg;
                 }
                 if !url.is_empty() {
                     next.link_url = Some(url);
@@ -1051,6 +1086,11 @@ impl<'a> LayoutEngine<'a> {
                     y += cb.margin_top.max(0.0);
                 }
                 let language = node.attr("language").unwrap_or("").to_string();
+                let display_language = node
+                    .attr("displayLanguage")
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| language.clone());
                 let mut code = node.content.clone().unwrap_or_default();
                 while code.ends_with('\n') {
                     code.pop();
@@ -1083,7 +1123,24 @@ impl<'a> LayoutEngine<'a> {
                     cb.border_width.max(0.0)
                 };
                 let pad = if cb.padding > 0.0 { cb.padding } else { 12.0 };
-                let header_h = if language.is_empty() { 0.0 } else { 22.0 };
+                let inset = pad + border_width;
+                let header_font_size = font_size * 0.85;
+                let header_h = if self.snapshot.is_gfm {
+                    let label_h = measure_text(
+                        "Ag",
+                        &TextStyle {
+                            size: header_font_size,
+                            weight: 500,
+                            ..Default::default()
+                        },
+                        None,
+                    )
+                    .map(|e| e.height.ceil())
+                    .unwrap_or_else(|| (header_font_size * 1.25).ceil());
+                    inset + label_h
+                } else {
+                    0.0
+                };
 
                 let mut runs = Vec::new();
                 if let Some(tokens) = &node.tokens {
@@ -1149,11 +1206,16 @@ impl<'a> LayoutEngine<'a> {
                     max_lines: 0,
                 };
                 let (content_w, content_h) = self.measure_para(&paragraph, None);
-                let natural_box_w = content_w + pad * 2.0 + border_width * 2.0;
+                let natural_box_w = content_w + inset * 2.0;
                 let box_w = avail_width
                     .unwrap_or(natural_box_w)
                     .max(natural_box_w.min(avail_width.unwrap_or(natural_box_w)));
-                let box_h = header_h + content_h.max(line_height) + pad * 2.0 + border_width * 2.0;
+                let code_h = if code.is_empty() {
+                    0.0
+                } else {
+                    content_h.max(line_height)
+                };
+                let box_h = header_h + code_h + inset * 2.0;
 
                 if self.snapshot.enable_code_block_press {
                     self.doc.code_copies.push(InteractiveCopyRect {
@@ -1166,6 +1228,9 @@ impl<'a> LayoutEngine<'a> {
                     });
                 }
 
+                let header_text_color = (default_fg & 0x00FF_FFFF) | 0x9900_0000;
+                let divider_color = (default_fg & 0x00FF_FFFF) | 0x3300_0000;
+
                 self.doc
                     .items
                     .push(LaidOutItem::CodeBlock(LaidOutCodeBlock {
@@ -1174,10 +1239,12 @@ impl<'a> LayoutEngine<'a> {
                         width: box_w,
                         height: box_h,
                         content_width: content_w,
-                        content_height: content_h.max(line_height),
-                        padding: pad,
+                        content_height: code_h.max(line_height),
+                        inset,
                         header_height: header_h,
+                        header_font_size,
                         language,
+                        display_language,
                         code,
                         paragraph,
                         bg_color,
@@ -1188,7 +1255,8 @@ impl<'a> LayoutEngine<'a> {
                         } else {
                             8.0
                         },
-                        header_text_color: argb_or(cb.syntax_colors.comment, 0xFF94_A3B8),
+                        header_text_color,
+                        divider_color,
                     }));
 
                 y += box_h;
@@ -1551,6 +1619,19 @@ impl<'a> LayoutEngine<'a> {
     }
 }
 
+fn matching_link_variant<'a>(
+    variants: &'a [LinkVariantStyle],
+    url: &str,
+) -> Option<&'a LinkVariantStyle> {
+    variants.iter().find(|entry| {
+        if entry.pattern == "^(?!https?://).+" {
+            !url.is_empty() && !url.starts_with("http://") && !url.starts_with("https://")
+        } else {
+            !entry.pattern.is_empty() && url.contains(entry.pattern.trim_matches('^'))
+        }
+    })
+}
+
 pub fn layout_document(snapshot: &MarkdownSnapshot, max_width: Option<f32>) -> LaidOutDocument {
     LayoutEngine::new(snapshot).run(max_width)
 }
@@ -1676,5 +1757,208 @@ mod tests {
         let d1 = layout_document(&without, Some(500.0));
         let d2 = layout_document(&with_margin, Some(500.0));
         assert!(d2.height > d1.height);
+    }
+
+    #[test]
+    fn normalize_font_family_matches_text_renderer() {
+        assert_eq!(normalize_font_family(""), "");
+        assert_eq!(normalize_font_family("normal"), "");
+        assert_eq!(normalize_font_family("System"), "");
+        assert_eq!(normalize_font_family("sans-serif"), "");
+        assert_eq!(
+            normalize_font_family("system-ui, -apple-system, sans-serif"),
+            ""
+        );
+        assert_eq!(normalize_font_family("monospace"), "monospace");
+        assert_eq!(normalize_font_family("ui-monospace"), "monospace");
+        assert_eq!(normalize_font_family("Menlo, Monaco"), "monospace");
+        assert_eq!(normalize_font_family("CustomFont"), "CustomFont");
+    }
+
+    #[test]
+    fn headings_scale_inline_code_and_emphasis_match_native_spec() {
+        let snap: MarkdownSnapshot = serde_json::from_value(serde_json::json!({
+            "ast": {
+                "type": "Document",
+                "children": [
+                    {
+                        "type": "Heading",
+                        "attributes": { "level": "1" },
+                        "children": [{ "type": "Text", "content": "Heading One" }]
+                    },
+                    {
+                        "type": "Heading",
+                        "attributes": { "level": "2" },
+                        "children": [{ "type": "Text", "content": "Heading Two" }]
+                    },
+                    {
+                        "type": "Paragraph",
+                        "children": [
+                            { "type": "Strong", "children": [{ "type": "Text", "content": "bold" }] },
+                            { "type": "Emphasis", "children": [{ "type": "Text", "content": "italic" }] },
+                            { "type": "Strikethrough", "children": [{ "type": "Text", "content": "struck" }] },
+                            { "type": "Code", "content": "inline_code" },
+                            {
+                                "type": "Link",
+                                "attributes": { "url": "https://paseo.sh/docs" },
+                                "children": [{ "type": "Text", "content": "docs" }]
+                            },
+                            {
+                                "type": "Link",
+                                "attributes": { "url": "file.ts", "recognizedLink": "true" },
+                                "children": [{ "type": "Code", "content": "file.ts" }]
+                            }
+                        ]
+                    }
+                ]
+            },
+            "style": {
+                "paragraph": { "fontSize": 15, "lineHeight": 21, "color": 4279769115u32, "marginBottom": 10 },
+                "h1": { "fontSize": 24, "lineHeight": 31, "fontWeight": "bold", "marginBottom": 10 },
+                "h2": { "fontSize": 21, "lineHeight": 27, "fontWeight": "bold", "marginBottom": 10 },
+                "code": { "fontFamily": "monospace", "fontSize": 0, "fontScale": 0.8, "color": 4279769115u32, "backgroundColor": 4294243573u32 },
+                "link": { "color": 4280254528u32, "underline": false }
+            }
+        }))
+        .unwrap();
+
+        let doc = layout_document(&snap, Some(500.0));
+        let paras: Vec<&LaidOutParagraph> = doc
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                LaidOutItem::Paragraph(p) => Some(p),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(paras.len(), 3);
+        assert_eq!(paras[0].paragraph.runs[0].size, 24.0);
+        assert_eq!(paras[0].paragraph.runs[0].weight, 700);
+        assert_eq!(paras[1].paragraph.runs[0].size, 21.0);
+        assert!(paras[0].height > paras[1].height);
+
+        let body_runs = &paras[2].paragraph.runs;
+        assert_eq!(body_runs[0].weight, 700);
+        assert!(body_runs[1].italic);
+        assert!(body_runs[2].strikethrough);
+        assert!((body_runs[3].size - 12.0).abs() < 0.01);
+        assert_eq!(body_runs[3].family, "monospace");
+        assert_eq!(paras[2].links.len(), 2);
+        assert_eq!(paras[2].links[0].source_type, "markdown");
+        assert_eq!(paras[2].links[1].source_type, "inline-code");
+    }
+
+    #[test]
+    fn ordered_task_blockquote_and_gfm_code_block_layout() {
+        let snap: MarkdownSnapshot = serde_json::from_value(serde_json::json!({
+            "isGFM": true,
+            "enableTaskListItemToggle": true,
+            "ast": {
+                "type": "Document",
+                "children": [
+                    {
+                        "type": "OrderedList",
+                        "attributes": { "start": "3" },
+                        "children": [
+                            {
+                                "type": "ListItem",
+                                "children": [{ "type": "Paragraph", "children": [{ "type": "Text", "content": "Third" }] }]
+                            },
+                            {
+                                "type": "ListItem",
+                                "attributes": { "isTask": "true", "taskChecked": "true" },
+                                "children": [{ "type": "Paragraph", "children": [{ "type": "Text", "content": "Checked" }] }]
+                            }
+                        ]
+                    },
+                    {
+                        "type": "Blockquote",
+                        "children": [
+                            { "type": "Paragraph", "children": [{ "type": "Text", "content": "Quote line" }] }
+                        ]
+                    },
+                    {
+                        "type": "CodeBlock",
+                        "attributes": { "language": "ts", "displayLanguage": "TypeScript" },
+                        "content": "const a = 1;\n",
+                        "tokens": [[0, 5, 0], [10, 11, 4]]
+                    }
+                ]
+            },
+            "style": {
+                "list": { "fontSize": 15, "markerColor": 4285624698u32, "marginLeft": 20, "gapWidth": 7 },
+                "blockquote": { "fontSize": 15, "borderColor": 4293190887u32, "borderWidth": 3, "padding": 12 },
+                "codeBlock": {
+                    "fontSize": 12,
+                    "lineHeight": 21,
+                    "padding": 12,
+                    "borderWidth": 1,
+                    "syntaxColors": { "keyword": 4294933362u32, "number": 4286169343u32 }
+                }
+            }
+        }))
+        .unwrap();
+
+        let doc = layout_document(&snap, Some(500.0));
+        let has_num_3 = doc.items.iter().any(|i| {
+            matches!(i, LaidOutItem::Bullet { kind: BulletKind::Number { label, .. }, .. } if label == "3.")
+        });
+        assert!(has_num_3);
+        let has_checked_box = doc.items.iter().any(|i| {
+            matches!(
+                i,
+                LaidOutItem::Bullet {
+                    kind: BulletKind::Checkbox { checked: true, .. },
+                    ..
+                }
+            )
+        });
+        assert!(has_checked_box);
+        assert_eq!(doc.task_toggles.len(), 1);
+        assert!(
+            doc.items
+                .iter()
+                .filter(|i| matches!(i, LaidOutItem::Rect { .. }))
+                .count()
+                >= 2
+        );
+        let cb = doc
+            .items
+            .iter()
+            .find_map(|i| match i {
+                LaidOutItem::CodeBlock(cb) => Some(cb),
+                _ => None,
+            })
+            .expect("code block present");
+        assert_eq!(cb.display_language, "TypeScript");
+        assert!(cb.header_height > 0.0);
+        assert!(cb.paragraph.runs.len() >= 3);
+    }
+
+    #[test]
+    fn long_unbroken_word_wraps_and_unsupported_nodes_do_not_panic() {
+        let long_word = "x".repeat(240);
+        let snap: MarkdownSnapshot = serde_json::from_value(serde_json::json!({
+            "ast": {
+                "type": "Document",
+                "children": [
+                    { "type": "Paragraph", "children": [{ "type": "Text", "content": long_word }] },
+                    { "type": "LatexMathDisplay", "children": [{ "type": "Text", "content": "E = mc^2" }] },
+                    { "type": "Image", "attributes": { "url": "local/missing.png", "alt": "Chart" } }
+                ]
+            },
+            "style": {
+                "paragraph": { "fontSize": 15, "lineHeight": 21 }
+            }
+        }))
+        .unwrap();
+
+        let doc = layout_document(&snap, Some(180.0));
+        assert!(doc.width <= 180.0);
+        assert!(doc.height > 200.0);
+        assert!(doc
+            .items
+            .iter()
+            .any(|i| matches!(i, LaidOutItem::Image { alt_text, .. } if alt_text == "Chart")));
     }
 }
