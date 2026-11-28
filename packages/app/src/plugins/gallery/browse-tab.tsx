@@ -22,6 +22,7 @@ import {
   featuredListings,
   filterDirectory,
   formatInstallCount,
+  formatListingUpdatedAge,
   listingAuthor,
   listingAuthorAvatar,
   listingImages,
@@ -40,9 +41,10 @@ const SORTS: DirectorySort[] = ["popular", "recent", "name"];
 const FEATURED_FOUR_COLUMNS = 760;
 const LISTING_PAGE = 50;
 
-/** "author · 1.1k installs". */
+/** "author · 1.1k installs · Updated 8 hours ago". */
 export function useListingMeta() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const language = i18n.language;
   return useCallback(
     (listing: PluginListing) =>
       listing.installs === undefined
@@ -50,8 +52,10 @@ export function useListingMeta() {
         : `${listingAuthor(listing)} · ${t("settings.plugins.gallery.installs", {
             count: listing.installs,
             installs: formatInstallCount(listing.installs),
+          })} · ${t("settings.plugins.gallery.updatedAgo", {
+            duration: formatListingUpdatedAge(listing.updatedAt, language),
           })}`,
-    [t],
+    [language, t],
   );
 }
 

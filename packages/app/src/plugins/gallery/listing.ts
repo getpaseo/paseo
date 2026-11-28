@@ -58,6 +58,53 @@ export function formatInstallCount(count: number): string {
   return `${Math.round(count / 1000)}k`;
 }
 
+/** A localized age for registry listings: "8 hours ago", "3 weeks ago", or "1 year ago". */
+export function formatListingUpdatedAge(
+  updatedAt: string,
+  locale = "en",
+  now: Date = new Date(),
+): string {
+  const timestamp = Date.parse(updatedAt);
+  if (Number.isNaN(timestamp)) return "—";
+
+  const elapsedMs = Math.max(0, now.getTime() - timestamp);
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  const week = 7 * day;
+  const month = 30 * day;
+  const year = 365 * day;
+  let value: number;
+  let unit: Intl.RelativeTimeFormatUnit;
+
+  if (elapsedMs < day) {
+    if (elapsedMs < hour) {
+      value = Math.max(1, Math.floor(elapsedMs / minute));
+      unit = "minute";
+    } else {
+      value = Math.floor(elapsedMs / hour);
+      unit = "hour";
+    }
+  } else if (elapsedMs < week) {
+    value = Math.floor(elapsedMs / day);
+    unit = "day";
+  } else if (elapsedMs < month) {
+    value = Math.floor(elapsedMs / week);
+    unit = "week";
+  } else if (elapsedMs < year) {
+    value = Math.floor(elapsedMs / month);
+    unit = "month";
+  } else {
+    value = Math.floor(elapsedMs / year);
+    unit = "year";
+  }
+
+  return new Intl.RelativeTimeFormat(locale, { numeric: "always", style: "long" }).format(
+    -value,
+    unit,
+  );
+}
+
 /** The registry listing an installed plugin came from, if it came from one. */
 export function installedListingId(plugin: PluginListItem): string | undefined {
   const identity = plugin.installation?.identity;
