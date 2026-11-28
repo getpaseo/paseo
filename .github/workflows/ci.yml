@@ -217,6 +217,15 @@ jobs:
       - name: Verify website mockups
         run: npm run test:e2e --workspace=@getpaseo/website
 
+      - name: Upload website test artifacts
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: website-playwright-results
+          path: packages/website/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Verify public package contents
         run: |
           npm pack --dry-run --ignore-scripts --workspace=@getpaseo/protocol

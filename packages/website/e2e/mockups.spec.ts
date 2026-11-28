@@ -26,6 +26,24 @@ async function centerMockup(mockup: Locator) {
   );
 }
 
+/**
+ * Plays the scene clock until `shows` is visible. Bringing the mockup on screen starts the opening
+ * scene a few page tasks later: the start line's IntersectionObserver fires, then React runs the
+ * effect that starts the player. A clock advance sent right after the scroll can run before that.
+ */
+async function playUntilVisible(page: Page, shows: Locator) {
+  await expect
+    .poll(
+      async () => {
+        await page.clock.runFor(1000);
+        return shows.isVisible();
+      },
+      // The page clock is paused, so waiting between checks only spends the test's time.
+      { intervals: [0], timeout: 15_000 },
+    )
+    .toBe(true);
+}
+
 async function finishPanelSwap(page: Page, mockup: Locator, outgoingPanel: Locator) {
   await expect
     .poll(async () => {
@@ -178,8 +196,7 @@ test("the opening scene waits until most of the mockup is on screen", async ({ p
 
   await centerMockup(mockup);
   await expect(mockup).toBeInViewport({ ratio: 0.6 });
-  await page.clock.runFor(4500);
-  await expect(request).toBeVisible();
+  await playUntilVisible(page, request);
 });
 
 test("the opening scene starts in a window shorter than most of the mockup", async ({ page }) => {
@@ -189,8 +206,7 @@ test("the opening scene starts in a window shorter than most of the mockup", asy
   await centerMockup(mockup);
   await expect(mockup).toBeInViewport();
   await expect(mockup).not.toBeInViewport({ ratio: 0.6 });
-  await page.clock.runFor(4500);
-  await expect(request).toBeVisible();
+  await playUntilVisible(page, request);
 });
 
 test("the plugins scene installs the panel, then changes it on request", async ({ page }) => {
