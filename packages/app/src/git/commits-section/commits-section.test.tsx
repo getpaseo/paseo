@@ -49,14 +49,22 @@ afterEach(() => {
 });
 
 describe("CommitsSection", () => {
-  it("keeps its bottom edge above the device safe area", () => {
-    act(() => {
-      root?.render(
-        <CommitsSection serverId="server" cwd="/repo" onCommitPress={vi.fn()} collapsed />,
-      );
-    });
+  it.each([true, false])(
+    "keeps its bottom edge above the device safe area (collapsed: %s)",
+    (collapsed) => {
+      act(() => {
+        root?.render(
+          <CommitsSection
+            serverId="server"
+            cwd="/repo"
+            onCommitPress={vi.fn()}
+            collapsed={collapsed}
+          />,
+        );
+      });
 
-    const header = document.querySelector('[data-testid="commits-section-header"]');
-    expect(header?.parentElement?.getAttribute("style")).toContain("padding-bottom: 34px");
-  });
+      const header = document.querySelector('[data-testid="commits-section-header"]');
+      expect(header?.parentElement?.getAttribute("style")).toContain("padding-bottom: 34px");
+    },
+  );
 });
