@@ -7,7 +7,7 @@ import {
 } from "./agent-messages/index.js";
 import { expect, test, vi, onTestFinished } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -16862,4 +16862,407 @@ test("cancelAgentRun still force-cancels after 2s when an acknowledged non-ACP i
     await storage.flush();
     rmSync(workdir, { recursive: true, force: true });
   }
+});
+
+function completionHarness(
+  options: {
+    probe?: () => Promise<boolean>;
+    close?: () => Promise<void>;
+    protected?: () => boolean;
+  } = {},
+) {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-completion-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let closes = 0;
+  let turn = 0;
+  const resumedPrompts: AgentPromptInput[] = [];
+  const session = new (class extends TestAgentSession {
+    override async startTurn() {
+      return { turnId: `completion-${++turn}` };
+    }
+    async canStopRuntime() {
+      return options.probe?.() ?? true;
+    }
+    override async close() {
+      closes++;
+      await options.close?.();
+    }
+  })({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ) {
+      const resumed = await super.resumeSession(handle, config);
+      resumed.describePersistence = () => handle;
+      const start = resumed.startTurn.bind(resumed);
+      resumed.startTurn = (prompt, runOptions) => {
+        resumedPrompts.push(prompt);
+        return start(prompt, runOptions);
+      };
+      return resumed;
+    }
+    override async createSession() {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    isCompletionProtected: options.protected,
+    logger,
+  });
+  onTestFinished(async () => {
+    await manager.flush();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  return {
+    manager,
+    storage,
+    session,
+    workdir,
+    resumedPrompts,
+    get closes() {
+      return closes;
+    },
+  };
+}
+
+test("conditional completion preserves the successful report and closes without archiving", async () => {
+  const h = completionHarness();
+  const agent = await h.manager.createAgent({ provider: "codex", cwd: h.workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const run = h.manager.runAgent(agent.id, "finish work");
+  await vi.waitFor(() => expect(h.manager.getAgent(agent.id)?.activeTurnId).toBe("completion-1"));
+  const request = {
+    agentId: agent.id,
+    expectedTurnId: "completion-1",
+    reportReference: "report:1",
+    decisionReference: "decision:1",
+  };
+  expect((await h.manager.requestAgentCompletion(request)).status).toBe("requested");
+  expect(h.closes).toBe(0);
+  h.session.pushEvent({
+    type: "timeline",
+    provider: "codex",
+    turnId: "completion-1",
+    item: { type: "assistant_message", text: "Verified final report" },
+  });
+  h.session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "completion-1" });
+  expect((await run).finalText).toBe("Verified final report");
+  await vi.waitFor(async () =>
+    expect((await h.manager.getAgentCompletion(agent.id))?.status).toBe("completed"),
+  );
+  const stored = await h.storage.get(agent.id);
+  expect(stored).toMatchObject({
+    lastStatus: "closed",
+    requiresAttention: false,
+    completion: { finalReport: "Verified final report" },
+  });
+  expect(stored?.archivedAt).toBeFalsy();
+  expect(h.closes).toBe(1);
+});
+
+test("conditional completion is superseded by a new prompt during the provider probe", async () => {
+  const entered = deferred<void>();
+  const probe = deferred<boolean>();
+  const h = completionHarness({
+    probe: () => {
+      entered.resolve();
+      return probe.promise;
+    },
+  });
+  const agent = await h.manager.createAgent({ provider: "codex", cwd: h.workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const run = h.manager.runAgent(agent.id, "finish");
+  await vi.waitFor(() => expect(h.manager.getAgent(agent.id)?.activeTurnId).toBe("completion-1"));
+  await h.manager.requestAgentCompletion({
+    agentId: agent.id,
+    expectedTurnId: "completion-1",
+    reportReference: "report:1",
+    decisionReference: "decision:1",
+  });
+  h.session.pushEvent({
+    type: "timeline",
+    provider: "codex",
+    turnId: "completion-1",
+    item: { type: "assistant_message", text: "Done" },
+  });
+  h.session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "completion-1" });
+  await run;
+  await entered.promise;
+  const next = h.manager.runAgent(agent.id, "new instruction");
+  await vi.waitFor(() => expect(h.manager.getAgent(agent.id)?.activeTurnId).toBe("completion-2"));
+  probe.resolve(true);
+  await vi.waitFor(async () =>
+    expect((await h.manager.getAgentCompletion(agent.id))?.status).toBe("superseded"),
+  );
+  expect(h.closes).toBe(0);
+  h.session.pushEvent({
+    type: "timeline",
+    provider: "codex",
+    turnId: "completion-2",
+    item: { type: "assistant_message", text: "New answer" },
+  });
+  h.session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "completion-2" });
+  expect((await next).finalText).toBe("New answer");
+});
+
+async function startCompletion(h: ReturnType<typeof completionHarness>) {
+  const agent = await h.manager.createAgent({ provider: "codex", cwd: h.workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const run = h.manager.runAgent(agent.id, "finish");
+  await vi.waitFor(() => expect(h.manager.getAgent(agent.id)?.activeTurnId).toBe("completion-1"));
+  const request = {
+    agentId: agent.id,
+    expectedTurnId: "completion-1",
+    reportReference: "report:1",
+    decisionReference: "decision:1",
+  };
+  await h.manager.requestAgentCompletion(request);
+  return { agent, run, request };
+}
+
+function finishCompletionTurn(h: ReturnType<typeof completionHarness>, report = "Final report") {
+  if (report)
+    h.session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId: "completion-1",
+      item: { type: "assistant_message", text: report },
+    });
+  h.session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "completion-1" });
+}
+
+test("conditional completion queues a message during close and resumes the same session exactly once", async () => {
+  const entered = deferred<void>();
+  const gate = deferred<void>();
+  const h = completionHarness({
+    close: () => {
+      entered.resolve();
+      return gate.promise;
+    },
+  });
+  const { agent, run } = await startCompletion(h);
+  const handle = h.manager.getAgent(agent.id)?.persistence;
+  finishCompletionTurn(h);
+  await run;
+  await entered.promise;
+  const next = h.manager.runAgent(agent.id, "instruction during close");
+  expect(h.resumedPrompts).toEqual([]);
+  gate.resolve();
+  await next;
+  expect(h.resumedPrompts).toEqual(["instruction during close"]);
+  expect(h.manager.getAgent(agent.id)?.persistence).toEqual(handle);
+  expect(h.manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+  expect(h.closes).toBe(1);
+});
+
+test("conditional completion deduplicates concurrent requests and rejects stale turns", async () => {
+  const h = completionHarness();
+  const { agent, run, request } = await startCompletion(h);
+  const requests = await Promise.all(
+    Array.from({ length: 5 }, () => h.manager.requestAgentCompletion(request)),
+  );
+  expect(requests.every((item) => item.requestedAt === requests[0]?.requestedAt)).toBe(true);
+  await expect(
+    h.manager.requestAgentCompletion({ ...request, expectedTurnId: "wrong-turn" }),
+  ).rejects.toThrow("current active turn");
+  finishCompletionTurn(h);
+  await run;
+  await vi.waitFor(async () =>
+    expect((await h.manager.getAgentCompletion(agent.id))?.status).toBe("completed"),
+  );
+  expect((await h.manager.requestAgentCompletion(request)).status).toBe("completed");
+  expect(h.closes).toBe(1);
+});
+
+test.each([
+  "provider veto",
+  "queued work",
+  "missing report",
+  "permission",
+  "failed turn",
+  "canceled turn",
+])("conditional completion retains runtime for %s", async (reason) => {
+  const h = completionHarness({
+    probe: async () => reason !== "provider veto",
+    protected: () => reason === "queued work",
+  });
+  const { agent, run } = await startCompletion(h);
+  if (reason === "permission")
+    h.session.pushEvent({
+      type: "permission_requested",
+      provider: "codex",
+      turnId: "completion-1",
+      request: { id: "question", provider: "codex", kind: "tool", name: "User decision" },
+    });
+  if (reason === "canceled turn") {
+    h.session.pushEvent({ type: "turn_canceled", provider: "codex", turnId: "completion-1" });
+    await run.catch(() => undefined);
+  } else if (reason === "failed turn") {
+    h.session.pushEvent({
+      type: "turn_failed",
+      provider: "codex",
+      turnId: "completion-1",
+      error: "Provider failed",
+    });
+    await run.catch(() => undefined);
+  } else {
+    finishCompletionTurn(h, reason === "missing report" ? "" : "Final report");
+    await run;
+  }
+  await vi.waitFor(async () =>
+    expect((await h.manager.getAgentCompletion(agent.id))?.status).toBe("blocked"),
+  );
+  expect(h.closes).toBe(0);
+  expect(h.manager.getAgent(agent.id)).not.toBeNull();
+});
+
+test("conditional completion preserves attention and the final report when provider close fails", async () => {
+  let fail = true;
+  const h = completionHarness({
+    close: async () => {
+      if (fail) throw new Error("close refused");
+    },
+  });
+  const { agent, run } = await startCompletion(h);
+  finishCompletionTurn(h);
+  await run;
+  await vi.waitFor(async () =>
+    expect((await h.manager.getAgentCompletion(agent.id))?.status).toBe("failed"),
+  );
+  expect(await h.storage.get(agent.id)).toMatchObject({
+    requiresAttention: true,
+    completion: { finalReport: "Final report", reason: "close refused" },
+  });
+  expect(h.manager.getAgent(agent.id)).not.toBeNull();
+  fail = false;
+});
+
+test("conditional completion never replays a persisted request after restart", async () => {
+  const h = completionHarness();
+  const { agent, run, request } = await startCompletion(h);
+  const restarted = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: h.storage,
+    logger,
+  });
+  expect((await restarted.getAgentCompletion(agent.id))?.status).toBe("superseded");
+  expect((await restarted.requestAgentCompletion(request)).status).toBe("superseded");
+  expect(h.closes).toBe(0);
+  // Finish the original fixture without retaining a new daemon's obsolete completion request.
+  h.session.pushEvent({ type: "turn_canceled", provider: "codex", turnId: "completion-1" });
+  await run.catch(() => undefined);
+  await h.manager.flush();
+});
+
+test("conditional completion retains a late question in Waiting instead of clearing attention", async () => {
+  const entered = deferred<void>();
+  const gate = deferred<void>();
+  const h = completionHarness({
+    close: () => {
+      entered.resolve();
+      return gate.promise;
+    },
+  });
+  const { agent, run } = await startCompletion(h);
+  finishCompletionTurn(h);
+  await run;
+  await entered.promise;
+  h.session.pushEvent({
+    type: "permission_requested",
+    provider: "codex",
+    turnId: "completion-1",
+    request: { id: "late-question", provider: "codex", kind: "tool", name: "Human decision" },
+  });
+  await vi.waitFor(() => expect(h.manager.getPendingPermissions(agent.id)).toHaveLength(1));
+  gate.resolve();
+  await vi.waitFor(async () =>
+    expect((await h.manager.getAgentCompletion(agent.id))?.status).toBe("blocked"),
+  );
+  expect(await h.storage.get(agent.id)).toMatchObject({
+    requiresAttention: true,
+    attentionReason: "permission",
+    lastStatus: "closed",
+  });
+});
+
+test("conditional completion refuses to close when the final-report record cannot be written", async () => {
+  const h = completionHarness();
+  const { agent, run } = await startCompletion(h);
+  await h.manager.flush();
+  await h.storage.flush();
+  const storagePath = join(h.workdir, "agents");
+  const backup = join(h.workdir, "agents-backup");
+  renameSync(storagePath, backup);
+  writeFileSync(storagePath, "not a directory");
+  try {
+    finishCompletionTurn(h);
+    await run;
+    // Wait for the provider event and its deferred completion task to enter tracked work.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await h.manager.flush();
+    expect(h.closes).toBe(0);
+    expect(h.manager.getAgent(agent.id)?.attention.requiresAttention).toBe(true);
+  } finally {
+    rmSync(storagePath);
+    renameSync(backup, storagePath);
+  }
+  expect((await h.manager.getAgentCompletion(agent.id))?.status).not.toBe("completed");
+});
+
+test("conditional completion retains a parent that still owns an idle managed child", async () => {
+  const h = completionHarness();
+  const { agent, run } = await startCompletion(h);
+  await h.manager.createAgent({ provider: "codex", cwd: h.workdir }, undefined, {
+    workspaceId: undefined,
+    labels: { [PARENT_AGENT_ID_LABEL]: agent.id },
+  });
+  finishCompletionTurn(h);
+  await run;
+  await vi.waitFor(async () =>
+    expect((await h.manager.getAgentCompletion(agent.id))?.status).toBe("blocked"),
+  );
+  expect(h.closes).toBe(0);
+});
+
+test("conditional completion preserves attention when the closed snapshot cannot be saved", async () => {
+  const entered = deferred<void>();
+  const gate = deferred<void>();
+  const h = completionHarness({
+    close: () => {
+      entered.resolve();
+      return gate.promise;
+    },
+  });
+  const { agent, run } = await startCompletion(h);
+  finishCompletionTurn(h);
+  await run;
+  await entered.promise;
+  await h.storage.flush();
+  const storagePath = join(h.workdir, "agents");
+  const backup = join(h.workdir, "agents-backup");
+  renameSync(storagePath, backup);
+  writeFileSync(storagePath, "not a directory");
+  try {
+    gate.resolve();
+    await h.manager.flush();
+    expect(h.closes).toBe(1);
+    expect(h.manager.getAgent(agent.id)).toBeNull();
+  } finally {
+    rmSync(storagePath);
+    renameSync(backup, storagePath);
+  }
+  const stored = await h.storage.get(agent.id);
+  expect(stored).toMatchObject({
+    requiresAttention: true,
+    completion: { finalReport: "Final report" },
+  });
+  expect(stored?.completion?.status).not.toBe("completed");
 });

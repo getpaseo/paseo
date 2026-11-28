@@ -15,6 +15,7 @@ import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
+import { AgentCompletionSchema, type AgentCompletion } from "./completion/index.js";
 import { controlsFromFeatures } from "@getpaseo/protocol/option-controls";
 import { foldFeatureValues } from "./option-controls.js";
 
@@ -65,6 +66,7 @@ const RAW_STORED_AGENT_SCHEMA = z.object({
   metadata: z.record(z.string(), z.custom<JsonValue>()).default({}),
   lastStatus: AgentStatusSchema.default("closed"),
   resumeOnStartup: z.boolean().optional(),
+  completion: AgentCompletionSchema.optional(),
   lastModeId: z.string().nullable().optional(),
   config: SERIALIZABLE_CONFIG_SCHEMA,
   launchEnv: z.record(z.string(), z.string()).optional(),
@@ -301,6 +303,21 @@ export class AgentStorage {
     await this.queueRecordWrite(record);
   }
 
+  async setCompletion(agentId: string, completion: AgentCompletion): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) throw new Error(`Agent ${agentId} not found`);
+      const record = { ...existing, completion };
+      if (completion.status === "completed") {
+        record.requiresAttention = false;
+        record.attentionReason = null;
+        record.attentionTimestamp = null;
+        record.resumeOnStartup = false;
+      }
+      return record;
+    });
+  }
+
   private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
     return this.queueRecordMutation(record.id, () => record);
   }
@@ -421,6 +438,7 @@ export class AgentStorage {
       if (existing && existing.archivedAt !== undefined) {
         record.archivedAt = existing.archivedAt;
       }
+      if (existing?.completion) record.completion = existing.completion;
       // Background is fixed at creation; a runtime opened without it cannot clear it.
       if (existing?.background) record.background = true;
       record.resumeOnStartup =

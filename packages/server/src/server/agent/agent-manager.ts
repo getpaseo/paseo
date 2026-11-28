@@ -87,6 +87,12 @@ import {
   type ProviderOptionsPatch,
 } from "./option-controls.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
+import {
+  AgentCompletionInputSchema,
+  type AgentCompletion,
+  type AgentCompletionInput,
+} from "./completion/index.js";
+import { withTimeout } from "../../utils/promise-timeout.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
   InMemoryAgentTimelineStore,
@@ -132,7 +138,6 @@ import {
   type DaemonBackgroundWorkInput,
   type DaemonBackgroundWorkKey,
 } from "./background-work/index.js";
-import { withTimeout } from "../../utils/promise-timeout.js";
 import { buildSessionConfig, extractAttention } from "../persistence-hooks.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
@@ -428,6 +433,7 @@ export interface AgentManagerOptions {
   providerDefinitions?: ProviderEnabledMap;
   idFactory?: () => string;
   registry?: AgentStorage;
+  isCompletionProtected?: (agentId: string) => boolean;
   onAgentAttention?: AgentAttentionCallback;
   onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   timelineStore?: InMemoryAgentTimelineStore;
@@ -967,6 +973,16 @@ export class AgentManager {
     AgentSession,
     { readonly openedAt: number }
   >();
+  private readonly completionRequests = new Map<
+    string,
+    {
+      request: AgentCompletion;
+      agent: LiveManagedAgent;
+      lastUserMessageAt: Date | null;
+      superseded: boolean;
+    }
+  >();
+  private readonly isCompletionProtected?: (agentId: string) => boolean;
   private readonly collectingRuntimes = new Set<string>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly pendingCancellations = new Map<string, Promise<unknown>>();
@@ -995,6 +1011,7 @@ export class AgentManager {
     this.timelineStore = options.timelineStore ?? new InMemoryAgentTimelineStore();
     this.idFactory = options.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
+    this.isCompletionProtected = options.isCompletionProtected;
     this.durableTimelineStore = options?.durableTimelineStore;
     this.onAgentAttention = options?.onAgentAttention;
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
@@ -2396,6 +2413,224 @@ export class AgentManager {
     );
   }
 
+  /** Agent-scoped tools bind agentId; callers must supply the current turn explicitly. */
+  async requestAgentCompletion(
+    input: AgentCompletionInput & { agentId: string },
+  ): Promise<AgentCompletion> {
+    return this.runLifecycleMutation(input.agentId, () =>
+      this.requestAgentCompletionUnlocked(input),
+    );
+  }
+
+  private async requestAgentCompletionUnlocked(
+    input: AgentCompletionInput & { agentId: string },
+  ): Promise<AgentCompletion> {
+    const parsed = AgentCompletionInputSchema.parse(input);
+    const registry = this.requireRegistry();
+    const existing = await this.getAgentCompletion(input.agentId);
+    if (existing?.expectedTurnId === parsed.expectedTurnId) return existing;
+    const agent = this.requireSessionAgent(input.agentId);
+    if (agent.activeTurnId !== parsed.expectedTurnId || agent.internal) {
+      throw new Error("Completion requires the caller's current active turn");
+    }
+    const request: AgentCompletion = {
+      ...parsed,
+      status: "requested",
+      requestedAt: new Date().toISOString(),
+    };
+    const pending = {
+      request,
+      agent,
+      lastUserMessageAt: agent.lastUserMessageAt,
+      superseded: false,
+    };
+    this.completionRequests.set(agent.id, pending);
+    try {
+      await registry.setCompletion(agent.id, request);
+    } catch (error) {
+      if (this.completionRequests.get(agent.id) === pending)
+        this.completionRequests.delete(agent.id);
+      throw error;
+    }
+    if (agent.activeTurnId !== parsed.expectedTurnId || this.agents.get(agent.id) !== agent) {
+      const superseded: AgentCompletion = {
+        ...request,
+        status: "superseded",
+        reason: "Turn changed while saving request",
+        resolvedAt: new Date().toISOString(),
+      };
+      await registry.setCompletion(agent.id, superseded);
+      if (this.completionRequests.get(agent.id) === pending)
+        this.completionRequests.delete(agent.id);
+      return superseded;
+    }
+    return request;
+  }
+
+  async getAgentCompletion(agentId: string): Promise<AgentCompletion | null> {
+    const registry = this.requireRegistry();
+    const record = await registry.get(agentId);
+    const completion = record?.completion;
+    if (!completion) return null;
+    // Requests are tied to this process and runtime. Never replay them after restart.
+    if (completion.status === "requested" && !this.completionRequests.has(agentId)) {
+      const superseded: AgentCompletion = {
+        ...completion,
+        status: "superseded",
+        reason: "Request runtime is no longer current",
+        resolvedAt: new Date().toISOString(),
+      };
+      await registry.setCompletion(agentId, superseded);
+      return superseded;
+    }
+    return completion;
+  }
+
+  private completionHasPendingWork(agent: LiveManagedAgent): boolean {
+    if (this.isCompletionProtected?.(agent.id) || this.hasPendingWakeup(agent.id)) return true;
+    if (this.backgroundWork.list(agent.id).length > 0) return true;
+    // A child can still own a question or queued work while its provider is idle.
+    for (const child of this.agents.values()) {
+      if (getParentAgentIdFromLabels(child.labels) === agent.id) return true;
+    }
+    return false;
+  }
+
+  private scheduleCompletion(
+    agentId: string,
+    turnId: string | undefined,
+    succeeded: boolean,
+    disposition: ActiveTurnTerminalDisposition,
+  ): void {
+    if (disposition !== "closed_current") return;
+    const pending = this.completionRequests.get(agentId);
+    if (!pending || pending.request.expectedTurnId !== turnId) return;
+    // Let stream consumers settle before releasing the runtime they are reading.
+    setImmediate(() => {
+      const task = this.finishCompletion(agentId, pending, succeeded).catch((err) => {
+        this.logger.error({ err, agentId }, "Failed to resolve agent completion");
+      });
+      this.trackBackgroundTask(task);
+    });
+  }
+
+  private async finishCompletion(
+    agentId: string,
+    pending: {
+      request: AgentCompletion;
+      agent: LiveManagedAgent;
+      lastUserMessageAt: Date | null;
+      superseded: boolean;
+    },
+    succeeded: boolean,
+  ): Promise<void> {
+    if (this.completionRequests.get(agentId) !== pending) return;
+    const registry = this.requireRegistry();
+    const { agent, request } = pending;
+    let savedReport: string | undefined;
+    const wasSuperseded = () =>
+      pending.superseded ||
+      agent.lastUserMessageAt !== pending.lastUserMessageAt ||
+      this.agents.get(agentId) !== agent;
+    const resolveCompletion = async (
+      status: AgentCompletion["status"],
+      reason?: string,
+      finalReport?: string,
+    ) => {
+      const completion: AgentCompletion = {
+        ...request,
+        status,
+        reason,
+        finalReport: finalReport ?? savedReport,
+        resolvedAt: new Date().toISOString(),
+      };
+      await registry.setCompletion(agentId, completion);
+      return completion;
+    };
+    try {
+      if (!succeeded) {
+        await resolveCompletion("blocked", "Turn did not succeed");
+        return;
+      }
+      const candidate = this.getRuntimeCleanupCandidates().find((item) => item.agentId === agentId);
+      const isCurrent = () =>
+        this.completionRequests.get(agentId) === pending && this.agents.get(agentId) === agent;
+      const isSafe = () =>
+        isCurrent() && !!candidate?.isEligible() && !this.completionHasPendingWork(agent);
+      if (!isSafe()) {
+        await resolveCompletion(
+          wasSuperseded() ? "superseded" : "blocked",
+          "Runtime has new activity or pending work",
+        );
+        return;
+      }
+      const rows = this.timelineStore.getRows(agentId);
+      const report = rows
+        .toReversed()
+        .find(
+          (row) => row.turnId === request.expectedTurnId && row.item.type === "assistant_message",
+        );
+      if (!report || report.item.type !== "assistant_message" || !report.item.text.trim()) {
+        await resolveCompletion("blocked", "Successful turn has no final assistant report");
+        return;
+      }
+      const finalReport = report.item.text;
+      // The atomic record write must succeed before runtime ownership is released.
+      await registry.setCompletion(agentId, { ...request, finalReport });
+      savedReport = finalReport;
+      const providerAllows = candidate?.canStopRuntime
+        ? await withTimeout(candidate.canStopRuntime(), 10_000, "Completion safety probe timed out")
+        : false;
+      if (!providerAllows || !isSafe()) {
+        await resolveCompletion(
+          wasSuperseded() ? "superseded" : "blocked",
+          "Runtime changed or provider vetoed completion",
+          finalReport,
+        );
+        return;
+      }
+      this.collectingRuntimes.add(agentId);
+      try {
+        await this.runLifecycleMutation(agentId, async () => {
+          let shutdownSafe = true;
+          const closed = await this.closeAgentRuntime(agentId, isSafe, {
+            onRuntimeClosed: () => {
+              if (agent.pendingPermissions.size > 0) {
+                agent.attention = {
+                  requiresAttention: true,
+                  attentionReason: "permission",
+                  attentionTimestamp: new Date(),
+                };
+              }
+              shutdownSafe =
+                agent.pendingPermissions.size === 0 &&
+                agent.inFlightPermissionResponses.size === 0 &&
+                !this.completionHasPendingWork(agent) &&
+                !pending.superseded;
+            },
+          });
+          if (!closed) {
+            await resolveCompletion("superseded", "Runtime changed before close", finalReport);
+            return;
+          }
+          if (!shutdownSafe) {
+            await resolveCompletion("blocked", "Work arrived during runtime shutdown", finalReport);
+            return;
+          }
+          await resolveCompletion("completed", undefined, finalReport);
+          const stored = await registry.get(agentId);
+          if (stored) this.dispatchStoredAgentState(stored);
+        });
+      } finally {
+        this.collectingRuntimes.delete(agentId);
+      }
+    } catch (err) {
+      await resolveCompletion("failed", err instanceof Error ? err.message : "Completion failed");
+    } finally {
+      if (this.completionRequests.get(agentId) === pending) this.completionRequests.delete(agentId);
+    }
+  }
+
   closeAgent(agentId: string): Promise<void> {
     const existing = this.inFlightAgentCloses.get(agentId);
     if (existing) {
@@ -2419,7 +2654,7 @@ export class AgentManager {
   private async closeAgentRuntime(
     agentId: string,
     canClose?: () => boolean,
-    options?: { emitState?: boolean },
+    options?: { emitState?: boolean; onRuntimeClosed?: () => void },
   ): Promise<ManagedAgentClosed | null> {
     const agent = this.requireAgent(agentId);
     this.logger.trace(
@@ -2440,6 +2675,7 @@ export class AgentManager {
     // native writer, so publishing a resumable closed snapshot would orphan it.
     await agent.session.close();
     await this.drainSessionEvents(agentId);
+    options?.onRuntimeClosed?.();
     this.cancelRunningProviderSubagents(agentId);
     // close() drops the session's subscribers before the provider could report an empty list.
     this.clearProviderBackgroundWork(agentId);
@@ -3825,6 +4061,8 @@ export class AgentManager {
   }
 
   private openActiveTurn(agent: ActiveManagedAgent, turnId: string, startedAt: Date): void {
+    const completion = this.completionRequests.get(agent.id);
+    if (completion && completion.request.expectedTurnId !== turnId) completion.superseded = true;
     agent.activeTurnId = turnId;
     agent.activeTurnStartedAt = startedAt;
   }
@@ -5591,6 +5829,12 @@ export class AgentManager {
 
     if (!options?.fromHistory) {
       if (isTurnTerminalEvent(event)) {
+        this.scheduleCompletion(
+          agent.id,
+          eventTurnId,
+          event.type === "turn_completed",
+          terminalDisposition,
+        );
         this.runs.settleTerminalRun(agent.id, eventTurnId);
         if (isForegroundEvent) {
           this.finalizeForegroundTurn(agent, eventTurnId);

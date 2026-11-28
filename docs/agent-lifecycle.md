@@ -33,6 +33,31 @@ This is best-effort continuation. A crash between saving intent and dispatching 
 or repeat a continuation. Provider resume owns conversation restoration; there is no recovery retry
 loop or exactly-once turn guarantee.
 
+## 현재 턴의 조건부 완료
+
+에이전트 전용 MCP의 `request_agent_completion`은 호출자 자신의 `expectedTurnId`,
+`reportReference`, `decisionReference`를 받는다. 현재 실행 중인 턴만 요청할 수 있으며,
+동일 턴의 재요청은 저장된 결과를 반환한다. 다른 에이전트 ID나 최상위 MCP 호출은 허용하지 않는다.
+`get_agent_completion`은 호출자의 마지막 요청을 조회한다.
+
+요청은 즉시 종료하지 않는다. 성공한 턴의 최종 assistant 응답을 원자적으로 저장한 뒤,
+새 활동·질문·권한 응답·배경 작업·자식 세션·예약 깨우기·메시지 전달·완료 구독이 없는지 확인한다.
+Provider의 `canStopRuntime()`도 명시적으로 허용해야 한다. 검사 미지원·거부·오류·시간 초과는
+완료로 처리하지 않는다. 진행 중인 턴과 최종 보고가 없는 턴도 종료하지 않는다.
+
+닫기 직전까지 들어온 새 프롬프트나 새 턴은 요청을 `superseded`로 만든다.
+닫기가 시작된 뒤의 프롬프트는 기존 lifecycle lane에서 기다렸다가 같은 저장 세션을 재개한다.
+종료 성공과 저장 성공을 모두 확인한 뒤에만 attention과 재시작 의도를 지운다.
+`closed`와 attention 없음이 완료를 나타내며, archive나 기록 삭제는 하지 않는다.
+종료 중 질문이나 보호 작업이 생기면 attention을 유지한다.
+
+`completion` 레코드의 상태는 `requested`, `completed`, `blocked`, `superseded`, `failed`다.
+참조와 최종 보고 본문, 요청·해결 시각, 실패 이유를 저장한다. 실패 시 런타임 소유권이나
+미확인 attention을 완료로 숨기지 않는다. 데몬 재시작 후 남은 `requested`는 조회 시
+`superseded`로 바뀌며 자동 실행하거나 다시 시도하지 않는다. 완료 요청은 정책 판단을
+대신하지 않으므로, 호출자는 가역적인 후속 작업을 먼저 처리하고 사람의 결정이 필요한
+작업은 질문 UI에 남긴 뒤 완료 요청을 생략해야 한다.
+
 ## Runtime residency
 
 An unarchived agent may be `closed` without being deleted or archived. Closing releases its provider

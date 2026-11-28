@@ -1,10 +1,11 @@
+import { ensureAgentLoaded } from "./agent-loading.js";
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
@@ -1188,3 +1189,125 @@ describe("agent MCP protocol negotiation", () => {
     }
   }, 30_000);
 });
+
+test("agent MCP protocol negotiation supports conditional self-completion and preserves provider history", async () => {
+  const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-completion-e2e-"));
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered = () => {};
+  const ready = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const clients = createTestAgentClients({
+    supportsMcpServers: true,
+    beforeTurnComplete: async () => {
+      entered();
+      await gate;
+    },
+  });
+  const recorder: LaunchRecorder = { recordedLaunches: [] };
+  const inner = clients.codex;
+  if (!inner) throw new Error("Missing fake Codex client");
+  // This provider fixture has no external background tasks. Its completion probe is explicit.
+  const recording = new RecordingAgentClient(inner, recorder);
+  const create = recording.createSession.bind(recording);
+  recording.createSession = async (...args) => {
+    const session = await create(...args);
+    session.canStopRuntime = async () => session.getPendingPermissions().length === 0;
+    return session;
+  };
+  const daemon = await createPaseoDaemon(
+    {
+      listen: `127.0.0.1:${await getAvailablePort()}`,
+      paseoHome,
+      staticDir: paseoHome,
+      corsAllowedOrigins: [],
+      hostnames: true,
+      mcpEnabled: true,
+      agentClients: { ...clients, codex: recording },
+      agentStoragePath: path.join(paseoHome, "agents"),
+    },
+    pino({ level: "silent" }),
+  );
+  let client: McpClient | undefined;
+  let topLevel: McpClient | undefined;
+  try {
+    await daemon.start();
+    const agent = await daemon.agentManager.createAgent(
+      { provider: "codex", cwd: paseoHome },
+      undefined,
+      {},
+    );
+    const injected = recorder.recordedLaunches.at(-1)?.mcpServers?.paseo;
+    if (!injected || injected.type !== "http") throw new Error("Missing injected MCP endpoint");
+    const token = daemon.agentManager.getMcpAuthToken() ?? undefined;
+    client = await createMcpClient(injected.url, token);
+    const rootUrl = new URL(injected.url);
+    rootUrl.search = "";
+    topLevel = await createMcpClient(rootUrl.href, token);
+    const run = daemon.agentManager.runAgent(agent.id, "completion e2e final report");
+    await ready;
+    const turnId = daemon.agentManager.getAgent(agent.id)?.activeTurnId;
+    if (!turnId) throw new Error("Missing active turn");
+    const args = {
+      expectedTurnId: turnId,
+      reportReference: "test:final-report",
+      decisionReference: "test:decision",
+    };
+    const unscoped = await topLevel.callTool({ name: "request_agent_completion", args });
+    expect(unscoped.isError).toBe(true);
+    const stale = await client.callTool({
+      name: "request_agent_completion",
+      args: { ...args, expectedTurnId: "stale" },
+    });
+    expect(stale.isError).toBe(true);
+    const spoofed = await client.callTool({
+      name: "request_agent_completion",
+      args: { ...args, agentId: "other-agent" },
+    });
+    expect(spoofed.isError).toBe(true);
+    const response = await client.callTool({ name: "request_agent_completion", args });
+    expect(response.isError).not.toBe(true);
+    expect(getStructuredContent(response)?.completion).toMatchObject({
+      status: "requested",
+      expectedTurnId: turnId,
+    });
+    expect(daemon.agentManager.getAgent(agent.id)?.lifecycle).toBe("running");
+    release();
+    const result = await run;
+    await vi.waitFor(async () => {
+      const status = await client?.callTool({ name: "get_agent_completion", args: {} });
+      expect(status && getStructuredContent(status)?.completion).toMatchObject({
+        status: "completed",
+        finalReport: result.finalText,
+      });
+    });
+    const stored = await daemon.agentStorage.get(agent.id);
+    expect(stored).toMatchObject({ lastStatus: "closed", requiresAttention: false });
+    expect(stored?.archivedAt).toBeFalsy();
+    expect(stored?.persistence?.sessionId).toBeTruthy();
+    const repeated = await client.callTool({ name: "request_agent_completion", args });
+    expect(getStructuredContent(repeated)?.completion).toMatchObject({ status: "completed" });
+    const history = await ensureAgentLoaded(agent.id, {
+      agentManager: daemon.agentManager,
+      agentStorage: daemon.agentStorage,
+      logger: pino({ level: "silent" }),
+    });
+    expect(history.id).toBe(agent.id);
+    const rows = await daemon.agentManager.getTimelineRows(agent.id);
+    expect(
+      rows
+        .filter((row) => row.item.type === "assistant_message")
+        .map((row) => (row.item.type === "assistant_message" ? row.item.text : ""))
+        .join(""),
+    ).toContain(result.finalText);
+  } finally {
+    release();
+    await client?.close();
+    await topLevel?.close();
+    await daemon.stop();
+    await rm(paseoHome, { recursive: true, force: true });
+  }
+}, 30_000);

@@ -1,3 +1,4 @@
+import { AgentCompletionInputSchema, AgentCompletionSchema } from "../completion/index.js";
 import type { ChangeRequestWatches } from "../change-request-watches/index.js";
 import { changeRequestStatusSchema } from "../../../services/change-request-source.js";
 import { registerPluginTools } from "./plugin-tools.js";
@@ -2316,6 +2317,43 @@ function createToolCatalog(
         content: [],
         structuredContent: ensureValidJson({ success: true }),
       };
+    },
+  );
+
+  registerTool(
+    "request_agent_completion",
+    {
+      title: "Request completion of the current turn",
+      description:
+        "Request safe self-completion after this turn succeeds with a final report. Keeps history, releases the runtime, and clears attention only when no new activity or pending work exists. Does not archive. Supply the current turn ID and durable report and decision references.",
+      inputSchema: AgentCompletionInputSchema.strict(),
+      outputSchema: { completion: AgentCompletionSchema },
+    },
+    async (input) => {
+      if (!callerAgentId)
+        throw new PaseoToolInputError("Completion requires an agent-scoped session");
+      const completion = await agentManager.requestAgentCompletion({
+        ...input,
+        agentId: callerAgentId,
+      });
+      return { content: [], structuredContent: ensureValidJson({ completion }) };
+    },
+  );
+
+  registerTool(
+    "get_agent_completion",
+    {
+      title: "Read self-completion status",
+      description:
+        "Read this session's last durable completion request. Requests are never replayed after daemon restart.",
+      inputSchema: {},
+      outputSchema: { completion: AgentCompletionSchema.nullable() },
+    },
+    async () => {
+      if (!callerAgentId)
+        throw new PaseoToolInputError("Completion requires an agent-scoped session");
+      const completion = await agentManager.getAgentCompletion(callerAgentId);
+      return { content: [], structuredContent: ensureValidJson({ completion }) };
     },
   );
 
