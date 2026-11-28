@@ -72,41 +72,14 @@ export function createAgentToolGroupPatch(input: {
 }
 
 /**
- * Writes the main switch when it differs from the host, and only the groups the user changed. The
- * groups sit in a collapsed row, so a group the user never touched keeps the host's value.
+ * Setup only sets the main switch. It never writes tool groups, so the host keeps the groups saved
+ * in Settings. An unknown host state is always written.
  */
 export function createOnboardingAgentToolsPatch(input: {
   enabled: boolean;
-  changedGroups: Partial<AgentToolGroupsState>;
-  current: { enabled: boolean; groups: AgentToolGroupsState } | null;
+  currentEnabled: boolean | null;
   supportsToolsConfig: boolean;
 }): MutableDaemonConfigPatch | null {
-  const { enabled, changedGroups, current, supportsToolsConfig } = input;
-  const writesEnabled = current === null || current.enabled !== enabled;
-  const groups: Partial<AgentToolGroupsState> = {};
-  for (const group of AGENT_TOOL_GROUP_ORDER) {
-    const value = changedGroups[group];
-    if (value !== undefined && (current === null || current.groups[group] !== value)) {
-      groups[group] = value;
-    }
-  }
-  const writesGroups = Object.keys(groups).length > 0;
-  if (supportsToolsConfig) {
-    if (!writesEnabled && !writesGroups) return null;
-    return {
-      tools: {
-        ...(writesEnabled ? { enabled } : {}),
-        ...(writesGroups ? { groups } : {}),
-      },
-    };
-  }
-  // COMPAT(daemonToolsConfig): added in v0.18.2, remove after 2027-06-01.
-  const patch: MutableDaemonConfigPatch = {};
-  if (writesEnabled) {
-    patch.mcp = { injectIntoAgents: enabled };
-  }
-  if (groups.browser !== undefined) {
-    patch.browserTools = { enabled: groups.browser };
-  }
-  return Object.keys(patch).length > 0 ? patch : null;
+  if (input.currentEnabled === input.enabled) return null;
+  return createAgentToolsMasterPatch(input);
 }

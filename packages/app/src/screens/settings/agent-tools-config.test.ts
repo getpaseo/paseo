@@ -135,17 +135,11 @@ describe("agent tools UI state and legacy daemon compatibility", () => {
     ).toBeNull();
   });
 
-  it("creates minimal onboarding patches for modern and legacy daemons", () => {
-    const current = {
-      enabled: true,
-      groups: { ...DEFAULT_AGENT_TOOL_GROUPS },
-    };
-
+  it("setup writes only the main switch, and only when it differs from the host", () => {
     expect(
       createOnboardingAgentToolsPatch({
         enabled: true,
-        changedGroups: {},
-        current,
+        currentEnabled: true,
         supportsToolsConfig: true,
       }),
     ).toBeNull();
@@ -153,57 +147,26 @@ describe("agent tools UI state and legacy daemon compatibility", () => {
     expect(
       createOnboardingAgentToolsPatch({
         enabled: true,
-        changedGroups: { schedules: false, browser: true },
-        current,
+        currentEnabled: false,
         supportsToolsConfig: true,
       }),
-    ).toEqual({
-      tools: {
-        groups: {
-          schedules: false,
-          browser: true,
-        },
-      },
-    });
-
-    expect(
-      createOnboardingAgentToolsPatch({
-        enabled: false,
-        changedGroups: { browser: true },
-        current,
-        supportsToolsConfig: false,
-      }),
-    ).toEqual({
-      mcp: { injectIntoAgents: false },
-      browserTools: { enabled: true },
-    });
-  });
-
-  it("keeps the host's tool groups when setup continues without changing them", () => {
-    const current = {
-      enabled: true,
-      groups: { ...DEFAULT_AGENT_TOOL_GROUPS, schedules: false, browser: true },
-    };
-
-    for (const supportsToolsConfig of [true, false]) {
-      expect(
-        createOnboardingAgentToolsPatch({
-          enabled: true,
-          changedGroups: {},
-          current,
-          supportsToolsConfig,
-        }),
-      ).toBeNull();
-    }
+    ).toEqual({ tools: { enabled: true } });
 
     expect(
       createOnboardingAgentToolsPatch({
         enabled: true,
-        changedGroups: {},
-        current: { ...current, enabled: false },
+        currentEnabled: null,
         supportsToolsConfig: true,
       }),
     ).toEqual({ tools: { enabled: true } });
+
+    expect(
+      createOnboardingAgentToolsPatch({
+        enabled: false,
+        currentEnabled: true,
+        supportsToolsConfig: false,
+      }),
+    ).toEqual({ mcp: { injectIntoAgents: false } });
   });
 
   it("reports whether host agent tools are enabled for Voice UI checks", () => {

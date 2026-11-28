@@ -428,7 +428,7 @@ test("setup choices carry over to Settings and the phone step pairs over relay",
   }
 });
 
-test("Continue on Orchestration keeps the host's tool groups", async ({ page }) => {
+test("setup offers only Enable tools and keeps the host's tool groups", async ({ page }) => {
   const host = await startSetupHost("tool-groups");
 
   try {
@@ -438,6 +438,10 @@ test("Continue on Orchestration keeps the host's tool groups", async ({ page }) 
     await goToSetupStep(page, "Orchestration");
     await expectSetupStep(page, "Let agents use Paseo");
     await expect(paseoToolsSwitch(setupModal(page))).toBeChecked();
+    // Setup offers only the main switch; tool groups live in Settings.
+    await expect(
+      setupModal(page).getByRole("switch", { name: "Browser", exact: true }),
+    ).toHaveCount(0);
     await continueSetup(page);
     await expectSetupStep(page, "Take your agents with you");
 

@@ -12,10 +12,7 @@ import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostFeature } from "@/runtime/host-features";
 import {
   createOnboardingAgentToolsPatch,
-  DEFAULT_AGENT_TOOL_GROUPS,
-  resolveAgentToolsState,
-  type AgentToolGroupId,
-  type AgentToolGroupsState,
+  isHostAgentToolsEnabled,
 } from "@/screens/settings/agent-tools-config";
 
 export type OrchestrationChoice = "tools" | "skills" | "cli";
@@ -25,10 +22,7 @@ const ALL_ON: Choices = { tools: true, skills: true, cli: true };
 
 export interface OrchestrationSetupController {
   choices: Choices;
-  toolGroups: AgentToolGroupsState;
-  supportsToolGroups: boolean;
   setChoice: (choice: OrchestrationChoice, on: boolean) => void;
-  setToolGroup: (group: AgentToolGroupId, on: boolean) => void;
   /** Only the choices this host and app can act on: skills need host support, the CLI the desktop app. */
   offered: Choices;
   /** The skills row's picker and Update act on the host directly, through this. */
@@ -50,10 +44,9 @@ export function useOrchestrationSetup(serverId: string): OrchestrationSetupContr
   const toast = useToast();
   const skills = useAgentSkills(serverId);
   const cli = useCliInstall();
-  const supportsToolGroups = useHostFeature(serverId, "daemonToolsConfig");
+  const supportsToolsConfig = useHostFeature(serverId, "daemonToolsConfig");
   const { config, patchConfig } = useDaemonConfig(serverId);
   const [chosen, setChosen] = useState<Choices>(ALL_ON);
-  const [changedToolGroups, setChangedToolGroups] = useState<Partial<AgentToolGroupsState>>({});
   // With nothing picked there is nothing to install, so skills read as off, as they do in Settings.
   const skillsSelected = skills.status === null || hasSelectedSkills(skills.status);
   const choices = useMemo<Choices>(
@@ -71,21 +64,9 @@ export function useOrchestrationSetup(serverId: string): OrchestrationSetupContr
     setChosen((current) => ({ ...current, [choice]: on }));
   }, []);
 
-  const setToolGroup = useCallback((group: AgentToolGroupId, on: boolean) => {
-    setChangedToolGroups((current) => ({ ...current, [group]: on }));
-  }, []);
-
   // What the host and this computer have now, or null while it is still being read. A choice is
   // skipped only when it is known to match; an unknown state is always written.
-  const currentToolsState = useMemo(
-    () =>
-      config ? resolveAgentToolsState({ config, supportsToolsConfig: supportsToolGroups }) : null,
-    [config, supportsToolGroups],
-  );
-  const toolGroups = useMemo<AgentToolGroupsState>(
-    () => ({ ...(currentToolsState?.groups ?? DEFAULT_AGENT_TOOL_GROUPS), ...changedToolGroups }),
-    [currentToolsState, changedToolGroups],
-  );
+  const toolsEnabled = config ? isHostAgentToolsEnabled(config) : null;
   const skillsInstalled = skills.status ? areSkillsInstalled(skills.status) : null;
   const cliInstalled = cli.status ? cli.status.installed : null;
   const { reconcile, uninstall } = skills;
@@ -96,9 +77,8 @@ export function useOrchestrationSetup(serverId: string): OrchestrationSetupContr
   const applyTools = useCallback(() => {
     const patch = createOnboardingAgentToolsPatch({
       enabled: choices.tools,
-      changedGroups: changedToolGroups,
-      current: currentToolsState,
-      supportsToolsConfig: supportsToolGroups,
+      currentEnabled: toolsEnabled,
+      supportsToolsConfig,
     });
     if (!patch) return Promise.resolve(true);
     return patchConfig(patch)
@@ -107,15 +87,7 @@ export function useOrchestrationSetup(serverId: string): OrchestrationSetupContr
         if (!done) toast.error(t("settings.host.orchestration.enableTools.updateFailed"));
         return done;
       });
-  }, [
-    changedToolGroups,
-    choices.tools,
-    currentToolsState,
-    patchConfig,
-    supportsToolGroups,
-    t,
-    toast,
-  ]);
+  }, [choices.tools, toolsEnabled, patchConfig, supportsToolsConfig, t, toast]);
 
   const setSkillsInstalled = useCallback(
     (on: boolean) => (on ? reconcile() : uninstall()),
@@ -150,10 +122,7 @@ export function useOrchestrationSetup(serverId: string): OrchestrationSetupContr
 
   return {
     choices,
-    toolGroups,
-    supportsToolGroups,
     setChoice,
-    setToolGroup,
     offered,
     skills,
     isApplying,

@@ -117,7 +117,33 @@ export function HostAgentToolsRow({ serverId }: { serverId: string }) {
   );
 }
 
-/** Expandable "Enable tools" row on its own, for callers that control the state (Settings & Onboarding). */
+/** Plain "Enable tools" switch with no group controls, for setup. Groups stay in Settings. */
+export function EnableToolsSwitchRow({
+  value,
+  onValueChange,
+  disabled,
+}: {
+  value: boolean;
+  onValueChange: (enabled: boolean) => void;
+  disabled?: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <SettingsRow
+      label={t("settings.host.orchestration.enableTools.title")}
+      hint={t("settings.host.orchestration.enableTools.hint")}
+    >
+      <Switch
+        value={value}
+        onValueChange={onValueChange}
+        disabled={disabled}
+        accessibilityLabel={t("settings.host.orchestration.enableTools.accessibilityLabel")}
+      />
+    </SettingsRow>
+  );
+}
+
+/** Expandable "Enable tools" row on its own, for callers that control the state. */
 export function AgentToolsRow({
   enabled,
   groups,
