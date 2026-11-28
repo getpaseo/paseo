@@ -1039,6 +1039,7 @@ export const fr: TranslationResources = {
         switchToSplit: "Passer au diff côte à côte",
         options: "Options du diff",
         inlineDiff: "Diff en ligne",
+        autoLayout: "Adapter la disposition à la largeur de la fenêtre",
         hideWhitespace: "Masquer les espaces",
         showWhitespace: "Afficher les espaces",
         scrollLongLines: "Faire défiler les longues lignes",

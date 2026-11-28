@@ -1020,6 +1020,7 @@ export const ko: TranslationResources = {
         switchToSplit: "나란히 보기 diff로 전환",
         options: "Diff 옵션",
         inlineDiff: "인라인 Diff",
+        autoLayout: "창 너비에 맞춰 레이아웃",
         hideWhitespace: "공백 숨기기",
         showWhitespace: "공백 표시",
         scrollLongLines: "긴 줄 스크롤",

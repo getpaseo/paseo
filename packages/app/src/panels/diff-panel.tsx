@@ -6,11 +6,12 @@ import { FileDiff, GitCommitHorizontal } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { useRetainedPanelActive } from "@/components/retained-panel";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { useBreakpoint, useIsCompactFormFactor } from "@/constants/layout";
 import { PaneContentToolbar } from "@/components/ui/pane-content-toolbar";
 import { isWeb, isNative } from "@/constants/platform";
 import { DiffDocument } from "@/git/diff-document";
-import { ChangesSurface, DiffLayoutToggle, resolveDiffLayout } from "@/git/diff-pane";
+import { resolveDiffLayout } from "@/git/diff-layout";
+import { ChangesSurface, DiffLayoutToggle } from "@/git/diff-pane";
 import { useCommitDiffFiles } from "@/git/use-diff-files";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -29,9 +30,10 @@ const ThemedGitCommitHorizontal = withUnistyles(GitCommitHorizontal);
 function useDiffPanelPreferences() {
   const { settings } = useAppSettings();
   const { preferences, updatePreferences } = useChangesPreferences();
+  const breakpoint = useBreakpoint();
   const isCompact = useIsCompactFormFactor();
   const canUseSplitLayout = isWeb && !isCompact;
-  const effectiveLayout = resolveDiffLayout(preferences.layout, canUseSplitLayout);
+  const effectiveLayout = resolveDiffLayout(preferences.layout, canUseSplitLayout, breakpoint);
   const displayPreferences = useMemo(
     () => ({
       layout: effectiveLayout,
@@ -42,8 +44,8 @@ function useDiffPanelPreferences() {
     [effectiveLayout, preferences.wrapLines, settings.codeFontSize, settings.monoFontFamily],
   );
   const toggleLayout = useCallback(() => {
-    void updatePreferences({ layout: preferences.layout === "unified" ? "split" : "unified" });
-  }, [preferences.layout, updatePreferences]);
+    void updatePreferences({ layout: effectiveLayout === "unified" ? "split" : "unified" });
+  }, [effectiveLayout, updatePreferences]);
   const toggleWrapLines = useCallback(() => {
     void updatePreferences({ wrapLines: !preferences.wrapLines });
   }, [preferences.wrapLines, updatePreferences]);
@@ -196,7 +198,7 @@ function CommitDiffPanel() {
         <PaneContentToolbar style={styles.toolbar} testID="commit-diff-header">
           <View style={styles.toolbarActions} testID="commit-diff-toolbar">
             <DiffLayoutToggle
-              layout={panelPreferences.preferences.layout}
+              layout={panelPreferences.displayPreferences.layout}
               isMobile={panelPreferences.isCompact}
               testID="commit-diff-toggle-layout"
               onToggle={panelPreferences.toggleLayout}

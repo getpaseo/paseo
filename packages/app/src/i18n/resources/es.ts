@@ -1047,6 +1047,7 @@ export const es: TranslationResources = {
         switchToSplit: "Cambiar a diferencia lado a lado",
         options: "Opciones de diferencia",
         inlineDiff: "Diferencia integrada",
+        autoLayout: "Ajustar el diseño al ancho de la ventana",
         hideWhitespace: "Ocultar espacios en blanco",
         showWhitespace: "Mostrar espacios en blanco",
         scrollLongLines: "Desplazarse por largas filas",

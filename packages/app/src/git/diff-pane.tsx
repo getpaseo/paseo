@@ -17,7 +17,7 @@ import {
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { useBreakpoint, useIsCompactFormFactor } from "@/constants/layout";
 import {
   AlignJustify,
   ArrowRight,
@@ -28,6 +28,7 @@ import {
   ListChevronsUpDown,
   Maximize,
   MoreHorizontal,
+  MoveHorizontal,
   Pilcrow,
   RotateCw,
   WrapText,
@@ -95,6 +96,7 @@ import type { WorkspaceTabPlacement } from "@/stores/workspace-layout-actions";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { isWeb } from "@/constants/platform";
+import { resolveDiffLayout, type DiffLayoutPreference } from "@/git/diff-layout";
 import { usePublishWorkingDiffAttachment, useWorkingDiff } from "@/git/use-working-diff";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { DiffTooLargeState } from "@/git/diff-too-large-state";
@@ -105,13 +107,6 @@ import { openWorkspacePullRequest } from "@/workspace-tabs/open-supporting-view"
 import type { PullRequestOpenLocation } from "@/hooks/use-settings";
 
 export type { GitActionId, GitAction, GitActions } from "@/git/policy";
-
-export function resolveDiffLayout(
-  layout: "unified" | "split",
-  canUseSplitLayout: boolean,
-): "unified" | "split" {
-  return canUseSplitLayout ? layout : "unified";
-}
 
 function computeSelectedDiffStat(
   files: ParsedDiffFile[],
@@ -206,6 +201,7 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedAlignJustify = withUnistyles(AlignJustify);
 const ThemedArrowRight = withUnistyles(ArrowRight);
 const ThemedColumns2 = withUnistyles(Columns2);
+const ThemedMoveHorizontal = withUnistyles(MoveHorizontal);
 const ThemedPilcrow = withUnistyles(Pilcrow);
 const ThemedWrapText = withUnistyles(WrapText);
 const ThemedListChevronsDownUp = withUnistyles(ListChevronsDownUp);
@@ -379,6 +375,10 @@ interface ChangesToolbarDiffOptions {
     value: "unified" | "split";
     onToggle: () => void;
   } | null;
+  autoLayout: {
+    value: boolean;
+    onToggle: () => void;
+  } | null;
   hideWhitespace: boolean;
   wrapLines: boolean;
   onToggleHideWhitespace: () => void;
@@ -413,6 +413,7 @@ function buildChangesToolbarMode(input: {
   refreshSupported: boolean;
   isRefreshing: boolean;
   layout: "unified" | "split";
+  layoutPreference: DiffLayoutPreference;
   hideWhitespace: boolean;
   wrapLines: boolean;
   treeVisible: boolean;
@@ -423,6 +424,7 @@ function buildChangesToolbarMode(input: {
   onExpandAll: () => void;
   allFilesCollapsed: boolean;
   onToggleLayout: () => void;
+  onToggleAutoLayout: () => void;
   onToggleHideWhitespace: () => void;
   onToggleWrapLines: () => void;
   onToggleTree: () => void;
@@ -448,6 +450,12 @@ function buildChangesToolbarMode(input: {
       : null,
     layout: input.canUseSplitLayout
       ? { value: input.layout, onToggle: input.onToggleLayout }
+      : null,
+    autoLayout: input.canUseSplitLayout
+      ? {
+          value: input.layoutPreference === "auto",
+          onToggle: input.onToggleAutoLayout,
+        }
       : null,
     hideWhitespace: input.hideWhitespace,
     wrapLines: input.wrapLines,
@@ -878,6 +886,17 @@ function ChangesDiffToolbar({
           onPress={options.layout.onToggle}
         >
           <ThemedColumns2 size={iconSize} uniProps={extraMutedIconColorMapping} />
+        </ToolbarButton>
+      ) : null}
+      {options.autoLayout ? (
+        <ToolbarButton
+          compact={compact}
+          label={t("workspace.git.diff.autoLayout")}
+          selected={options.autoLayout.value}
+          testID="changes-toggle-auto-layout"
+          onPress={options.autoLayout.onToggle}
+        >
+          <ThemedMoveHorizontal size={iconSize} uniProps={extraMutedIconColorMapping} />
         </ToolbarButton>
       ) : null}
       <ToolbarButton
@@ -1505,13 +1524,14 @@ export function ChangesSurface({
   const { settings: appSettings } = useAppSettings();
   const { preferences, updatePreferences } = useChangesPreferences();
   const { t } = useTranslation();
+  const breakpoint = useBreakpoint();
   const isMobile = useIsCompactFormFactor();
   const canUseSplitLayout = isWeb && !isMobile;
   const instanceState = changesState ?? defaultChangesState;
   const updateState = onStateChange ?? noopStateChange;
   const wrapLines = preferences.wrapLines;
   const desktopTreeVisible = instanceState.treeVisible;
-  const effectiveLayout = resolveDiffLayout(preferences.layout, canUseSplitLayout);
+  const effectiveLayout = resolveDiffLayout(preferences.layout, canUseSplitLayout, breakpoint);
   const collapsedFilePaths = instanceState.collapsedFilePaths;
   const updateCollapsedFilePaths = useCallback(
     (paths: string[]) => updateState({ ...instanceState, collapsedFilePaths: paths }),
@@ -1539,7 +1559,11 @@ export function ChangesSurface({
   }, [preferences.inlineDiff, updatePreferences]);
 
   const handleToggleLayout = useCallback(() => {
-    const layout = preferences.layout === "unified" ? "split" : "unified";
+    const layout = effectiveLayout === "unified" ? "split" : "unified";
+    void updatePreferences({ layout });
+  }, [effectiveLayout, updatePreferences]);
+  const handleToggleAutoLayout = useCallback(() => {
+    const layout = preferences.layout === "auto" ? "unified" : "auto";
     void updatePreferences({ layout });
   }, [preferences.layout, updatePreferences]);
   const codeFontSize = appSettings.codeFontSize;
@@ -1897,7 +1921,8 @@ export function ChangesSurface({
         canUseSplitLayout,
         refreshSupported,
         isRefreshing,
-        layout: preferences.layout,
+        layout: effectiveLayout,
+        layoutPreference: preferences.layout,
         hideWhitespace: preferences.hideWhitespace,
         wrapLines,
         treeVisible: desktopTreeVisible,
@@ -1910,6 +1935,7 @@ export function ChangesSurface({
         onExpandAll: handleExpandAllFiles,
         allFilesCollapsed,
         onToggleLayout: handleToggleLayout,
+        onToggleAutoLayout: handleToggleAutoLayout,
         onToggleHideWhitespace: handleToggleHideWhitespace,
         onToggleWrapLines: handleToggleWrapLines,
         onToggleTree: handleToggleDesktopTree,
@@ -1926,11 +1952,13 @@ export function ChangesSurface({
       handleToggleDesktopTree,
       handleToggleHideWhitespace,
       handleToggleLayout,
+      handleToggleAutoLayout,
       handleToggleWrapLines,
       hasChanges,
       preferences.hideWhitespace,
       preferences.inlineDiff,
       preferences.layout,
+      effectiveLayout,
       isMobile,
       isRefreshing,
       presentation,

@@ -1032,6 +1032,7 @@ export const ru: TranslationResources = {
         switchToSplit: "Переключиться на параллельный дифф",
         options: "Параметры диффа",
         inlineDiff: "Встроенный дифф",
+        autoLayout: "Подстраивать вид под ширину окна",
         hideWhitespace: "Скрыть пробельные изменения",
         showWhitespace: "Показать пробельные изменения",
         scrollLongLines: "Прокручивать длинные строки",

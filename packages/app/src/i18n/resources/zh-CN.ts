@@ -1005,6 +1005,7 @@ export const zhCN: TranslationResources = {
         switchToSplit: "切换到并排差异视图",
         options: "Diff 选项",
         inlineDiff: "内联 Diff",
+        autoLayout: "布局跟随窗口宽度",
         hideWhitespace: "隐藏空白差异",
         showWhitespace: "显示空白差异",
         scrollLongLines: "滚动长行",

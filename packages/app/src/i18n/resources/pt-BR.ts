@@ -1037,6 +1037,7 @@ export const ptBR: TranslationResources = {
         switchToSplit: "Alternar para diff lado a lado",
         options: "Opções do diff",
         inlineDiff: "Diff embutido",
+        autoLayout: "Ajustar o layout à largura da janela",
         hideWhitespace: "Ocultar espaços em branco",
         showWhitespace: "Mostrar espaços em branco",
         scrollLongLines: "Rolar linhas longas",

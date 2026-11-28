@@ -1024,6 +1024,7 @@ export const en = {
         switchToSplit: "Switch to side-by-side diff",
         options: "Diff options",
         inlineDiff: "Inline diff",
+        autoLayout: "Match layout to window width",
         hideWhitespace: "Hide whitespace",
         showWhitespace: "Show whitespace",
         scrollLongLines: "Scroll long lines",

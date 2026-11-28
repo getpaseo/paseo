@@ -769,6 +769,27 @@ test("Changes comparison controls the working diff and tree selection focuses it
   await selectChangedFileAndExpectFocused(page, "uncommitted/50-target.ts");
 });
 
+test("the diff layout can follow the window width", async ({ page }) => {
+  const workspace = await createWorkspaceWithMountedTabDiff();
+  await openWorkspaceChangesSurface(page, workspace);
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  const layoutToggle = panel.getByTestId("changes-toggle-layout");
+  const expectLayout = async (layout: "unified" | "split") => {
+    const label = layout === "split" ? "Switch to unified diff" : "Switch to side-by-side diff";
+    await expect(layoutToggle).toHaveAttribute("aria-label", label);
+  };
+
+  await expectLayout("unified");
+  await panel.getByTestId("changes-toggle-auto-layout").click();
+  await expectLayout("split");
+
+  await page.setViewportSize({ width: 900, height: 900 });
+  await expectLayout("unified");
+
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await expectLayout("split");
+});
+
 test("changes file actions open below the right-click without a reserved kebab", async ({
   page,
 }) => {
