@@ -294,6 +294,20 @@ try {
     const createdJson = JSON.parse(created.stdout);
     assert.strictEqual(createdJson.target, "agent:0000000");
 
+    const human = await ctx.paseo(["schedule", "ls"]);
+    assert.strictEqual(human.exitCode, 0, human.stderr);
+    assert.match(human.stderr, /1 hidden.*--all/);
+
+    const all = await ctx.paseo(["schedule", "ls", "--all", "--json"]);
+    assert.strictEqual(all.exitCode, 0, all.stderr);
+    assert(
+      JSON.parse(all.stdout).some(
+        (row: { id: string; target: string }) =>
+          row.id === createdJson.id && row.target === createdJson.target,
+      ),
+      all.stdout,
+    );
+
     const deleted = await ctx.paseo(["schedule", "delete", createdJson.id, "--json"]);
     assert.strictEqual(deleted.exitCode, 0, deleted.stderr);
     assert.strictEqual(JSON.parse(deleted.stdout).id, createdJson.id);
