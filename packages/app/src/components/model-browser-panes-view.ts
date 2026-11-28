@@ -1,3 +1,4 @@
+import { compareMatchScores, type MatchScore } from "@getpaseo/protocol/search/text-match";
 import { getNextActiveIndex } from "@/components/ui/combobox-keyboard";
 import {
   MODEL_BROWSER_CREATE_PROFILE_KEY,
@@ -13,7 +14,7 @@ import {
   type ProviderModelPartition,
 } from "@/provider-selection/model-curation";
 import {
-  filterAndRankModelRows,
+  scoreModelRow,
   type ProviderSelectionModelRow,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
@@ -462,26 +463,46 @@ function buildSearchPane<TProfile extends NavigableProfileRow>(
   const profiles = filterAndRankProfileRows(input.profiles ?? [], normalizedQuery).map((profile) =>
     toProfileItem(profile),
   );
-  const foldedBy = new Map<string, ModelFoldKind>();
-  const primaryRows: ProviderSelectionModelRow[] = [];
-  const foldedRows: ProviderSelectionModelRow[] = [];
+  const candidates: SearchCandidate[] = [];
   for (const provider of input.providers) {
     if (provider.modelSelection.kind !== "models") continue;
     const partition = partitionFor(input, provider);
-    primaryRows.push(...partition.primary);
-    foldedRows.push(...partition.folded);
-    for (const row of partition.folded) foldedBy.set(row.favoriteKey, partition.foldKind);
+    for (const row of partition.primary) candidates.push({ row, tag: null });
+    for (const row of partition.folded) candidates.push({ row, tag: partition.foldKind });
   }
-  // Primary models outrank folded ones, so "opus" leads with the current Opus while "4.6" still
-  // reaches the older one directly.
-  const models = [
-    ...filterAndRankModelRows(primaryRows, normalizedQuery),
-    ...filterAndRankModelRows(foldedRows, normalizedQuery),
-  ].map((row) => toModelItem<TProfile>(row, foldedBy.get(row.favoriteKey) ?? null));
+  const models = rankSearchMatches(candidates, normalizedQuery).map(({ row, tag }) =>
+    toModelItem<TProfile>(row, tag),
+  );
   if (profiles.length === 0 && models.length === 0) {
     return { kind: "noMatches", query: displayQuery, items: [] };
   }
   return { kind: "search", profiles, models, items: [...profiles, ...models] };
+}
+
+interface SearchCandidate {
+  row: ProviderSelectionModelRow;
+  tag: ModelFoldKind;
+}
+
+// The closer match wins wherever the model sits, so "opus 4.6" finds the folded Opus 4.6 before
+// a shown model that only scatters "opus" across its id. Equal matches put shown models first,
+// so "opus" leads with the current Opus.
+function rankSearchMatches(
+  candidates: SearchCandidate[],
+  normalizedQuery: string,
+): SearchCandidate[] {
+  const matches: (SearchCandidate & { score: MatchScore })[] = [];
+  for (const candidate of candidates) {
+    const score = scoreModelRow(candidate.row, normalizedQuery);
+    if (score) matches.push({ ...candidate, score });
+  }
+  matches.sort(
+    (a, b) =>
+      compareMatchScores(a.score, b.score) ||
+      Number(a.tag !== null) - Number(b.tag !== null) ||
+      a.row.modelLabel.localeCompare(b.row.modelLabel),
+  );
+  return matches;
 }
 
 function partitionFor(

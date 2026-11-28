@@ -65,6 +65,8 @@ export type MobileModelPageProjection =
       showProviderHeaders: boolean;
       /** What the open section lists. */
       body: MobileModelBody;
+      /** The selected model's row in the open list, which the list scrolls into view. */
+      selectedIndex: number | null;
     }
   | { kind: "search"; items: MobileModelItem[] }
   | { kind: "noMatches"; query: string }
@@ -127,7 +129,16 @@ export function projectMobileModelPage(
     sections,
     showProviderHeaders: input.providers.length > 1,
     body: pane,
+    selectedIndex: findSelectedIndex(pane, input),
   };
+}
+
+function findSelectedIndex(body: MobileModelBody, input: MobileModelPageInput): number | null {
+  if (body.kind !== "provider" || body.providerId !== input.selectedProvider) return null;
+  const index = body.items.findIndex(
+    (item) => item.kind === "model" && item.row.modelId === input.selectedModel,
+  );
+  return index >= 0 ? index : null;
 }
 
 function toPickerInput(input: MobileModelPageInput): ModelPickerInput<NoProfile> {

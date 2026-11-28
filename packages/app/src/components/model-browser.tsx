@@ -27,10 +27,6 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import {
-  FlatList as SheetFlatList,
-  ScrollView as SheetScrollView,
-} from "@/components/ui/scroll-view";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
@@ -280,23 +276,15 @@ interface ModelBrowserProps {
   onEditProfile?: (profileId: string) => void;
   onRetryProvider?: (provider: AgentProvider) => void;
   isRetryingProvider?: boolean;
-  scrolling?: "sheet" | "independent";
-  /** Empty focused search shows all model rows instead of the browse root. */
-  searchAllOnFocus?: boolean;
-  /** Replaces provider rows only while the all-provider search is empty. */
-  rootBrowseContent?: React.ReactNode;
-  /** Hide the pinned Profiles section while still using rows for model matching. */
-  showProfilesSection?: boolean;
 }
 
-interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state" | "scrolling"> {
+interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state"> {
   serverId: string | null;
   view: ModelBrowserView;
   providers: ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
   searchQuery: string;
-  isSearchFocused: boolean;
   profiles: AgentProfilePicker | null;
   explicitActiveKey: string | null;
   preferredActiveKey: string | null;
@@ -305,9 +293,6 @@ interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state" | "sc
   registerKeyboardHandler: (handler: ((event: KeyboardInputEvent) => boolean) | null) => void;
   onShowAll: (fromProviderId?: string) => void;
   onDrillDown: (providerId: string, providerLabel: string) => void;
-  scrolling: "sheet" | "independent";
-  searchAllOnFocus: boolean;
-  rootBrowseContent?: React.ReactNode;
 }
 
 type ProviderGlyphTone = "muted" | "foreground";
@@ -1535,7 +1520,6 @@ function ModelRowList({
   onSelect,
   showProviderLabel = false,
   header,
-  scrolling,
   profiledLookup,
   onCreateProfile,
   onEditProfile,
@@ -1551,13 +1535,11 @@ function ModelRowList({
   onSelect: (provider: string, modelId: string) => void;
   showProviderLabel?: boolean;
   header?: React.ReactElement;
-  scrolling: "sheet" | "independent";
   profiledLookup: Map<string, AgentProfilePickerRowModel[]>;
   onCreateProfile?: (seed: AgentProfileSeed) => Promise<AgentProfile | null> | void;
   onEditProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
 }) {
-  const isCompact = useIsCompactFormFactor();
   const { activeKey } = useContext(ModelBrowserNavContext);
   const renderItem = useCallback(
     ({ item }: { item: ProviderSelectionModelRow }) => (
@@ -1585,45 +1567,16 @@ function ModelRowList({
       showProviderLabel,
     ],
   );
-  const keyExtractor = useCallback((row: ProviderSelectionModelRow) => row.favoriteKey, []);
-
-  if (scrolling === "independent") {
-    return (
-      <IndependentModelList
-        rows={rows}
-        renderItem={renderItem}
-        header={header}
-        activeKey={activeKey}
-        activeModelIndex={activeModelIndex}
-        hasActiveHeaderItem={hasActiveHeaderItem}
-        shouldRevealActive={shouldRevealActive}
-      />
-    );
-  }
-
-  if (isCompact && isNative) {
-    return (
-      <SheetFlatList
-        data={rows}
-        extraData={activeKey}
-        renderItem={renderItem}
-        ListHeaderComponent={header}
-        keyExtractor={keyExtractor}
-        style={styles.virtualizedModelList}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.virtualizedModelListContent}
-      />
-    );
-  }
-
   return (
-    <View>
-      {header}
-      {rows.map((row) => (
-        <View key={row.favoriteKey}>{renderItem({ item: row })}</View>
-      ))}
-    </View>
+    <IndependentModelList
+      rows={rows}
+      renderItem={renderItem}
+      header={header}
+      activeKey={activeKey}
+      activeModelIndex={activeModelIndex}
+      hasActiveHeaderItem={hasActiveHeaderItem}
+      shouldRevealActive={shouldRevealActive}
+    />
   );
 }
 
@@ -1799,8 +1752,6 @@ function ModelBrowserBrowseView({
   projection,
   activeNavIndex,
   listKey,
-  rootBrowseContent,
-  scrolling,
   onApplyProfile,
   onEditProfiles,
   onDrillDown,
@@ -1809,8 +1760,6 @@ function ModelBrowserBrowseView({
   projection: Extract<ModelBrowserProjection<AgentProfilePickerRowModel>, { kind: "browse" }>;
   activeNavIndex: number;
   listKey: string;
-  rootBrowseContent?: React.ReactNode;
-  scrolling: "sheet" | "independent";
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
   onDrillDown: (providerId: string, providerLabel: string) => void;
@@ -1842,27 +1791,26 @@ function ModelBrowserBrowseView({
           onApplyProfile={onApplyProfile}
           onEditProfiles={onEditProfiles}
         />
-        {rootBrowseContent ??
-          (projection.providers.length > 0 ? (
-            <View>
-              {projection.showProvidersHeading ? (
-                <View style={styles.sectionHeading}>
-                  <Text style={styles.sectionHeadingText}>{t("modelSelector.providers")}</Text>
-                </View>
-              ) : null}
-              <GroupedProviderRows
-                providers={projection.providers}
-                serverId={serverId}
-                onDrillDown={onDrillDown}
-              />
-            </View>
-          ) : null)}
+        {projection.providers.length > 0 ? (
+          <View>
+            {projection.showProvidersHeading ? (
+              <View style={styles.sectionHeading}>
+                <Text style={styles.sectionHeadingText}>{t("modelSelector.providers")}</Text>
+              </View>
+            ) : null}
+            <GroupedProviderRows
+              providers={projection.providers}
+              serverId={serverId}
+              onDrillDown={onDrillDown}
+            />
+          </View>
+        ) : null}
         {projection.isEmpty ? <ModelSearchEmptyState /> : null}
       </View>
     </ModelBrowserNavContext.Provider>
   );
 
-  return scrolling === "independent" ? (
+  return (
     <IndependentProviderList
       scrollRef={browseScrollRef}
       onLayout={browseReveal.onViewportLayout}
@@ -1870,24 +1818,6 @@ function ModelBrowserBrowseView({
     >
       {allProvidersContent}
     </IndependentProviderList>
-  ) : (
-    <SheetScrollView
-      ref={browseScrollRef}
-      style={styles.virtualizedModelList}
-      contentContainerStyle={[
-        styles.virtualizedModelListContent,
-        styles.virtualizedProviderListContent,
-      ]}
-      onLayout={browseReveal.onViewportLayout}
-      onScroll={browseReveal.onScroll}
-      scrollEventThrottle={16}
-      keyboardShouldPersistTaps="handled"
-      keyboardDismissMode={MODEL_LIST_KEYBOARD_DISMISS_MODE}
-      showsVerticalScrollIndicator={false}
-      testID="compact-provider-list"
-    >
-      {allProvidersContent}
-    </SheetScrollView>
   );
 }
 
@@ -1898,7 +1828,6 @@ function ModelBrowserContent({
   selectedProvider,
   selectedModel,
   searchQuery,
-  isSearchFocused,
   profiles,
   explicitActiveKey,
   preferredActiveKey,
@@ -1914,10 +1843,6 @@ function ModelBrowserContent({
   onDrillDown,
   onRetryProvider,
   isRetryingProvider = false,
-  scrolling,
-  searchAllOnFocus,
-  rootBrowseContent,
-  showProfilesSection = true,
 }: ModelBrowserContentProps) {
   const hasHardwareKeyboard = useHardwareKeyboardPresent();
   const normalizedQuery = useMemo(() => normalizeSearchQuery(searchQuery), [searchQuery]);
@@ -1931,23 +1856,10 @@ function ModelBrowserContent({
         view,
         providers,
         profiles: profiles?.rows ?? null,
-        showProfilesSection,
         canCreateProfileRow: Boolean(onEditProfiles),
         normalizedQuery,
-        isSearchFocused: searchAllOnFocus && isSearchFocused,
-        hasCustomRootBrowseContent: rootBrowseContent != null,
       }),
-    [
-      isSearchFocused,
-      normalizedQuery,
-      onEditProfiles,
-      profiles,
-      providers,
-      rootBrowseContent,
-      searchAllOnFocus,
-      showProfilesSection,
-      view,
-    ],
+    [normalizedQuery, onEditProfiles, profiles, providers, view],
   );
   const { navItems } = projection;
   const activeKey = useMemo(
@@ -2051,7 +1963,6 @@ function ModelBrowserContent({
         onSelect={onSelect}
         showProviderLabel={projection.showProviderLabel}
         header={listHeader}
-        scrolling={scrolling}
         profiledLookup={profiledLookup}
         onCreateProfile={onCreateProfile}
         onEditProfile={onEditProfile}
@@ -2065,8 +1976,6 @@ function ModelBrowserContent({
         projection={projection}
         activeNavIndex={activeNavIndex}
         listKey={browseListKey}
-        rootBrowseContent={rootBrowseContent}
-        scrolling={scrolling}
         onApplyProfile={onApplyProfile}
         onEditProfiles={onEditProfiles}
         onDrillDown={onDrillDown}
@@ -2088,10 +1997,6 @@ export function ModelBrowser({
   onEditProfile,
   onRetryProvider,
   isRetryingProvider = false,
-  scrolling = "sheet",
-  searchAllOnFocus = false,
-  rootBrowseContent,
-  showProfilesSection,
 }: ModelBrowserProps) {
   return (
     <ModelBrowserContent
@@ -2101,7 +2006,6 @@ export function ModelBrowser({
       selectedProvider={state.selectedProvider}
       selectedModel={state.selectedModel}
       searchQuery={state.searchQuery}
-      isSearchFocused={state.isSearchFocused}
       profiles={state.profiles}
       explicitActiveKey={state.explicitActiveKey}
       preferredActiveKey={state.preferredActiveKey}
@@ -2117,10 +2021,6 @@ export function ModelBrowser({
       onDrillDown={state.drillDown}
       onRetryProvider={onRetryProvider}
       isRetryingProvider={isRetryingProvider}
-      scrolling={scrolling}
-      searchAllOnFocus={searchAllOnFocus}
-      rootBrowseContent={rootBrowseContent}
-      showProfilesSection={showProfilesSection}
     />
   );
 }

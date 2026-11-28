@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/scroll-view";
 import { SettingsCard } from "@/components/settings";
 import { SearchField } from "@/components/ui/search-field";
+import { useRevealActiveFlatListRow } from "@/components/ui/scroll-reveal";
 import { isNative } from "@/constants/platform";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -235,6 +236,7 @@ export function MobileModelPageView({
         {section ? <ExpandedProviderHeader section={section} serverId={serverId} /> : null}
         <ProviderBody
           body={projection.body}
+          selectedIndex={projection.selectedIndex}
           renderItem={renderItem}
           fill
           onRetryProvider={actions.onRetryProvider}
@@ -259,6 +261,7 @@ export function MobileModelPageView({
               <ExpandedProviderHeader section={section} serverId={serverId} />
               <ProviderBody
                 body={projection.body}
+                selectedIndex={projection.selectedIndex}
                 renderItem={renderItem}
                 fill={false}
                 onRetryProvider={actions.onRetryProvider}
@@ -286,7 +289,7 @@ export const SHEET_LIST_CARD_LIST = { flexGrow: 0, flexShrink: 1, minHeight: 0 }
 export function SheetListCard({ children }: { children: ReactNode }) {
   return (
     <View style={styles.listCardPage}>
-      <View style={styles.listCard}>{children}</View>
+      <SettingsCard shrink>{children}</SettingsCard>
     </View>
   );
 }
@@ -399,19 +402,23 @@ function CollapsedStatus({
   return <Text style={styles.summary}>{summary}</Text>;
 }
 
+type ModelItemRenderer = ({
+  item,
+}: {
+  item: ModelPickerListItem<AgentProfilePickerRow>;
+}) => React.ReactElement;
+
 function ProviderBody({
   body,
+  selectedIndex,
   renderItem,
   fill,
   onRetryProvider,
   isRetryingProvider,
 }: {
   body: MobileModelBody;
-  renderItem: ({
-    item,
-  }: {
-    item: ModelPickerListItem<AgentProfilePickerRow>;
-  }) => React.ReactElement;
+  selectedIndex: number | null;
+  renderItem: ModelItemRenderer;
   /** A lone provider's list fills the page; an open section keeps its fixed height. */
   fill: boolean;
   onRetryProvider: ModelPickerActions["onRetryProvider"];
@@ -438,23 +445,59 @@ function ProviderBody({
     );
   }
   const list = (
-    <FlatList
-      // A new provider is a new list, which opens at its top.
+    <ProviderModelList
+      // A new provider is a new list, which opens at its top or at the selected model.
       key={body.providerId}
-      data={body.items}
+      items={body.items}
+      selectedIndex={selectedIndex}
+      renderItem={renderItem}
+      fill={fill}
+    />
+  );
+  // The lone provider's list is the page's only scroller; a fixed box scrolls inside the page's.
+  return fill ? list : <IndependentScrollBoundary>{list}</IndependentScrollBoundary>;
+}
+
+/** Opens with the selected model in view, such as an older model behind the opened fold. */
+function ProviderModelList({
+  items,
+  selectedIndex,
+  renderItem,
+  fill,
+}: {
+  items: ModelPickerListItem<AgentProfilePickerRow>[];
+  selectedIndex: number | null;
+  renderItem: ModelItemRenderer;
+  fill: boolean;
+}) {
+  const listRef = useRef<FlatList<ModelPickerListItem<AgentProfilePickerRow>>>(null);
+  // Waits for the first visible rows, so a selection already in view never scrolls the list.
+  const reveal = useRevealActiveFlatListRow({
+    listRef,
+    itemCount: items.length,
+    activeIndex: selectedIndex,
+    waitForViewable: true,
+  });
+  return (
+    <FlatList
+      ref={listRef}
+      data={items}
       renderItem={renderItem}
       keyExtractor={getItemKey}
-      style={frameStyle}
+      style={fill ? styles.page : styles.fixedViewport}
       contentContainerStyle={LIST_CONTENT}
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode={KEYBOARD_DISMISS_MODE}
       showsVerticalScrollIndicator
       nestedScrollEnabled
+      onScrollToIndexFailed={reveal.onScrollToIndexFailed}
+      onViewableItemsChanged={reveal.onViewableItemsChanged}
+      viewabilityConfig={reveal.viewabilityConfig}
+      onContentSizeChange={reveal.onContentSizeChange}
+      onLayout={reveal.onLayout}
       testID="compact-model-list"
     />
   );
-  // The lone provider's list is the page's only scroller; a fixed box scrolls inside the page's.
-  return fill ? list : <IndependentScrollBoundary>{list}</IndependentScrollBoundary>;
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -468,15 +511,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[4],
     paddingTop: theme.spacing[2],
     paddingBottom: theme.spacing[2],
-  },
-  listCard: {
-    flexShrink: 1,
-    minHeight: 0,
-    backgroundColor: theme.colors.surface1,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    overflow: "hidden",
   },
   sections: {
     paddingHorizontal: theme.spacing[4],

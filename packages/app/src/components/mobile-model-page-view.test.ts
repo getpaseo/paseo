@@ -154,6 +154,17 @@ describe("mobile model page", () => {
     expect(keys).toContain("model:claude:claude-older-3");
   });
 
+  it("points the open list at the selected model, so a folded pick is in view on reopen", () => {
+    const folded = browse(
+      project([], { ...input, selectedProvider: "claude", selectedModel: "claude-older-3" }),
+    );
+    expect(
+      folded.body.kind === "provider" && folded.body.items[folded.selectedIndex ?? -1]?.key,
+    ).toBe("model:claude:claude-older-3");
+    expect(browse(project()).selectedIndex).toBe(0);
+    expect(browse(project([{ kind: "expand", providerId: "codex" }])).selectedIndex).toBeNull();
+  });
+
   it("shows a loading or errored provider's state in its section", () => {
     expect(browse(project([{ kind: "expand", providerId: "opencode" }])).body).toMatchObject({
       kind: "providerLoading",

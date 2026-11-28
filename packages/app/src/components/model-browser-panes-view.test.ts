@@ -415,6 +415,43 @@ describe("model picker search", () => {
     expect(keys(search("4.6", overrides).pane.items)).toEqual(["model:anthropic:opus-4.6"]);
   });
 
+  it("ranks a close folded match ahead of a loose shown one", () => {
+    const anthropic: ProviderSelectorProvider = {
+      id: "anthropic",
+      label: "Anthropic",
+      modelSelection: {
+        kind: "models",
+        rows: [
+          row("anthropic", "Anthropic", "opus-5.5", { label: "Opus 5.5" }),
+          row("anthropic", "Anthropic", "opus-4.6", { label: "Opus 4.6", legacy: true }),
+        ],
+      },
+    };
+    // Nothing curated, so every row is shown, and "opus" only matches these scattered across
+    // the id.
+    const openrouter: ProviderSelectorProvider = {
+      id: "openrouter",
+      label: "OpenRouter",
+      modelSelection: {
+        kind: "models",
+        rows: [
+          row("openrouter", "OpenRouter", "openrouter/mistralai/codestral-2508", {
+            label: "Codestral 2508",
+          }),
+          row("openrouter", "OpenRouter", "openrouter/anthropic/claude-sonnet-4.6", {
+            label: "Claude Sonnet 4.6",
+          }),
+        ],
+      },
+    };
+    const overrides = { providers: [openrouter, anthropic], profiles: null };
+    expect(keys(search("opus", overrides).pane.items).slice(0, 2)).toEqual([
+      "model:anthropic:opus-5.5",
+      "model:anthropic:opus-4.6",
+    ]);
+    expect(keys(search("opus 4.6", overrides).pane.items)[0]).toBe("model:anthropic:opus-4.6");
+  });
+
   it("searches only models when the surface shows no profiles", () => {
     expect(keys(search("deep review", { profiles: null }).pane.items)).toEqual([]);
   });

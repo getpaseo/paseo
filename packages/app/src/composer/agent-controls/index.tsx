@@ -26,6 +26,7 @@ import { resolveProviderDefinition } from "@/utils/provider-definitions";
 import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
 import {
   AgentModeControl,
+  useAgentModeCycleShortcut,
   useLiveAgentModeControl,
   type AgentModeControlValue,
 } from "@/composer/agent-controls/mode-control";
@@ -463,6 +464,7 @@ function ControlledAgentControls({
   const { fontScale } = useWindowDimensions();
   const [activeSheet, setActiveSheet] = useState<ActiveSheet>(null);
   const [openSelector, setOpenSelector] = useState<string | null>(null);
+  useAgentModeCycleShortcut(modeControl);
   // A compact composer always folds its controls into the model sheet; the width budget only
   // decides whether the model keeps its label.
   const minimumDensity: ComposerControlDensity = isCompact ? "compact" : "full";

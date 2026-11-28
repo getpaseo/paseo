@@ -40,7 +40,6 @@ import type { AgentSheetControls } from "./sheet-home";
 
 const SNAP_POINTS = ["80%", "90%"];
 // The dialog's model list scrolls inside its fixed viewport, apart from the controls below it.
-const NARROW_PANE_SCROLLING = "independent";
 const MODEL_LIST_TOP_INSET = 4;
 const MODEL_ROW_STRIDE = 44;
 const MODEL_VIEWPORT_VISIBLE_ROWS = 4.5;
@@ -387,8 +386,6 @@ function NarrowPaneModelDialog({
           onEditProfile={profileActions.edit}
           onRetryProvider={onRetryProvider}
           isRetryingProvider={isRetryingProvider}
-          scrolling={NARROW_PANE_SCROLLING}
-          searchAllOnFocus={false}
         />
       </View>
       <View style={styles.modelViewportDivider} />
