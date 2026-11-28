@@ -282,7 +282,6 @@ function MetadataModelSelectionRows({
               disabled={isSaving}
               serverId={serverId}
               desktopPlacement="bottom-start"
-              desktopMinWidth={360}
             />
           </SettingsRow>
         </View>

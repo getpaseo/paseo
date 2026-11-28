@@ -11,13 +11,16 @@ import {
   AdaptiveTextInput,
   type SheetHeader,
 } from "@/components/adaptive-modal-sheet";
-import { SettingsSection } from "@/components/settings";
+import { SettingsRow, SettingsSection } from "@/components/settings";
 import { Button } from "@/components/ui/button";
+import { CheckboxRow } from "@/components/ui/checkbox";
+import { bySizing, TOUCH_TARGET } from "@/components/ui/control-geometry";
 import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-content-toolbar";
 import { SearchField } from "@/components/ui/search-field";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { useHostFeature } from "@/runtime/host-features";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { settingsStyles } from "@/styles/settings";
 import type { Theme } from "@/styles/theme";
@@ -27,6 +30,8 @@ import {
 } from "./discovered-models";
 import type { ProviderEntry } from "./provider-config";
 import { ProviderRefreshButton, useCheckedLabel, type ProviderRefresh } from "./provider-refresh";
+import { arrangeShownFirst, countShownModels } from "./shown-models";
+import { useShownModelsEditor, type ShownModelsEditor } from "./use-shown-models";
 
 const ThemedTrash = withUnistyles(Trash2);
 const destructiveColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
@@ -88,9 +93,27 @@ export function ProviderModels({
 
   // Search shows only beside the provider's own models; a query typed then must not hide custom ones.
   const q = discovered ? query.trim() : "";
+
+  // COMPAT(providerShownModels): added in v0.18.1, remove gate after 2027-05-28.
+  const curationSupported = useHostFeature(serverId, "providerShownModels");
+  const curating = discovered && curationSupported && config !== null;
+  const shownEditor = useShownModelsEditor({ provider, config, patchConfig });
+  // Shown models list first, but a check never moves a row under the pointer: the order is taken
+  // when the page opens, a search ends, or the list is reset, and holds while the user checks.
+  const arrangementKey = `${q === "" ? "browse" : "search"}:${curating}:${shownEditor.revision}`;
+  const [arrangement, setArrangement] = useState({
+    key: arrangementKey,
+    shownModels: shownEditor.shownModels,
+  });
+  if (arrangement.key !== arrangementKey) {
+    setArrangement({ key: arrangementKey, shownModels: shownEditor.shownModels });
+  }
   const filteredDiscovered = useMemo(
-    () => rankModels(discoveredModels, q, (m) => [m.label, m.id, m.description ?? ""]),
-    [discoveredModels, q],
+    () =>
+      q === "" && curating
+        ? arrangeShownFirst(discoveredModels, arrangement.shownModels)
+        : rankModels(discoveredModels, q, (m) => [m.label, m.id, m.description ?? ""]),
+    [arrangement.shownModels, curating, discoveredModels, q],
   );
   const filteredCustom = useMemo(
     () => rankModels(additionalModels, q, (m) => [m.label, m.id]),
@@ -151,9 +174,19 @@ export function ProviderModels({
   } else if (filteredDiscovered.length === 0) {
     discoveredBody = <MutedRow>{t("settings.providers.models.noSearchMatches")}</MutedRow>;
   } else {
-    discoveredBody = filteredDiscovered.map((model, index) => (
-      <DiscoveredModelRow key={model.id} model={model} first={index === 0} />
-    ));
+    discoveredBody = filteredDiscovered.map((model, index) =>
+      curating ? (
+        <ShownModelRow
+          key={model.id}
+          model={model}
+          first={index === 0}
+          checked={shownEditor.shownModels.includes(model.id)}
+          onToggle={shownEditor.toggle}
+        />
+      ) : (
+        <DiscoveredModelRow key={model.id} model={model} first={index === 0} />
+      ),
+    );
   }
 
   let customBody: React.ReactNode;
@@ -176,7 +209,11 @@ export function ProviderModels({
   return (
     <View testID="provider-models">
       {discovered ? (
-        <SettingsSection title={t("settings.providers.models.title")} trailing={discoveredTrailing}>
+        <SettingsSection
+          title={t("settings.providers.models.title")}
+          trailing={discoveredTrailing}
+          info={curating ? t("settings.providers.models.shownInfo") : undefined}
+        >
           <View style={styles.searchRow}>
             <SearchField
               value={query}
@@ -188,11 +225,17 @@ export function ProviderModels({
             />
           </View>
           <View style={settingsStyles.card}>
+            {curating && discoveredModels.length > 0 ? (
+              <ShownModelsBar
+                count={countShownModels(discoveredModels, shownEditor.shownModels)}
+                onReset={shownEditor.reset}
+              />
+            ) : null}
             {/* A provider can report hundreds of models; the rest of the page stays in reach. */}
             <ScrollView
-              style={styles.discoveredList}
               // Android scrolls a ScrollView nested in the page or the sheet only with this flag.
               nestedScrollEnabled
+              style={[styles.discoveredList, curating && settingsStyles.rowBorder]}
               testID="provider-discovered-models"
             >
               {discoveredBody}
@@ -241,6 +284,65 @@ function MutedRow({ children }: { children: string }) {
 function DiscoveredModelRow({ model, first }: { model: AgentModelDefinition; first: boolean }) {
   return (
     <View style={[styles.modelRow, !first && settingsStyles.rowBorder]}>
+      <ModelRowText model={model} />
+    </View>
+  );
+}
+
+/** How many models pickers show first, and the way back to showing all of them. */
+function ShownModelsBar({ count, onReset }: { count: number; onReset: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <SettingsRow
+      label={
+        count > 0
+          ? t("settings.providers.models.shownCount", { count })
+          : t("settings.providers.models.allShown")
+      }
+      testID="provider-shown-models-bar"
+    >
+      {/* Always drawn, so the first check does not move the list below. */}
+      <Button
+        variant="secondary"
+        onPress={onReset}
+        disabled={count === 0}
+        accessibilityLabel={t("settings.providers.models.resetShownLabel")}
+        testID="provider-shown-models-reset"
+      >
+        {t("settings.providers.models.resetShown")}
+      </Button>
+    </SettingsRow>
+  );
+}
+
+function ShownModelRow({
+  model,
+  first,
+  checked,
+  onToggle,
+}: {
+  model: AgentModelDefinition;
+  first: boolean;
+  checked: boolean;
+  onToggle: ShownModelsEditor["toggle"];
+}) {
+  const handleToggle = useCallback(() => onToggle(model.id), [model.id, onToggle]);
+  return (
+    <CheckboxRow
+      checked={checked}
+      onToggle={handleToggle}
+      accessibilityLabel={model.label}
+      style={[styles.modelRow, styles.shownModelRow, !first && settingsStyles.rowBorder]}
+      testID={`provider-shown-model-${model.id}`}
+    >
+      <ModelRowText model={model} />
+    </CheckboxRow>
+  );
+}
+
+function ModelRowText({ model }: { model: AgentModelDefinition }) {
+  return (
+    <>
       <Text style={styles.modelTitle} numberOfLines={1}>
         {model.label}
       </Text>
@@ -252,7 +354,7 @@ function DiscoveredModelRow({ model, first }: { model: AgentModelDefinition; fir
           {model.description}
         </Text>
       ) : null}
-    </View>
+    </>
   );
 }
 
@@ -415,6 +517,10 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[4],
     gap: theme.spacing[3],
+  },
+  // A touch-sized hit area; the row's text keeps its rails.
+  shownModelRow: {
+    minHeight: bySizing({ touch: TOUCH_TARGET, pointer: 0 }),
   },
   modelTitle: {
     color: theme.colors.foreground,

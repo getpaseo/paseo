@@ -26,16 +26,14 @@ async function openProviderSettingsFromModelSelector(page: Page) {
   const configuration = page.getByTestId("agent-controls-model-sheet");
   await expect(configuration).toBeVisible({ timeout: 10_000 });
   await page.getByTestId("agent-controls-model").click();
-
-  const modelBrowser = page.getByTestId("agent-controls-model-browser-sheet");
-  await expect(modelBrowser).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId("mobile-model-page")).toBeVisible({ timeout: 10_000 });
 
   await page.getByRole("button", { name: /Open .* settings/ }).click();
   await expect(page.getByTestId("provider-settings-sheet")).toBeVisible({ timeout: 10_000 });
 }
 
-async function expectModelBrowserVisible(page: Page) {
-  await expect(page.getByTestId("agent-controls-model-browser-sheet")).toBeVisible({
+async function expectModelPageVisible(page: Page) {
+  await expect(page.getByTestId("mobile-model-page")).toBeVisible({
     timeout: 10_000,
   });
   await expect(page.getByRole("button", { name: /Open .* settings/ })).toBeVisible();
@@ -187,7 +185,7 @@ test.describe("provider settings overlay stack", () => {
     }
   });
 
-  test("provider settings and children close back through the model browser to configuration", async ({
+  test("provider settings and children close back to the Model page, then Back reaches Home", async ({
     page,
   }) => {
     test.setTimeout(180_000);
@@ -199,17 +197,15 @@ test.describe("provider settings overlay stack", () => {
       await exerciseProviderSettingsStack(page);
       await closeSheetByHeaderButton(page, "provider-settings-sheet");
 
-      await expectModelBrowserVisible(page);
+      await expectModelPageVisible(page);
       await page.getByRole("button", { name: /Open .* settings/ }).click();
       await expect(page.getByTestId("provider-settings-sheet")).toBeVisible({ timeout: 10_000 });
       await exerciseProviderSettingsStack(page);
       await closeSheetByHeaderButton(page, "provider-settings-sheet");
 
-      await expectModelBrowserVisible(page);
-      await closeTopSheet(page);
-      await expect(page.getByTestId("agent-controls-model-browser-sheet")).not.toBeVisible({
-        timeout: 10_000,
-      });
+      await expectModelPageVisible(page);
+      await page.getByTestId("sheet-header-back").click();
+      await expect(page.getByTestId("mobile-model-page")).toHaveCount(0);
       await expect(page.getByTestId("agent-controls-settings-list")).toBeVisible();
       await closeTopSheet(page);
     } finally {
@@ -226,8 +222,6 @@ async function openTimedOutProvider(page: Page, workspaceId: string, width: numb
   await page.getByRole("button", { name: /Select model/ }).click();
   if (width < 600) {
     await page.getByTestId("agent-controls-model").click();
-  } else {
-    await page.getByRole("button", { name: "Back", exact: true }).click();
   }
   await page.getByTestId("model-provider-picker-timeout").click();
   await expect(page.getByText(/Timed out refreshing Pi timeout/)).toBeVisible();

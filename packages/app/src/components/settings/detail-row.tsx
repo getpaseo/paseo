@@ -13,6 +13,8 @@ interface SettingsDetailRowProps {
   hintStatus?: SettingsRowHintStatus;
   /** What the detail is set to, so the row says it without being opened. */
   summary?: string;
+  /** An icon drawn directly before the summary text. */
+  summaryLeading?: ReactNode;
   onPress: () => void;
   /** A row that cannot be opened keeps its summary and drops the chevron. */
   disabled?: boolean;

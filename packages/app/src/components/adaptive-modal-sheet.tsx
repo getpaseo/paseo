@@ -624,8 +624,8 @@ export interface AdaptiveModalSheetProps {
   /** Re-establishes caller-owned contexts inside the native or compact sheet portal. */
   contextBridge?: ContextBridge | null;
   /**
-   * Keys the body handles while the sheet is the top overlay, such as list navigation. Escape
-   * always closes the sheet. Return true from `onKeyDown` to claim the key.
+   * Keys the body handles while the sheet is the top overlay, such as list navigation. Return true
+   * from `onKeyDown` to claim the key. Escape closes the sheet unless the body lists it and claims it.
    */
   keyboard?: SheetKeyboard;
 }
@@ -783,12 +783,18 @@ export function AdaptiveModalSheet({
       }
       event.preventDefault();
       event.stopPropagation();
+      // A body that lists Escape among its keys undoes its own step first, such as a page that
+      // returns to the one before it; Escape closes the sheet when the body has nothing to undo.
+      if (keyboard?.keys.includes("Escape") && keyboard.onKeyDown(event)) return true;
       onClose();
       return true;
     },
     [keyboard, onClose],
   );
-  const overlayKeys = useMemo(() => ["Escape", ...(keyboard?.keys ?? [])], [keyboard?.keys]);
+  const overlayKeys = useMemo(
+    () => ["Escape", ...(keyboard?.keys ?? []).filter((key) => key !== "Escape")],
+    [keyboard?.keys],
+  );
   const setOverlayScope = useOverlayRegistration({
     keys: overlayKeys,
     active: visible,

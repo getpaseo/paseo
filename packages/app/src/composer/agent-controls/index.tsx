@@ -26,6 +26,7 @@ import { resolveProviderDefinition } from "@/utils/provider-definitions";
 import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
 import {
   AgentModeControl,
+  useAgentModeCycleShortcut,
   useLiveAgentModeControl,
   type AgentModeControlValue,
 } from "@/composer/agent-controls/mode-control";
@@ -82,6 +83,7 @@ import {
   useModelPickerShortcut,
 } from "@/composer/agent-controls/control-items";
 import { CompactModelSheet } from "@/composer/agent-controls/model-sheet";
+import type { AgentSheetControls } from "@/composer/agent-controls/sheet-home";
 import { useComposerSheetBridge } from "@/composer/agent-controls/sheet-bridge";
 import { draftComposerAgent } from "@/composer/draft/composer-agent";
 import { agentComposer } from "@/composer/agent-composer";
@@ -462,6 +464,7 @@ function ControlledAgentControls({
   const { fontScale } = useWindowDimensions();
   const [activeSheet, setActiveSheet] = useState<ActiveSheet>(null);
   const [openSelector, setOpenSelector] = useState<string | null>(null);
+  useAgentModeCycleShortcut(modeControl);
   // A compact composer always folds its controls into the model sheet; the width budget only
   // decides whether the model keeps its label.
   const minimumDensity: ComposerControlDensity = isCompact ? "compact" : "full";
@@ -836,7 +839,6 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
             isRetryingProvider={isRetryingModelProvider}
             serverId={modelSelectorServerId}
             desktopPlacement="top-start"
-            desktopMinWidth={360}
             toolbar={modelToolbar}
           />
         </View>
@@ -941,27 +943,13 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     canSwitchProvider,
   } = props;
 
-  const sheetControls = (
-    <View style={styles.combinedSheetControls} testID="agent-controls-combined-sheet-controls">
-      <ComposerControls
-        items={thinkingItems}
-        surface="sheet"
-        disabled={disabled}
-        openId={openSelector}
-        onOpenIdChange={handleSheetOpenChange}
-      />
-
-      {modeControl ? <AgentModeControl {...modeControl} surface="sheet" /> : null}
-
-      <ComposerControls
-        items={featureItems}
-        surface="sheet"
-        disabled={disabled}
-        openId={openSelector}
-        onOpenIdChange={handleSheetOpenChange}
-      />
-      <PluginComposerItems serverId={modelSelectorServerId} surface="sheet" />
-    </View>
+  const sheetControls = useMemo<AgentSheetControls>(
+    () => ({ thinkingItems, featureItems, modeControl: modeControl ?? null }),
+    [featureItems, modeControl, thinkingItems],
+  );
+  const pluginItems = useMemo(
+    () => <PluginComposerItems serverId={modelSelectorServerId} surface="sheet" />,
+    [modelSelectorServerId],
   );
 
   return canSelectModel ? (
@@ -988,9 +976,11 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       glyphs={glyphs}
       showLabels={showLabels}
       canSwitchProvider={canSwitchProvider}
-    >
-      {sheetControls}
-    </CompactModelSheet>
+      controls={sheetControls}
+      pluginItems={pluginItems}
+      openControlId={openSelector}
+      onOpenControlIdChange={handleSheetOpenChange}
+    />
   ) : null;
 }
 
@@ -1552,8 +1542,5 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
     backgroundColor: "transparent",
     borderRadius: theme.borderRadius.full,
-  },
-  combinedSheetControls: {
-    gap: theme.spacing[1],
   },
 }));

@@ -192,7 +192,7 @@ function listProps(select: SelectItem | null) {
 
 // A command that returns a promise keeps the control pending until it settles, and a failure
 // reaches the user the way a built-in live control's does.
-function usePendingRun() {
+export function usePendingRun() {
   const toast = useToast();
   const [pending, setPending] = useState(false);
   const run = useCallback(
@@ -303,6 +303,13 @@ export function ComposerControl({
       ) : null}
     </>
   );
+}
+
+/** A control's icon in its highlight colour, muted when it has none. */
+export function ComposerControlIcon({ item, size }: { item: ComposerControlItem; size: number }) {
+  const Icon = item.icon;
+  const color = item.highlight ? styles[item.highlight].color : styles.fieldIcon.color;
+  return <Icon size={size} color={color} />;
 }
 
 /** Where a list opens on desktop; the sheet has its own presentation. */
