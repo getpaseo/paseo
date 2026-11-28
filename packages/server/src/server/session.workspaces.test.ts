@@ -172,6 +172,7 @@ interface SessionTestAccess {
   handleArchiveAgentRequest(agentId: string, requestId: string): Promise<unknown>;
   handleMessage(message: unknown, source?: object): Promise<unknown>;
   handleCreatePaseoWorktreeRequest(params: unknown): Promise<unknown>;
+  agentDirectory: { listCandidates(...args: unknown[]): Promise<unknown[]> };
   listAgentPayloads(...args: unknown[]): Promise<unknown[]>;
   listFetchWorkspacesEntries(params: unknown): Promise<ListFetchResult>;
   listFetchAgentsEntries(params: unknown): Promise<ListFetchResult>;
@@ -2060,7 +2061,7 @@ test("workspace mark unread selects a finished cross-workspace child with scoped
     projectStored: (record) =>
       buildStoredAgentPayload(record, ["codex"], (_provider, own) => own ?? {}),
     isProviderVisible: () => true,
-    isStoredProviderAvailable: () => true,
+    registeredProviders: () => ["codex"],
   });
   session.listAgentPayloads = (filter) =>
     directory.list(filter as Parameters<AgentDirectory["list"]>[0]);
@@ -2861,7 +2862,7 @@ test("active-scoped fetch_agents includes only unarchived agents in active works
     archivedWorkspace,
     workspaceInArchivedProject,
   ];
-  session.listAgentPayloads = async () => [
+  session.agentDirectory.listCandidates = async () => [
     makeAgent({
       id: "agent-active",
       cwd: "/tmp/active",
@@ -2959,7 +2960,7 @@ test("active-scoped fetch_agents pages within active scope instead of global his
     activeTwo,
     archivedWorkspace,
   ];
-  session.listAgentPayloads = async () => [
+  session.agentDirectory.listCandidates = async () => [
     makeAgent({
       id: "active-one",
       cwd: "/tmp/pages/one",
@@ -3044,7 +3045,7 @@ test("legacy unscoped fetch_agents keeps global workspace behavior", async () =>
     [activeWorkspace, archivedWorkspace].find(
       (workspace) => workspace.workspaceId === workspaceId,
     ) ?? null;
-  session.listAgentPayloads = async () => [
+  session.agentDirectory.listCandidates = async () => [
     makeAgent({
       id: "legacy-active",
       cwd: activeCwd,
@@ -3103,7 +3104,7 @@ test("fetch_agent_history_request pages archived historical rows separately", as
     workspace,
   ];
   session.workspaceRegistry.get = async () => workspace;
-  session.listAgentPayloads = async () => [
+  session.agentDirectory.listCandidates = async () => [
     {
       ...makeAgent({
         id: "history-archived",
@@ -3173,7 +3174,7 @@ test("fetch_agent_history_request filters across history and paginates chronolog
     workspace,
   ];
   session.workspaceRegistry.get = async () => workspace;
-  session.listAgentPayloads = async () => [
+  session.agentDirectory.listCandidates = async () => [
     // Search keeps chronological order, skipping unrelated rows between pages.
     {
       ...makeAgent({
@@ -3261,7 +3262,7 @@ test("fetch_agent_history_request rejects a malformed search cursor", async () =
     workspace,
   ];
   session.workspaceRegistry.get = async () => workspace;
-  session.listAgentPayloads = async () => [
+  session.agentDirectory.listCandidates = async () => [
     {
       ...makeAgent({
         id: "match",
@@ -3334,7 +3335,7 @@ test("fetch_agent_history_request skips rows whose workspace project record is m
   session.workspaceRegistry.get = async (workspaceId: string) =>
     [stableWorkspace, orphanWorkspace].find((workspace) => workspace.workspaceId === workspaceId) ??
     null;
-  session.listAgentPayloads = async () => [
+  session.agentDirectory.listCandidates = async () => [
     makeAgent({
       id: "history-orphan",
       cwd: orphanCwd,

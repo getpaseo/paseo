@@ -3,6 +3,7 @@ import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import {
   buildConfigOverrides,
   buildSessionConfig,
+  resolveStoredAgentUpdatedAt,
   toAgentPersistenceHandle,
 } from "./persistence-hooks.js";
 
@@ -27,6 +28,16 @@ function createRecord(overrides?: Partial<StoredAgentRecord>): StoredAgentRecord
 }
 
 describe("persistence hooks", () => {
+  test.each([
+    ["bad", "also bad", "bad"],
+    ["bad", "2026-01-01", "2026-01-01"],
+    ["2026-01-01", "bad", "2026-01-01"],
+    ["2026-01-01", "2026-01-01T00:00:00Z", "2026-01-01"],
+    ["2026-01-01", "2026-01-02", "2026-01-02"],
+  ])("resolves stored update %s and activity %s to %s", (updatedAt, lastActivityAt, expected) => {
+    expect(resolveStoredAgentUpdatedAt(createRecord({ updatedAt, lastActivityAt }))).toBe(expected);
+  });
+
   test("buildConfigOverrides prefers the last live mode over the creation-time mode", () => {
     const record = createRecord({
       lastModeId: "bypass",

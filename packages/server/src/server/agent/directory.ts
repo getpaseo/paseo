@@ -1,3 +1,4 @@
+import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import type { AgentSnapshotPayload } from "../messages.js";
 import type { WorkspaceRegistry } from "../workspace-registry.js";
@@ -16,6 +17,47 @@ import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
  */
 export type BackgroundVisibility = boolean | "workspaces";
 
+interface AgentDirectoryFilter {
+  workspaceIds?: Iterable<string>;
+  /** Include parent chains by ID for workspace root classification. */
+  includeAncestors?: boolean;
+  labels?: Record<string, string>;
+  includeArchived?: boolean;
+  includeBackground?: BackgroundVisibility;
+  includeUnavailablePersisted?: boolean;
+}
+
+export type AgentDirectoryCandidate =
+  | AgentSnapshotPayload
+  | {
+      stored: StoredAgentRecord;
+      snapshot(): AgentSnapshotPayload;
+    };
+
+export function candidateSnapshot(candidate: AgentDirectoryCandidate): AgentSnapshotPayload {
+  return "stored" in candidate ? candidate.snapshot() : candidate;
+}
+
+export function candidateStatusPriority(candidate: AgentDirectoryCandidate): number {
+  if ("stored" in candidate && candidate.stored.archivedAt) {
+    // Archived snapshots have no pending permissions or live background work.
+    const record = candidate.stored;
+    return getAgentStatusPriority({
+      status: record.lastStatus,
+      requiresAttention: record.requiresAttention,
+      attentionReason: record.attentionReason,
+    });
+  }
+  const agent = candidateSnapshot(candidate);
+  return getAgentStatusPriority({
+    status: agent.status,
+    requiresAttention: agent.requiresAttention,
+    attentionReason: agent.attentionReason,
+    pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
+    backgroundWork: agent.backgroundWork,
+  });
+}
+
 interface DiscoverableAgent {
   workspaceId?: string;
   internal?: boolean;
@@ -33,9 +75,12 @@ export class AgentDirectory {
       >;
       workspaces: Pick<WorkspaceRegistry, "get">;
       projectLive(agent: ManagedAgent): Promise<AgentSnapshotPayload>;
-      projectStored(record: StoredAgentRecord): AgentSnapshotPayload;
+      projectStored(
+        record: StoredAgentRecord,
+        providers: ReadonlySet<string>,
+      ): AgentSnapshotPayload;
       isProviderVisible(provider: string): boolean;
-      isStoredProviderAvailable(record: StoredAgentRecord): boolean;
+      registeredProviders(): readonly string[];
     },
   ) {}
 
@@ -94,15 +139,11 @@ export class AgentDirectory {
     }
   }
 
-  async list(filter?: {
-    workspaceIds?: Iterable<string>;
-    /** Include parent chains by ID for workspace root classification. */
-    includeAncestors?: boolean;
-    labels?: Record<string, string>;
-    includeArchived?: boolean;
-    includeBackground?: BackgroundVisibility;
-    includeUnavailablePersisted?: boolean;
-  }): Promise<AgentSnapshotPayload[]> {
+  async list(filter?: AgentDirectoryFilter): Promise<AgentSnapshotPayload[]> {
+    return (await this.listCandidates(filter)).map(candidateSnapshot);
+  }
+
+  async listCandidates(filter?: AgentDirectoryFilter): Promise<AgentDirectoryCandidate[]> {
     const requested = filter?.workspaceIds ? new Set(filter.workspaceIds) : null;
     const live = this.deps.manager.listAgents();
     const liveIds = new Set(live.map((agent) => agent.id));
@@ -118,13 +159,14 @@ export class AgentDirectory {
       await this.appendAncestors(live, selectedLive, records);
     }
 
-    const workspaceIds = new Set(
-      [...selectedLive, ...records].flatMap((agent) =>
-        agent.workspaceId ? [agent.workspaceId] : [],
-      ),
-    );
     const backgroundWorkspaceIds = new Set<string>();
     if (visibility !== true) {
+      const workspaceIds = new Set<string>();
+      for (const agents of [selectedLive, records]) {
+        for (const agent of agents) {
+          if (agent.workspaceId) workspaceIds.add(agent.workspaceId);
+        }
+      }
       for (const id of workspaceIds) {
         if ((await this.deps.workspaces.get(id))?.background) backgroundWorkspaceIds.add(id);
       }
@@ -139,19 +181,29 @@ export class AgentDirectory {
         visibility,
       ) &&
       labels.every(([key, value]) => agent.labels?.[key] === value);
+    const providers = new Set(this.deps.registeredProviders());
     const stored = records
-      .filter((record) => !liveIds.has(record.id) && matches(record))
       .filter(
         (record) =>
-          filter?.includeUnavailablePersisted || this.deps.isStoredProviderAvailable(record),
+          !liveIds.has(record.id) &&
+          matches(record) &&
+          this.deps.isProviderVisible(record.provider),
       )
-      .map((record) => this.deps.projectStored(record));
+      .filter((record) => filter?.includeUnavailablePersisted || providers.has(record.provider))
+      .map((record) => {
+        let snapshot: AgentSnapshotPayload | undefined;
+        return {
+          stored: record,
+          snapshot: () => (snapshot ??= this.deps.projectStored(record, providers)),
+        };
+      });
     const active = await Promise.all(
       selectedLive.filter(matches).map((agent) => this.deps.projectLive(agent)),
     );
-    return [...active, ...stored]
-      .filter(matches)
-      .filter((agent) => this.deps.isProviderVisible(agent.provider));
+    return [
+      ...active.filter((agent) => matches(agent) && this.deps.isProviderVisible(agent.provider)),
+      ...stored,
+    ];
   }
 }
 

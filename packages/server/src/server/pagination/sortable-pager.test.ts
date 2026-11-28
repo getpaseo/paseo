@@ -46,11 +46,29 @@ describe("SortablePager.normalizeSort", () => {
   });
 });
 
-describe("SortablePager.compare", () => {
+describe("SortablePager.sorted", () => {
+  it("extracts each requested sort value once per row", () => {
+    const reads: string[] = [];
+    const countingPager = new SortablePager<Row, Key>({
+      validKeys: KEYS,
+      defaultSort: [],
+      label: "rows",
+      getId: (row) => row.id,
+      getSortValue: (row, key) => {
+        reads.push(row.id);
+        return row[key];
+      },
+    });
+    expect(
+      countingPager.sorted([rowC, rowB, rowA], [{ key: "updated_at", direction: "desc" }]),
+    ).toEqual([rowA, rowC, rowB]);
+    expect(reads.toSorted()).toEqual(["a", "b", "c"]);
+  });
+
   it("orders by primary sort direction", () => {
     const sort: SortSpec<Key>[] = [{ key: "updated_at", direction: "desc" }];
-    expect(pager.compare(rowA, rowB, sort)).toBeLessThan(0);
-    expect(pager.compare(rowB, rowA, sort)).toBeGreaterThan(0);
+    expect(pager.sorted([rowA, rowB], sort)).toEqual([rowA, rowB]);
+    expect(pager.sorted([rowB, rowA], sort)).toEqual([rowA, rowB]);
   });
 
   it("falls through to secondary sort when primary ties", () => {
@@ -58,18 +76,18 @@ describe("SortablePager.compare", () => {
       { key: "updated_at", direction: "desc" },
       { key: "title", direction: "asc" },
     ];
-    expect(pager.compare(rowA, rowC, sort)).toBeGreaterThan(0);
+    expect(pager.sorted([rowA, rowC], sort)).toEqual([rowC, rowA]);
   });
 
   it("breaks final ties with id", () => {
     const sort: SortSpec<Key>[] = [{ key: "updated_at", direction: "desc" }];
     const twin: Row = { id: "z", created_at: 99, title: "alpha", updated_at: 30 };
-    expect(pager.compare(rowA, twin, sort)).toBeLessThan(0);
+    expect(pager.sorted([rowA, twin], sort)).toEqual([rowA, twin]);
   });
 
   it("treats null as less than any value", () => {
     const sort: SortSpec<Key>[] = [{ key: "title", direction: "asc" }];
-    expect(pager.compare(rowC, rowA, sort)).toBeLessThan(0);
+    expect(pager.sorted([rowC, rowA], sort)).toEqual([rowC, rowA]);
   });
 });
 
