@@ -24,6 +24,9 @@ const runtime = {
   addComposerPill() {
     return { update() {}, remove() {} };
   },
+  setComposerPlaceholder() {
+    return { update() {}, remove() {} };
+  },
 } as unknown as PluginClientRuntime;
 
 function evaluatePluginClientBundle(id: string, source: string) {
