@@ -1295,6 +1295,8 @@ export const fr: TranslationResources = {
     },
     display: {
       showBackground: "Afficher les espaces en arrière-plan",
+      showScheduledHeartbeats: "Afficher les battements périodiques programmés",
+      scheduledHeartbeat: "Battement périodique programmé",
       trigger: "Préférences d’affichage",
       heading: "Affichage",
       sort: {

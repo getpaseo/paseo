@@ -1285,6 +1285,8 @@ export const ru: TranslationResources = {
     },
     display: {
       showBackground: "Показать фоновые пространства",
+      showScheduledHeartbeats: "Показывать запланированные периодические сигналы",
+      scheduledHeartbeat: "Периодический сигнал запланирован",
       trigger: "Настройки отображения",
       heading: "Отображение",
       sort: {

@@ -1293,6 +1293,8 @@ export const ptBR: TranslationResources = {
     },
     display: {
       showBackground: "Mostrar espaços em segundo plano",
+      showScheduledHeartbeats: "Mostrar batimentos agendados",
+      scheduledHeartbeat: "Batimento agendado",
       trigger: "Preferências de exibição",
       heading: "Exibição",
       sort: {

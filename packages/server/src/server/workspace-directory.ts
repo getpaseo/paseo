@@ -380,9 +380,18 @@ export class WorkspaceDirectory {
 
     for (const agent of activeAgents) {
       const workspaceAgent = resolveWorkspaceRootAgent(agent, activeAgentsById);
-      if (!workspaceAgent) {
+      if (!workspaceAgent?.workspaceId) {
         continue;
       }
+      const descriptor = descriptorsByWorkspaceId.get(workspaceAgent.workspaceId);
+      if (!descriptor) {
+        continue;
+      }
+
+      if (agent.backgroundWork?.hasScheduledHeartbeat) {
+        descriptor.hasScheduledHeartbeat = true;
+      }
+
       const isWorkspaceRoot = workspaceAgent.id === agent.id;
       if (!isWorkspaceRoot && !isAgentRunning(agent)) {
         continue;
@@ -397,18 +406,10 @@ export class WorkspaceDirectory {
           })
         : "running";
 
-      const workspaceId = workspaceAgent.workspaceId;
-      if (!workspaceId) {
-        continue;
-      }
-      const existing = descriptorsByWorkspaceId.get(workspaceId);
-      if (!existing) {
-        continue;
-      }
       if (
-        getWorkspaceStateBucketPriority(bucket) < getWorkspaceStateBucketPriority(existing.status)
+        getWorkspaceStateBucketPriority(bucket) < getWorkspaceStateBucketPriority(descriptor.status)
       ) {
-        existing.status = bucket;
+        descriptor.status = bucket;
       }
     }
   }

@@ -25,6 +25,8 @@ export type SidebarTrailingChoice = Exclude<SidebarWorkspaceTrailing, "none">;
 export interface SidebarDisplayPreferences {
   showBackground: boolean;
   toggleBackground: () => void;
+  showScheduledHeartbeats: boolean;
+  toggleScheduledHeartbeats: () => void;
   grouping: SidebarGroupMode;
   workspaceSort: WorkspaceSort;
   setWorkspaceSort: (sort: WorkspaceSort) => void;
@@ -82,6 +84,7 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
   const {
     settings: {
       workspaceTitleSource,
+      sidebarShowScheduledHeartbeats,
       sidebarWorkspaceTrailing,
       sidebarRowItems,
       sidebarChecksDisplay,
@@ -109,6 +112,10 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
     },
     [updateSettings, sidebarPluginRowBadgeItems],
   );
+
+  const toggleScheduledHeartbeats = useCallback(() => {
+    void updateSettings({ sidebarShowScheduledHeartbeats: !sidebarShowScheduledHeartbeats });
+  }, [updateSettings, sidebarShowScheduledHeartbeats]);
 
   const setTitleSource = useCallback(
     (source: WorkspaceTitleSource) => {
@@ -146,6 +153,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
     () => ({
       showBackground,
       toggleBackground,
+      showScheduledHeartbeats: sidebarShowScheduledHeartbeats,
+      toggleScheduledHeartbeats,
       grouping,
       workspaceSort,
       setWorkspaceSort,
@@ -174,6 +183,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
     [
       showBackground,
       toggleBackground,
+      sidebarShowScheduledHeartbeats,
+      toggleScheduledHeartbeats,
       grouping,
       workspaceSort,
       setWorkspaceSort,

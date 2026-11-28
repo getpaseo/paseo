@@ -967,6 +967,8 @@ export const AgentBackgroundWorkSummarySchema = z.object({
   count: z.number().int().nonnegative(),
   /** Defaults to the total count when omitted. */
   runningCount: z.number().int().nonnegative().optional(),
+  // COMPAT(scheduledHeartbeatIndicator): added after v0.18.1, remove optional after 2027-06-01.
+  hasScheduledHeartbeat: z.boolean().optional(),
 });
 
 export type AgentBackgroundWorkSummary = z.infer<typeof AgentBackgroundWorkSummarySchema>;
@@ -4663,6 +4665,8 @@ export const WorkspaceDescriptorPayloadSchema = z
     background: z.boolean().optional(),
     archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
+    // COMPAT(scheduledHeartbeatIndicator): added after v0.18.1, remove optional after 2027-06-01.
+    hasScheduledHeartbeat: z.boolean().optional(),
     // Best-effort workspace status entry timestamp. Old daemons omit the
     // field; old clients treat missing and null equivalently. The transform
     // coerces a missing field to `null` so downstream code never has to

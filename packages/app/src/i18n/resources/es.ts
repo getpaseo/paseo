@@ -1303,6 +1303,8 @@ export const es: TranslationResources = {
     },
     display: {
       showBackground: "Mostrar espacios en segundo plano",
+      showScheduledHeartbeats: "Mostrar latidos programados",
+      scheduledHeartbeat: "Latido programado",
       trigger: "Preferencias de visualización",
       heading: "Visualización",
       sort: {

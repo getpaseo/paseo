@@ -1266,6 +1266,8 @@ export const ar: TranslationResources = {
     },
     display: {
       showBackground: "إظهار مساحات العمل في الخلفية",
+      showScheduledHeartbeats: "إظهار النبضات الدورية المجدولة",
+      scheduledHeartbeat: "نبضة دورية مجدولة",
       trigger: "تفضيلات العرض",
       heading: "العرض",
       sort: {

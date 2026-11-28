@@ -139,6 +139,7 @@ export interface WorkspaceDescriptor {
   labels?: string[];
   metadata?: Record<string, JsonValue>;
   status: WorkspaceDescriptorPayload["status"];
+  hasScheduledHeartbeat?: boolean;
   statusEnteredAt: Date | null;
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
@@ -186,6 +187,7 @@ export function normalizeWorkspaceDescriptor(
     labels: payload.labels ?? [],
     metadata: payload.metadata ?? {},
     status: payload.status,
+    hasScheduledHeartbeat: payload.hasScheduledHeartbeat,
     statusEnteredAt,
     archivingAt: payload.archivingAt ?? null,
     diffStat: payload.diffStat ?? null,
