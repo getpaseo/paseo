@@ -19,6 +19,7 @@ import type {
   TextProps,
 } from "react-native";
 import type { PluginIconProps } from "../icons.js";
+import type { WorkspaceRef } from "../refs.js";
 import type { PluginIcon } from "./contracts.js";
 
 export interface ModalProps {
@@ -185,6 +186,19 @@ export interface WorkspaceRowBadgeProps {
 }
 /** One item on a sidebar workspace row's meta line. Render it from a workspace row badge item's `Component`. */
 export declare const WorkspaceRowBadge: ComponentType<WorkspaceRowBadgeProps>;
+
+export interface WorkspaceRowBadgesProps {
+  workspace: WorkspaceRef;
+  /** Keys from `useWorkspaceRowBadgeItems` to draw, in this order. Defaults to every listed item. */
+  items?: readonly string[];
+}
+/**
+ * Plugins' badges for a workspace, as Paseo's sidebar draws them on the row's meta line: items from plugins installed
+ * on the workspace's host, minus the ones hidden in Paseo's sidebar display preferences. Render it from a sidebar
+ * view's rows. It draws the badges with no wrapper, so place it in a row. Renders nothing outside a sidebar view.
+ * Apps older than this component lack it; check before rendering.
+ */
+export declare const WorkspaceRowBadges: ComponentType<WorkspaceRowBadgesProps>;
 
 /** Paseo's loading state. Fills the panel; the panel decides when to show it. */
 export declare const Loading: ComponentType;

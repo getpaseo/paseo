@@ -123,7 +123,31 @@ await paseo.terminals.ref(terminalRef).kill();
 
 ## 匹配应用的信息密度 {#match-the-apps-density}
 
-使用 React Native 原语绘制界面。SDK 不导出侧边栏视图的行、分区、列表、徽标或拖拽辅助组件。现有页眉和页脚组件包属于独立界面。
+使用 React Native 原语绘制界面。SDK 不导出侧边栏视图的行、分区、列表或拖拽辅助组件。现有页眉和页脚组件包属于独立界面。
+
+其他插件通过 `addWorkspaceRowBadgeItem` 为 Paseo 的工作区行添加徽标。在你的行中渲染 `@getpaseo/plugin/client/ui` 的 `WorkspaceRowBadges` 即可一并显示。它绘制安装在该工作区主机上的插件徽标，不包括用户在侧边栏显示偏好中隐藏的徽标，且不带外层容器，请把它放在一行中：
+
+```tsx
+import { WorkspaceRowBadges } from "@getpaseo/plugin/client/ui";
+
+<View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+  <WorkspaceRowBadges workspace={reference} />
+</View>;
+```
+
+`@getpaseo/plugin/client` 的 `useWorkspaceRowBadgeItems()` 列出相同的徽标项：每项的 `key`、`pluginId`、`itemId`、`title` 和 `icon`，以及提供该项的插件副本所在主机 `hostIds`。可以用它在没有插件添加徽标时省去只放徽标的那一行，或自行安排各项的位置。把 key 传给 `items`，只按该顺序绘制这些项：
+
+```tsx
+import { useWorkspaceRowBadgeItems, type WorkspaceRef } from "@getpaseo/plugin/client";
+import { WorkspaceRowBadges } from "@getpaseo/plugin/client/ui";
+
+function DeployBadge({ reference }: { reference: WorkspaceRef }) {
+  const deploy = useWorkspaceRowBadgeItems().find((item) => item.pluginId === "deploys");
+  return deploy ? <WorkspaceRowBadges workspace={reference} items={[deploy.key]} /> : null;
+}
+```
+
+徽标项是组件，因此列表只说明有哪些徽标项，而不说明每项对某个工作区显示什么。早于这些导出的应用版本没有它们；请以命名空间方式导入该模块，并在使用前检查。
 
 紧凑行的最小高度为 28，水平内边距为 12；主标签字号为 12、行高为 16，次标签字号为 11。使用以下主题令牌：
 

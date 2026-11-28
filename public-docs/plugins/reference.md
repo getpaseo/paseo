@@ -1238,6 +1238,9 @@ client.addWorkspaceRowBadgeItem({
 
 Apps older than this API have no `addWorkspaceRowBadgeItem`; check for it before calling.
 
+A [sidebar view](sidebar-views#match-the-apps-density) draws your badges on its own rows with
+`WorkspaceRowBadges`, and lists them with `useWorkspaceRowBadgeItems`.
+
 See the [workspace row badges example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/workspace-row-badges).
 
 ## Host UI

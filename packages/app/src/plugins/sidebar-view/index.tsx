@@ -22,6 +22,7 @@ import { PluginEnvironmentProvider } from "../popover";
 import { resolvePluginPlatform } from "../platform";
 import { useInstalledPlugins } from "../registry";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
+import { SidebarViewRowBadgesProvider } from "../workspace-row-badge-items";
 import { toPluginTheme } from "../theme";
 import { sidebarViews, type SidebarViewEntry } from "./catalog";
 import { useSidebarViewSelection } from "./selection";
@@ -151,15 +152,17 @@ function SidebarView({
   );
   const Component = entry.view.Component;
   return (
-    <PluginEnvironmentProvider environment={environment}>
-      <Component
-        theme={theme}
-        layout={layout}
-        active={active}
-        navigation={navigation}
-        dismiss={dismiss}
-      />
-    </PluginEnvironmentProvider>
+    <SidebarViewRowBadgesProvider>
+      <PluginEnvironmentProvider environment={environment}>
+        <Component
+          theme={theme}
+          layout={layout}
+          active={active}
+          navigation={navigation}
+          dismiss={dismiss}
+        />
+      </PluginEnvironmentProvider>
+    </SidebarViewRowBadgesProvider>
   );
 }
 const ThemedSidebarView = withUnistyles(SidebarView);

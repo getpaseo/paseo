@@ -169,8 +169,40 @@ to other devices. Use `scope: "host"` for data clients should share through the 
 
 ## Match the app's density
 
-Render with React Native primitives. The SDK exports no sidebar-view rows, sections, lists,
-badges or drag helpers. The existing header/footer item kit is a separate surface.
+Render with React Native primitives. The SDK exports no sidebar-view rows, sections, lists
+or drag helpers. The existing header/footer item kit is a separate surface.
+
+Other plugins add badges to Paseo's workspace rows with `addWorkspaceRowBadgeItem`. Render
+`WorkspaceRowBadges` from `@getpaseo/plugin/client/ui` in your row to show them too. It draws the
+badges of plugins installed on the workspace's host, minus those the user hid in the sidebar's
+display preferences, with no wrapper, so place it in a row:
+
+```tsx
+import { WorkspaceRowBadges } from "@getpaseo/plugin/client/ui";
+
+<View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+  <WorkspaceRowBadges workspace={reference} />
+</View>;
+```
+
+`useWorkspaceRowBadgeItems()` from `@getpaseo/plugin/client` lists the same items: each one's
+`key`, `pluginId`, `itemId`, `title` and `icon`, and the `hostIds` whose copy of the plugin
+contributes it. Use it to leave out a line that would only hold badges when no plugin adds any,
+or to place items yourself. Pass keys to `items` to draw only those items, in that order:
+
+```tsx
+import { useWorkspaceRowBadgeItems, type WorkspaceRef } from "@getpaseo/plugin/client";
+import { WorkspaceRowBadges } from "@getpaseo/plugin/client/ui";
+
+function DeployBadge({ reference }: { reference: WorkspaceRef }) {
+  const deploy = useWorkspaceRowBadgeItems().find((item) => item.pluginId === "deploys");
+  return deploy ? <WorkspaceRowBadges workspace={reference} items={[deploy.key]} /> : null;
+}
+```
+
+A badge item is a component, so the list says which items exist, not what each one shows for a
+workspace. Apps older than these exports lack them; import the module as a namespace and check
+before using them.
 
 For a dense row use a minimum height of 28, horizontal padding of 12, a 12-point primary label
 with 16-point line height and an 11-point secondary label. Use these supplied tokens:
