@@ -3907,6 +3907,81 @@ describe("ACPAgentSession", () => {
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
   });
 
+  describe("steerActiveTurn", () => {
+    function steerableSession(agentCapabilities: Record<string, unknown>) {
+      const session = createSession();
+      const resolvers: Array<(value: PromptResponse) => void> = [];
+      const prompt = vi.fn(
+        () =>
+          new Promise<PromptResponse>((resolve) => {
+            resolvers.push(resolve);
+          }),
+      );
+      const internals = asInternals<ACPSessionInternals & { agentCapabilities: unknown }>(session);
+      internals.sessionId = "session-1";
+      internals.connection = openPromptConnection(prompt);
+      internals.agentCapabilities = agentCapabilities;
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => {
+        events.push(event);
+      });
+      return { session, prompt, resolvers, events };
+    }
+
+    test("folds the steer into the running turn when the agent accepts prompts while running", async () => {
+      const { session, prompt, resolvers, events } = steerableSession({
+        _meta: { factory: { promptWhileRunning: true } },
+      });
+      const { turnId } = await session.startTurn("run the long command");
+
+      await expect(
+        session.steerActiveTurn("also say STEERED", {
+          expectedTurnId: turnId,
+          clientMessageId: "steer-1",
+        }),
+      ).resolves.toEqual({ status: "accepted", providerMessageId: "steer-1" });
+      expect(prompt).toHaveBeenCalledTimes(2);
+      expect(prompt.mock.calls[1]?.[0]).toMatchObject({
+        sessionId: "session-1",
+        messageId: "steer-1",
+        prompt: [{ type: "text", text: "also say STEERED" }],
+      });
+      expect(terminalEvents(events)).toEqual([]);
+
+      resolvers[1]?.({ stopReason: "end_turn" });
+      resolvers[0]?.({ stopReason: "end_turn" });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(terminalEvents(events)).toEqual([
+        expect.objectContaining({ type: "turn_completed", turnId }),
+      ]);
+      expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+    });
+
+    test("reports unavailable without prompting when the agent does not accept prompts while running", async () => {
+      const { session, prompt } = steerableSession({});
+      const { turnId } = await session.startTurn("run the long command");
+
+      await expect(
+        session.steerActiveTurn("also say STEERED", { expectedTurnId: turnId }),
+      ).resolves.toEqual({ status: "unavailable" });
+      expect(prompt).toHaveBeenCalledOnce();
+    });
+
+    test("reports unavailable when the expected turn is no longer active", async () => {
+      const { session, prompt } = steerableSession({
+        _meta: { factory: { promptWhileRunning: true } },
+      });
+      await session.startTurn("run the long command");
+
+      await expect(
+        session.steerActiveTurn("also say STEERED", { expectedTurnId: "older-turn" }),
+      ).resolves.toEqual({ status: "unavailable" });
+      expect(prompt).toHaveBeenCalledOnce();
+    });
+  });
+
   test("startTurn emits the submitted user message even when ACP does not echo it", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];

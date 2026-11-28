@@ -108,6 +108,8 @@ import {
   type ProviderCatalog,
   type ResolveAgentCreateConfigInput,
   type ResolveAgentCreateConfigResult,
+  type SteerActiveTurnOptions,
+  type SteerResult,
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
@@ -762,6 +764,21 @@ export interface ACPProviderModeWriteResult {
 
 export interface ACPBeforeModeWriteResult {
   configOptions?: SessionConfigOption[];
+}
+
+// Factory Droid advertises that it accepts session/prompt while a turn runs and folds the new
+// prompt into that turn. ACP has no standard capability for this yet.
+export function supportsACPPromptWhileRunning(
+  capabilities: ACPAgentCapabilities | null | undefined,
+): boolean {
+  const meta = capabilities?._meta;
+  if (!meta || typeof meta !== "object") return false;
+  const factory = (meta as Record<string, unknown>).factory;
+  return (
+    typeof factory === "object" &&
+    factory !== null &&
+    (factory as Record<string, unknown>).promptWhileRunning === true
+  );
 }
 
 export function mapACPUsage(usage: Usage | null | undefined): AgentUsage | undefined {
@@ -2371,6 +2388,41 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return { turnId };
   }
 
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    const turnId = options.expectedTurnId;
+    if (
+      this.closed ||
+      !this.connection ||
+      !this.sessionId ||
+      this.connection.signal.aborted ||
+      this.activeForegroundTurnId !== turnId ||
+      !supportsACPPromptWhileRunning(this.agentCapabilities)
+    ) {
+      return { status: "unavailable" };
+    }
+    if (options.clearPendingPermissions) {
+      this.cancelPendingPermissions((pending) => pending.turnId === turnId);
+    }
+    const messageId = options.clientMessageId ?? randomUUID();
+    // The agent folds this prompt into the running turn and answers both prompt requests when
+    // that turn ends, so the original prompt's response still owns turn completion.
+    void this.connection
+      .prompt({
+        sessionId: this.sessionId,
+        messageId,
+        prompt: toACPContentBlocks(prompt),
+      })
+      .catch((error: unknown) => {
+        this.logger.warn(
+          { err: error, provider: this.provider, turnId },
+          "provider.acp.steer_prompt_failed",
+        );
+      });
+    return { status: "accepted", providerMessageId: messageId };
+  }
   // The SDK aborts the connection without rejecting the pending prompt, and before the child's
   // exit event, so wait for the exit status before failing the turn.
   private async failDisconnectedTurn(turnId: string, child: ChildProcess | null): Promise<void> {
