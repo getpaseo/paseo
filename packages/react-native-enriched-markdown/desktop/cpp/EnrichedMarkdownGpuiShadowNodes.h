@@ -5,6 +5,7 @@
 #include <react/renderer/components/EnrichedMarkdownTextSpec/EventEmitters.h>
 #include <react/renderer/components/EnrichedMarkdownTextSpec/Props.h>
 #include <react/renderer/components/view/ConcreteViewShadowNode.h>
+#include <react/renderer/core/LayoutConstraints.h>
 #include <react/renderer/core/LayoutContext.h>
 
 namespace facebook::react {
