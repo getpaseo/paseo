@@ -600,6 +600,8 @@ describe("sidebar data SDK boundary", () => {
       import type { PluginWorkspaceSnapshot } from "@getpaseo/plugin";
       function Panel({ workspace, agent }: { workspace: WorkspaceRef; agent: AgentRef }) {
         const snapshot: PluginWorkspaceSnapshot | null = useWorkspace(workspace);
+        const workspaceIssues: unknown = snapshot?.metadata.issues;
+        void workspaceIssues;
         const title: string | null = useWorkspace("workspace", item => item.name);
         const status = useAgent(agent, item => ({ status: item.status }), (a, b) => a?.status === b?.status);
         const agentSnapshot = useAgent(agent);
@@ -611,6 +613,7 @@ describe("sidebar data SDK boundary", () => {
         const paseo = usePaseo();
         void paseo.workspaces.ref(workspace).setPinned(true);
         void paseo.workspaces.ref(workspace).setLabel("Later", { assigned: true });
+        void paseo.workspaces.ref(workspace).setMetadata({ issues: ["https://github.com/getpaseo/paseo/issues/1"], body: null });
         void paseo.workspaces.ref("old-id").setTitle("Title");
         if (projects[0]) { paseo.projects.ref(projects[0]).open(); void paseo.projects.ref(projects[0]).createWorkspace(); }
         if (terminals[0]) { paseo.terminals.ref(terminals[0]).focus(); void paseo.terminals.ref(terminals[0]).kill(); }

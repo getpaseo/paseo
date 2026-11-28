@@ -9,7 +9,7 @@ Paseo is a remote daemon that manages coding agents, terminals. Control it throu
 
 Call `list_hosts` to discover the calling daemon (`self`) and its registered destinations (`hosts`). Use a destination's `serverId` for tool calls; labels are display names.
 
-`create_workspace`, `list_workspaces`, `create_agent`, `send_agent_prompt`, `get_agent_status`, `get_agent_activity`, and `list_agents` accept `serverId`. Omit it for the calling daemon. Other MCP tools operate on the calling daemon.
+`create_workspace`, `list_workspaces`, `update_workspace`, `create_agent`, `send_agent_prompt`, `get_agent_status`, `get_agent_activity`, and `list_agents` accept `serverId`. Omit it for the calling daemon. Other MCP tools operate on the calling daemon.
 
 Keep an agent's `{ serverId, agentId }` together. For example, call `send_agent_prompt` with:
 
@@ -42,17 +42,19 @@ For a local daemon, `project create` defaults to the current directory and resol
 
 ## Workspaces
 
-**`create_workspace`** — create a workspace independently of any agent. Required: `isolation` (`local` or `worktree`). Worktree isolation supports `mode: "branch-off" | "checkout-branch" | "checkout-pr"`: use `branchName`/`baseBranch` for a new branch, `branch` for an existing branch, or `prNumber` plus optional `forge` for a change request. Use `path` for a local directory or source checkout and `projectId` for the owning project; when no path is supplied, a worktree may resolve its source from `projectId`. `worktreeSlug` controls the managed path. Returns the workspace descriptor centered on `workspaceId`.
+**`create_workspace`** — create a workspace independently of any agent. Required: `isolation` (`local` or `worktree`). Worktree isolation supports `mode: "branch-off" | "checkout-branch" | "checkout-pr"`: use `branchName`/`baseBranch` for a new branch, `branch` for an existing branch, or `prNumber` plus optional `forge` for a change request. Use `path` for a local directory or source checkout and `projectId` for the owning project; when no path is supplied, a worktree may resolve its source from `projectId`. `worktreeSlug` controls the managed path, and `metadata` attaches initial structured JSON metadata. Returns the workspace descriptor centered on `workspaceId` (including `metadata`).
 
 `background` hides the workspace from the UI. It inherits your visibility when omitted. Omit it unless the user asks for a specific value.
 
 Choose `baseBranch` explicitly: `origin/main` selects the remote-tracking branch; `refs/heads/main` selects local main. Bare `main` prefers local main when it exists, otherwise origin/main. Paseo retains the resolved ref for workspace comparisons, even after rebasing the branch or changing its PR target.
 
-**`list_workspaces`** — list active workspaces, excluding background workspaces unless `includeBackground: true`.
+**`list_workspaces`** — list active workspaces (including `metadata`), excluding background workspaces unless `includeBackground: true`.
+
+**`update_workspace`** — `{ workspaceId?, title?, metadata? }`. Update a workspace's user-visible title (`null` clears it back to the derived name) and/or patch its structured metadata. Omit `workspaceId` to update your current workspace on the calling daemon (pass `workspaceId` when targeting a remote `serverId`). `metadata` is a top-level JSON patch: keys replace their values, and `null` removes a key. Common keys include `issues` (array of issue URLs or refs) and `body`/`summary`/`notes`, alongside any custom JSON keys.
 
 **`archive_workspace`** — `{ workspaceId }`. Archives the workspace, its agents, and its terminals. Local directories remain; Paseo removes an owned worktree only after its final active workspace reference is archived.
 
-**`rename_workspace`** — `{ workspaceId, name }`. Rename workspace.
+**`rename_workspace`** — `{ workspaceId?, title }`. Rename workspace (kept for backward compatibility; prefer `update_workspace` when also updating metadata).
 
 ## Workspace scripts
 

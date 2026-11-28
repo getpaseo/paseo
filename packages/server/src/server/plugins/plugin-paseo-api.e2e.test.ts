@@ -114,11 +114,24 @@ const append = defineRpc({
   output: z.object({ seq: z.number(), epoch: z.string() }),
 });
 
+const patchWorkspaceMetadata = defineRpc({
+  name: "patch-workspace-metadata",
+  input: z.object({ workspaceId: z.string() }),
+  output: z.object({
+    before: z.record(z.string(), z.unknown()).nullable(),
+    after: z.record(z.string(), z.unknown()).nullable(),
+  }),
+});
+
 export default function contribute(server: PluginServerContext) {
   server.handle(create, async ({ path }, { paseo }) => {
     const workspace = await paseo.workspaces.create({
       source: { kind: "directory", path },
       title: "Plugin workspace",
+      metadata: {
+        issues: ["https://github.com/getpaseo/paseo/issues/1"],
+        draft: true,
+      },
     });
     const agent = await workspace.agents.create({
       config: { provider: "pi/test" },
@@ -139,6 +152,20 @@ export default function contribute(server: PluginServerContext) {
       data: { status },
     }),
   );
+  server.handle(patchWorkspaceMetadata, async ({ workspaceId }, { paseo }) => {
+    const handle = paseo.workspaces.ref(workspaceId);
+    await handle.refresh();
+    const before = handle.metadata;
+    await handle.setMetadata({
+      issues: [
+        "https://github.com/getpaseo/paseo/issues/1",
+        "https://github.com/getpaseo/paseo/issues/2",
+      ],
+      body: "Updated via plugin handle",
+      draft: null,
+    });
+    return { before, after: handle.metadata };
+  });
   return () => undefined;
 }`,
   );
@@ -190,11 +217,36 @@ export default function contribute(server: PluginServerContext) {
         }),
       }),
     ]);
+    const workspaceId = Reflect.get(created, "workspaceId");
+    await expect(
+      client.invokePluginRpc("paseo-api", "patch-workspace-metadata", { workspaceId }),
+    ).resolves.toEqual({
+      before: {
+        issues: ["https://github.com/getpaseo/paseo/issues/1"],
+        draft: true,
+      },
+      after: {
+        issues: [
+          "https://github.com/getpaseo/paseo/issues/1",
+          "https://github.com/getpaseo/paseo/issues/2",
+        ],
+        body: "Updated via plugin handle",
+      },
+    });
     await client.removePlugin("paseo-api");
     const workspaces = await client.fetchWorkspaces();
     const agents = await client.fetchAgents();
-    expect(workspaces.entries.map((workspace) => workspace.id)).toContain(
-      Reflect.get(created, "workspaceId"),
+    expect(workspaces.entries).toContainEqual(
+      expect.objectContaining({
+        id: workspaceId,
+        metadata: {
+          issues: [
+            "https://github.com/getpaseo/paseo/issues/1",
+            "https://github.com/getpaseo/paseo/issues/2",
+          ],
+          body: "Updated via plugin handle",
+        },
+      }),
     );
     expect(agents.entries.map((entry) => entry.agent.id)).toContain(
       Reflect.get(created, "agentId"),
