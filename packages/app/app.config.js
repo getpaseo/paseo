@@ -4,6 +4,7 @@ const pkg = require("./package.json");
 const withAndroidAsyncStorageSize = require("./plugins/with-android-async-storage-size");
 const withAndroidIgnoreBoldText = require("./plugins/with-android-ignore-bold-text");
 const withAndroidOptionalCamera = require("./plugins/with-android-optional-camera");
+const withAndroidMonospace = require("./plugins/with-android-monospace");
 const withAndroidProfileable = require("./plugins/with-android-profileable");
 const withFdroidAutolinking = require("./plugins/with-fdroid-autolinking");
 const withPasteInput = require("./plugins/with-paste-input");
@@ -153,6 +154,7 @@ export default {
       [withAndroidAsyncStorageSize, 64],
       ...buildProfile.cameraPlugins,
       withAndroidOptionalCamera,
+      withAndroidMonospace,
       [
         "expo-splash-screen",
         {
