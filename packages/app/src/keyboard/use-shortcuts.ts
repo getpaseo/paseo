@@ -9,7 +9,6 @@ import { hasActiveOverlay } from "./internal/overlay-dispatch";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { usePathname, useRouter } from "expo-router";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
-import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 import {
   type ChordState,
@@ -27,10 +26,12 @@ import { getShortcutOs } from "@/utils/shortcut-platform";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
+import { navigateAppVisitHistory } from "@/navigation/app-visit-history-navigation";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
 import {
   type ActiveWorkspaceSelection,
   navigateToLastWorkspace,
+  navigateToWorkspace,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 
@@ -133,6 +134,9 @@ export function useKeyboardShortcuts({
           return true;
         }
         router.replace(buildOpenProjectRoute());
+        return true;
+      case "navigate-workspace-history":
+        navigateAppVisitHistory(action.direction, pathname, activeWorkspaceSelection);
         return true;
       case "router-replace":
         router.replace(action.route as Parameters<typeof router.replace>[0]);

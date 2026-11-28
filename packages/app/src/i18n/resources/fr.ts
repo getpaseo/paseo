@@ -2969,6 +2969,8 @@ export const fr: TranslationResources = {
         closeCurrentTab: "Fermer l’onglet actuel",
         jumpToWorkspace: "Aller à l’espace de travail",
         jumpToTab: "Aller à l’onglet",
+        goBack: "Revenir en arrière",
+        goForward: "Avancer",
         previousWorkspace: "Espace de travail précédent",
         nextWorkspace: "Espace de travail suivant",
         previousTab: "Onglet précédent",

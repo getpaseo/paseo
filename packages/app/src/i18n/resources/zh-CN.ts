@@ -2870,6 +2870,8 @@ export const zhCN: TranslationResources = {
         closeCurrentTab: "关闭当前标签",
         jumpToWorkspace: "跳转到 workspace",
         jumpToTab: "跳转到标签",
+        goBack: "后退",
+        goForward: "前进",
         previousWorkspace: "上一个 workspace",
         nextWorkspace: "下一个 workspace",
         previousTab: "上一个标签",

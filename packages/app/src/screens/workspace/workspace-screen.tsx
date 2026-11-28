@@ -87,6 +87,7 @@ import {
   openWorkspaceTargetBeside,
 } from "@/workspace-tabs/open-beside";
 import { openWorkspacePullRequest } from "@/workspace-tabs/open-supporting-view";
+import { useRecordWorkspaceVisit } from "@/stores/navigation-active-workspace-store";
 import { traceInstant } from "@/performance/native-trace";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import {
@@ -1612,6 +1613,15 @@ function WorkspaceScreenContent({
 
   const activeTabId = focusedPaneTabState.activeTabId;
   const activeTab = focusedPaneTabState.activeTab;
+  useRecordWorkspaceVisit({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+    tabId: activeTabId,
+    routeFocused: isRouteFocused,
+    workspaceExists: Boolean(workspaceDescriptor),
+    layoutHydrated: hasHydratedWorkspaceLayoutStore,
+    hasPendingOpen: Boolean(pendingOpenTarget),
+  });
 
   const tabs = useMemo<WorkspaceTabDescriptor[]>(
     () => focusedPaneTabState.tabs.map((tab) => tab.descriptor),

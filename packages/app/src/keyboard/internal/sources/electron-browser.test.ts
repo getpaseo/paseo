@@ -174,17 +174,18 @@ describe("buildBrowserKeyboardPolicy", () => {
     });
   });
 
-  it("leaves macOS browser back and forward shortcuts in the guest", () => {
+  it("forwards the macOS workspace history shortcuts from the guest", () => {
     const bindings = buildEffectiveBindings({});
 
     const policy = buildBrowserKeyboardPolicy({ bindings, isMac: true, usesDesktopBindings: true });
 
     for (const code of ["BracketLeft", "BracketRight"]) {
-      expect(policy.prefixes).not.toContainEqual({
+      expect(policy.prefixes).toContainEqual({
         alt: false,
         code,
         control: false,
         key: code === "BracketLeft" ? "[" : "]",
+        shiftedKey: code === "BracketLeft" ? "{" : "}",
         meta: true,
         shift: false,
       });
