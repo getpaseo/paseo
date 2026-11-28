@@ -232,3 +232,130 @@ test("a remote worktree that branches off a pull request is refused, as on the l
   ).rejects.toThrow("branch, prNumber, and forge require a checkout mode");
   expect(socket.requests.map((request) => request.type)).not.toContain("workspace.create.request");
 });
+
+test("remote updateWorkspace requires an explicit workspaceId and forwards metadata and title", async () => {
+  const socket = new OlderHostSocket();
+  const baseSend = socket.send.bind(socket);
+  let storedTitle: string | null = null;
+  let storedMetadata: Record<string, unknown> = { keep: true, drop: 1 };
+  socket.send = (data: string) => {
+    const frame = JSON.parse(data);
+    if (frame.type === "hello") {
+      socket.onmessage?.({
+        data: JSON.stringify({
+          type: "session",
+          message: {
+            type: "status",
+            payload: {
+              status: "server_info",
+              serverId: "srv_modern",
+              hostname: null,
+              version: null,
+              features: {
+                providerUsageList: true,
+                providersSnapshotCwd: true,
+                ownedSubscriptions: true,
+                backgroundWorkspaces: true,
+                entityMetadata: true,
+              },
+            },
+          },
+        }),
+      });
+      return;
+    }
+    if (frame.type === "session" && frame.message.type === "workspace.metadata.update.request") {
+      socket.requests.push(frame.message);
+      const next = { ...storedMetadata };
+      for (const [k, v] of Object.entries(frame.message.patch as Record<string, unknown>)) {
+        if (v === null) delete next[k];
+        else next[k] = v;
+      }
+      storedMetadata = next;
+      socket.onmessage?.({
+        data: JSON.stringify({
+          type: "session",
+          message: {
+            type: "workspace.metadata.update.response",
+            payload: {
+              requestId: frame.message.requestId,
+              workspaceId: frame.message.workspaceId,
+              accepted: true,
+              metadata: storedMetadata,
+              error: null,
+            },
+          },
+        }),
+      });
+      return;
+    }
+    if (frame.type === "session" && frame.message.type === "workspace.title.set.request") {
+      socket.requests.push(frame.message);
+      storedTitle = frame.message.title;
+      socket.onmessage?.({
+        data: JSON.stringify({
+          type: "session",
+          message: {
+            type: "workspace.title.set.response",
+            payload: {
+              requestId: frame.message.requestId,
+              workspaceId: frame.message.workspaceId,
+              accepted: true,
+              title: storedTitle,
+              error: null,
+            },
+          },
+        }),
+      });
+      return;
+    }
+    if (frame.type === "session" && frame.message.type === "fetch_workspaces_request") {
+      socket.requests.push(frame.message);
+      socket.onmessage?.({
+        data: JSON.stringify({
+          type: "session",
+          message: {
+            type: "fetch_workspaces_response",
+            payload: {
+              requestId: frame.message.requestId,
+              entries: [{ ...workspace, title: storedTitle, metadata: storedMetadata }],
+              pageInfo: emptyPage,
+            },
+          },
+        }),
+      });
+      return;
+    }
+    baseSend(data);
+  };
+  const client = new DaemonClient({
+    url: "ws://modern.test",
+    clientId: "modern-host-test",
+    webSocketFactory: () => socket,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  await client.connect();
+
+  await expect(
+    resolverFor(client, visibleCodexCaller).use("srv_modern", (host) =>
+      host.updateWorkspace({ metadata: { issues: ["#1"] } }, {} as never),
+    ),
+  ).rejects.toThrow("workspaceId is required when targeting a remote host");
+
+  const updated = await resolverFor(client, visibleCodexCaller).use("srv_modern", (host) =>
+    host.updateWorkspace(
+      {
+        workspaceId: workspace.id,
+        title: "Remote title",
+        metadata: { issues: ["#1", "#2"], drop: null },
+      },
+      {} as never,
+    ),
+  );
+  expect(updated.structuredContent).toMatchObject({
+    workspaceId: workspace.id,
+    title: "Remote title",
+    metadata: { keep: true, issues: ["#1", "#2"] },
+  });
+});

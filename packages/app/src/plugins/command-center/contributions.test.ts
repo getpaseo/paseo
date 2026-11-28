@@ -41,6 +41,7 @@ const workspace: PluginWorkspaceSnapshot = {
   statusEnteredAt: null,
   archivingAt: null,
   diffStat: null,
+  metadata: {},
 };
 
 const agent: PluginAgentSnapshot = {

@@ -13,7 +13,9 @@ import {
 import { AgentDirectory } from "../directory.js";
 import { stat } from "node:fs/promises";
 import { z } from "zod";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { ensureValidJson } from "../../json-utils.js";
+import { applyRecordPatch } from "../../record-patch.js";
 import type { Logger } from "pino";
 
 import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-types.js";
@@ -150,13 +152,17 @@ export interface PaseoToolHostDependencies {
   listActiveWorkspaces?: ArchiveDependencies["listActiveWorkspaces"];
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
-  workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "listActive" | "upsert">;
+  workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "listActive" | "upsert" | "update">;
   projectRegistry?: Pick<ProjectRegistry, "get" | "list">;
   createDirectoryWorkspace?: (
     cwd: string,
     title?: string | null,
     projectId?: string,
-    context?: { background?: boolean; callerWorkspaceId?: string },
+    context?: {
+      background?: boolean;
+      callerWorkspaceId?: string;
+      metadata?: Record<string, JsonValue>;
+    },
   ) => Promise<PersistedWorkspaceRecord>;
   workspaceScripts?: Pick<WorkspaceScriptsService, "list" | "launch" | "stop">;
   markWorkspaceArchiving?: ArchiveDependencies["markWorkspaceArchiving"];
@@ -209,6 +215,7 @@ const WorkspaceAutomationSummarySchema = z.object({
   kind: z.enum(["directory", "local_checkout", "worktree"]),
   title: z.string().nullable(),
   background: z.boolean().optional(),
+  metadata: z.record(z.string(), z.unknown()),
 });
 
 function toWorkspaceAutomationSummary(workspace: PersistedWorkspaceRecord) {
@@ -221,7 +228,62 @@ function toWorkspaceAutomationSummary(workspace: PersistedWorkspaceRecord) {
     title: workspace.title,
     background: workspace.background,
     parentWorkspaceId: workspace.parentWorkspaceId,
+    metadata: workspace.metadata ?? {},
   };
+}
+
+function validateJsonValue(value: unknown, path: string, seen: WeakSet<object>): JsonValue {
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new PaseoToolInputError(`Invalid metadata value at ${path}: numbers must be finite`);
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      throw new PaseoToolInputError(`Invalid metadata value at ${path}: circular reference`);
+    }
+    seen.add(value);
+    const items = value.map((item, index) => validateJsonValue(item, `${path}[${index}]`, seen));
+    seen.delete(value);
+    return items;
+  }
+  if (typeof value === "object") {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new PaseoToolInputError(
+        `Invalid metadata value at ${path}: expected a plain JSON object`,
+      );
+    }
+    if (seen.has(value)) {
+      throw new PaseoToolInputError(`Invalid metadata value at ${path}: circular reference`);
+    }
+    seen.add(value);
+    const result: Record<string, JsonValue> = {};
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      result[key] = validateJsonValue(entry, `${path}.${key}`, seen);
+    }
+    seen.delete(value);
+    return result;
+  }
+  throw new PaseoToolInputError(
+    `Invalid metadata value at ${path}: values must be JSON-serializable`,
+  );
+}
+
+function validateWorkspaceMetadataPatch(
+  metadata: Record<string, unknown>,
+): Record<string, JsonValue> {
+  const seen = new WeakSet<object>();
+  seen.add(metadata);
+  const result: Record<string, JsonValue> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    result[key] = validateJsonValue(value, `metadata.${key}`, seen);
+  }
+  return result;
 }
 
 type WorkspaceWorktreeMode = "branch-off" | "checkout-branch" | "checkout-pr";
@@ -728,6 +790,7 @@ function createToolCatalog(
     ["create_agent", "createAgent"],
     ["create_workspace", "createWorkspace"],
     ["list_workspaces", "listWorkspaces"],
+    ["update_workspace", "updateWorkspace"],
     ["send_agent_prompt", "sendPrompt"],
     ["get_agent_status", "getStatus"],
     ["get_agent_activity", "getActivity"],
@@ -747,6 +810,8 @@ function createToolCatalog(
       createWorkspace: (args, context) =>
         localHostOperations.get("create_workspace")!(args, context),
       listWorkspaces: (args, context) => localHostOperations.get("list_workspaces")!(args, context),
+      updateWorkspace: (args, context) =>
+        localHostOperations.get("update_workspace")!(args, context),
       sendPrompt: (args, context) => localHostOperations.get("send_agent_prompt")!(args, context),
       getStatus: (args, context) => localHostOperations.get("get_agent_status")!(args, context),
       getActivity: (args, context) => localHostOperations.get("get_agent_activity")!(args, context),
@@ -1486,6 +1551,12 @@ function createToolCatalog(
           .min(1)
           .optional()
           .describe("Forge for checkout-pr mode. Defaults to the source checkout."),
+        metadata: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe(
+            "Optional structured metadata to attach to the workspace (top-level JSON keys; null values are omitted). Common keys include issues (array of issue URLs or refs) and body/summary/notes; any JSON-serializable custom keys are allowed.",
+          ),
       },
       outputSchema: WorkspaceAutomationSummarySchema.shape,
     },
@@ -1502,7 +1573,12 @@ function createToolCatalog(
       branch,
       prNumber,
       forge,
+      metadata,
     }) => {
+      const initialMetadata =
+        metadata !== undefined
+          ? applyRecordPatch<JsonValue>({}, validateWorkspaceMetadataPatch(metadata))
+          : undefined;
       let workspace: PersistedWorkspaceRecord;
       if (isolation === "local") {
         const cwd = resolveScopedCwd(path, { required: true });
@@ -1524,12 +1600,10 @@ function createToolCatalog(
         if (!options.createDirectoryWorkspace) {
           throw new Error("Workspace provisioning is not configured");
         }
-        workspace = await options.createDirectoryWorkspace(
-          cwd,
-          title,
-          projectId,
-          workspaceBackgroundIntent(background),
-        );
+        workspace = await options.createDirectoryWorkspace(cwd, title, projectId, {
+          ...workspaceBackgroundIntent(background),
+          ...(initialMetadata !== undefined ? { metadata: initialMetadata } : {}),
+        });
       } else {
         let cwd =
           path !== undefined || !projectId ? resolveScopedCwd(path, { required: true }) : null;
@@ -1560,6 +1634,7 @@ function createToolCatalog(
             ...(worktreeSlug ? { worktreeSlug } : {}),
             ...worktreeTarget,
             ...(title ? { title } : {}),
+            ...(initialMetadata !== undefined ? { metadata: initialMetadata } : {}),
             ...workspaceBackgroundIntent(background),
           },
         );
@@ -2436,6 +2511,76 @@ function createToolCatalog(
           workspaceId,
           title,
         }),
+      };
+    },
+  );
+
+  registerTool(
+    "update_workspace",
+    {
+      title: "Update workspace",
+      description:
+        "Update a workspace's title and/or structured metadata. Omit workspaceId to update your current workspace. Metadata is a top-level patch where keys replace their values and null removes a key. Common keys include issues (array of issue URLs or refs) and body/summary/notes; any JSON-serializable custom keys are allowed.",
+      inputSchema: {
+        workspaceId: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe("Workspace id to update. Omit to update your current workspace."),
+        title: z
+          .string()
+          .trim()
+          .min(1, "title cannot be empty")
+          .nullable()
+          .optional()
+          .describe(
+            "New user-visible workspace title. Pass null to clear and revert to the derived name.",
+          ),
+        metadata: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe(
+            "Structured metadata patch (top-level keys replace; null removes a key). Common keys include issues (array of issue URLs or refs) and body/summary/notes; any JSON-serializable custom keys are allowed.",
+          ),
+      },
+      outputSchema: WorkspaceAutomationSummarySchema.shape,
+    },
+    async ({ workspaceId: requestedWorkspaceId, title, metadata }) => {
+      if (title === undefined && metadata === undefined) {
+        throw new PaseoToolInputError("Specify at least one field to update: title or metadata");
+      }
+      if (!options.workspaceRegistry) {
+        throw new Error("Workspace registry is required to update workspaces");
+      }
+      if (!options.emitWorkspaceUpdatesForWorkspaceIds) {
+        throw new Error("Workspace update emitter is required to update workspaces");
+      }
+
+      const validatedPatch =
+        metadata !== undefined ? validateWorkspaceMetadataPatch(metadata) : undefined;
+      const workspaceId = resolveWorkspaceIdForRename(requestedWorkspaceId);
+      const updated = await options.workspaceRegistry.update(workspaceId, (existing) => {
+        if (existing.archivedAt) {
+          throw new PaseoToolInputError(`Workspace ${workspaceId} is archived`);
+        }
+        return {
+          ...existing,
+          ...(title !== undefined ? { title } : {}),
+          ...(validatedPatch !== undefined
+            ? { metadata: applyRecordPatch<JsonValue>(existing.metadata, validatedPatch) }
+            : {}),
+          updatedAt: new Date().toISOString(),
+        };
+      });
+      if (!updated) {
+        throw new PaseoToolInputError(`Workspace ${workspaceId} not found`);
+      }
+      await options.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
+
+      return {
+        content: [],
+        structuredContent: ensureValidJson(toWorkspaceAutomationSummary(updated)),
       };
     },
   );
