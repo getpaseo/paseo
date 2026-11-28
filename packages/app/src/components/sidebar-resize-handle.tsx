@@ -78,7 +78,11 @@ function PointerResizeHandle({ edge, gesture, testID }: SidebarResizeHandleProps
         onHoverOut={handleHoverOut}
       >
         {highlighted ? (
-          <View pointerEvents="none" testID={`${testID}-highlight`} style={styles.highlight} />
+          <View
+            pointerEvents="none"
+            testID={`${testID}-highlight`}
+            style={[styles.highlight, edgeOffsetStyle(edge, 0)]}
+          />
         ) : null}
       </Pressable>
     </GestureDetector>
@@ -132,7 +136,6 @@ const styles = StyleSheet.create((theme) => ({
     position: "absolute",
     top: 0,
     bottom: 0,
-    left: 5,
     width: 1,
     backgroundColor: theme.colors.foreground,
     opacity: 0.25,

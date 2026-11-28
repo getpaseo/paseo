@@ -12,10 +12,10 @@ describe("resolveSidebarResizeHandleGeometry", () => {
     expect(geometry.height ?? 0).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET);
   });
 
-  it("straddles the border for a fine pointer", () => {
+  it("keeps the fine pointer hit area inside the sidebar along the full border", () => {
     const geometry = resolveSidebarResizeHandleGeometry(true);
 
-    expect(geometry.edgeOffset).toBe(-geometry.width / 2);
+    expect(geometry.edgeOffset).toBeGreaterThanOrEqual(0);
     expect(geometry.height).toBeNull();
   });
 });

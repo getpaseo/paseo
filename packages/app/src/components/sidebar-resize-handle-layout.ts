@@ -1,15 +1,16 @@
 /**
  * Geometry for the sidebar resize handle.
  *
- * A mouse can grab a hairline, so the pointer variant straddles the sidebar
- * border — half the strip hangs outside the sidebar's own bounds, which is
- * fine because web hit-testing does not clip to the parent box.
+ * Both variants sit fully inside the sidebar, because hit-testing does not
+ * reliably reach a strip that hangs past the border. On web, the docked left
+ * sidebar clips its content with `overflow: hidden`, and the workspace that
+ * follows it in the DOM paints over anything that escapes. On native, iOS
+ * `hitTest:` returns nil for points outside a view's bounds and Gesture
+ * Handler's Android traversal only recurses into children whose ancestors
+ * contain the point.
  *
- * Native hit-testing does clip: iOS `hitTest:` returns nil for points outside a
- * view's bounds and Gesture Handler's Android traversal only recurses into
- * children whose ancestors contain the point. A strip hanging outside the
- * sidebar is dead on touch, and what remains is far too small for a finger.
- * So the touch variant sits fully inside the sidebar and is sized for a thumb.
+ * A mouse can grab a thin strip along the border. A finger needs a target
+ * sized for a thumb.
  */
 
 export const POINTER_HANDLE_WIDTH = 10;
@@ -29,10 +30,7 @@ export const SIDEBAR_RESIZE_FAIL_OFFSET = 12;
 export type SidebarResizeEdge = "left" | "right";
 
 export interface SidebarResizeHandleGeometry {
-  /**
-   * Distance from the sidebar edge to the near side of the hit area. Negative
-   * means the hit area overhangs the sidebar, which only touch forbids.
-   */
+  /** Distance from the sidebar edge to the near side of the hit area. */
   edgeOffset: number;
   width: number;
   /** `null` stretches the hit area to the sidebar's full height. */
@@ -44,7 +42,7 @@ export function resolveSidebarResizeHandleGeometry(
 ): SidebarResizeHandleGeometry {
   if (finePointer) {
     return {
-      edgeOffset: -POINTER_HANDLE_WIDTH / 2,
+      edgeOffset: 0,
       width: POINTER_HANDLE_WIDTH,
       height: null,
     };
