@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createHardwareKeyboardPresence } from "./internal/hardware-presence";
+import * as gpuiConventions from "./internal/conventions.gpui";
+import * as webConventions from "./internal/conventions.web";
+import { hardwareKeyboardPresence as gpuiPresence } from "./internal/presence.gpui";
+import { createWebHardwareKeyboardPresence } from "./internal/presence.web";
 import { buildEffectiveBindings } from "./keyboard-shortcuts";
 import { createKeyboardPipeline } from "./internal/pipeline";
 import { createOverlayRegistry } from "./internal/overlays";
@@ -64,5 +68,51 @@ describe("hardware keyboard availability", () => {
     expect(presence.getSnapshot()).toBe(false);
     expect(actions).toEqual(["command-center.toggle"]);
     pipeline.dispose();
+  });
+
+  it("answers keyboard presence and conventions per target", async () => {
+    const nativeConventions = (await import(
+      new URL("./internal/conventions.ts", import.meta.url).href
+    )) as typeof gpuiConventions;
+    const { hardwareKeyboardPresence: nativePresence } = (await import(
+      new URL("./internal/presence.ts", import.meta.url).href
+    )) as { hardwareKeyboardPresence: typeof gpuiPresence };
+
+    expect(nativePresence.getSnapshot()).toBe(false);
+    expect(gpuiPresence.getSnapshot()).toBe(true);
+    expect(
+      createWebHardwareKeyboardPresence({ matches: true } as MediaQueryList, null).getSnapshot(),
+    ).toBe(true);
+    expect(
+      createWebHardwareKeyboardPresence({ matches: false } as MediaQueryList, null).getSnapshot(),
+    ).toBe(false);
+
+    expect({
+      usesDesktopBindings: nativeConventions.usesDesktopBindings,
+      supportsConfigurableComposerSendKeys: nativeConventions.supportsConfigurableComposerSendKeys,
+      hasSoftwareKeyboard: nativeConventions.hasSoftwareKeyboard,
+    }).toEqual({
+      usesDesktopBindings: true,
+      supportsConfigurableComposerSendKeys: false,
+      hasSoftwareKeyboard: true,
+    });
+
+    expect({
+      supportsConfigurableComposerSendKeys: webConventions.supportsConfigurableComposerSendKeys,
+      hasSoftwareKeyboard: webConventions.hasSoftwareKeyboard,
+    }).toEqual({
+      supportsConfigurableComposerSendKeys: true,
+      hasSoftwareKeyboard: false,
+    });
+
+    expect({
+      usesDesktopBindings: gpuiConventions.usesDesktopBindings,
+      supportsConfigurableComposerSendKeys: gpuiConventions.supportsConfigurableComposerSendKeys,
+      hasSoftwareKeyboard: gpuiConventions.hasSoftwareKeyboard,
+    }).toEqual({
+      usesDesktopBindings: true,
+      supportsConfigurableComposerSendKeys: true,
+      hasSoftwareKeyboard: false,
+    });
   });
 });

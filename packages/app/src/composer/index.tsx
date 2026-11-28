@@ -45,6 +45,7 @@ import {
   toolbarSlot,
 } from "@/components/ui/control-geometry";
 import { usePanelStore, type MobilePanelView } from "@/stores/panel-store";
+import { hasSoftwareKeyboard } from "@/keyboard";
 import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 import { useShallow } from "zustand/shallow";
 import {
@@ -235,7 +236,7 @@ function resolveKeyboardPriority(isMessageInputFocused: boolean): number {
 }
 
 function resolveIsDesktopWebBreakpoint(isMobile: boolean): boolean {
-  return isWeb && !isMobile;
+  return !hasSoftwareKeyboard && !isMobile;
 }
 
 function resolveCompactLayout(override: boolean | undefined, formFactor: boolean): boolean {

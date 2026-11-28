@@ -138,6 +138,22 @@ const CASES = [
     native: path.join(APP_DIR, "src/hooks/pointer-capabilities.ts"),
     web: path.join(APP_DIR, "src/hooks/pointer-capabilities.ts"),
   },
+  {
+    label: "keyboard presence",
+    origin: path.join(APP_DIR, "src/keyboard/availability.ts"),
+    specifier: "./internal/presence",
+    gpui: path.join(APP_DIR, "src/keyboard/internal/presence.gpui.ts"),
+    native: path.join(APP_DIR, "src/keyboard/internal/presence.ts"),
+    web: path.join(APP_DIR, "src/keyboard/internal/presence.web.ts"),
+  },
+  {
+    label: "keyboard conventions",
+    origin: path.join(APP_DIR, "src/keyboard/index.ts"),
+    specifier: "./internal/conventions",
+    gpui: path.join(APP_DIR, "src/keyboard/internal/conventions.gpui.ts"),
+    native: path.join(APP_DIR, "src/keyboard/internal/conventions.ts"),
+    web: path.join(APP_DIR, "src/keyboard/internal/conventions.web.ts"),
+  },
 ];
 
 afterEach(() => {

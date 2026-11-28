@@ -24,7 +24,8 @@ import { resolveModelTriggerLabels } from "@/composer/agent-controls/layout";
 import { resolveModelSheetOpening } from "@/composer/agent-controls/model-sheet-flow";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { isNative, isWeb } from "@/constants/platform";
+import { isNative } from "@/constants/platform";
+import { hasSoftwareKeyboard } from "@/keyboard";
 import { readMeasuredWidth } from "@/hooks/use-container-width";
 import {
   toolbarContentSlot,
@@ -182,7 +183,7 @@ export function CompactModelSheet({
     selectedProvider,
     selectedModel,
     isLoading,
-    autoFocusSearch: isWeb && !usesBottomSheet,
+    autoFocusSearch: !hasSoftwareKeyboard && !usesBottomSheet,
     profiles,
     serverId,
   });
@@ -191,7 +192,7 @@ export function CompactModelSheet({
     selectedProvider,
     selectedModel,
     isLoading,
-    autoFocusSearch: isWeb && !usesBottomSheet,
+    autoFocusSearch: !hasSoftwareKeyboard && !usesBottomSheet,
     profiles,
     serverId,
   });

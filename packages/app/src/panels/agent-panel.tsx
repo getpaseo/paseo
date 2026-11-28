@@ -54,7 +54,8 @@ import {
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import { useWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import { COMPACT_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
-import { isNative, isWeb } from "@/constants/platform";
+import { isWeb } from "@/constants/platform";
+import { hasSoftwareKeyboard } from "@/keyboard";
 import { useAgentAttentionClear } from "@/hooks/use-agent-attention-clear";
 import { useAgentInputDraft, type AgentInputDraft } from "@/composer/draft/input-draft";
 import {
@@ -1753,7 +1754,7 @@ function ActiveAgentComposer({
         agentId={agentId}
         serverId={serverId}
         workspaceId={workspaceId}
-        blurOnSubmit={isNative}
+        blurOnSubmit={hasSoftwareKeyboard}
         isPaneFocused={isPaneFocused}
         textSource={agentInputDraft.textSource}
         onChangeText={agentInputDraft.editText}

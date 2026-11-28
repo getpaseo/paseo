@@ -22,6 +22,7 @@ import {
 } from "@getpaseo/protocol/terminal-input-mode";
 import { useTranslation } from "react-i18next";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { hasSoftwareKeyboard } from "@/keyboard";
 import { useKeyboardShiftStyle } from "@/keyboard/shift";
 import { useAppActivelyVisible } from "@/hooks/use-app-visible";
 import { useStableEvent } from "@/hooks/use-stable-event";
@@ -89,7 +90,6 @@ import {
   type TerminalResizeRequest,
 } from "./terminal-resize-debouncer";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { isNative } from "@/constants/platform";
 import { useKeyboardFocusSurface } from "@/keyboard";
 import {
   applyTerminalRendererReadyChange,
@@ -305,7 +305,10 @@ export function TerminalPane({
     return trimmed.length > 0 ? trimmed : undefined;
   }, [settings.monoFontFamily]);
   const isMobile = useIsCompactFormFactor();
-  const showVirtualKeyBar = shouldShowTerminalVirtualKeyBar({ isNative, isCompact: isMobile });
+  const showVirtualKeyBar = shouldShowTerminalVirtualKeyBar({
+    hasSoftwareKeyboard,
+    isCompact: isMobile,
+  });
   const [keyBarWidth, setKeyBarWidth] = useState(0);
   const virtualKeyboardRows = resolveTerminalVirtualKeyboardRows({
     isCompact: isMobile,
@@ -316,7 +319,7 @@ export function TerminalPane({
   const swipeGesturesEnabled = isMobile;
   const { shift: keyboardShift, style: keyboardPaddingStyle } = useKeyboardShiftStyle({
     mode: "padding",
-    enabled: isNative || isMobile,
+    enabled: hasSoftwareKeyboard || isMobile,
   });
   const [keyboardInset, setKeyboardInset] = useState(0);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
@@ -608,7 +611,7 @@ export function TerminalPane({
 
   const handleKeyboardChange = useCallback(
     (nextShift: number) => {
-      setKeyboardInset(isNative || isMobile ? nextShift : 0);
+      setKeyboardInset(hasSoftwareKeyboard || isMobile ? nextShift : 0);
       setIsKeyboardVisible(nextShift > 0);
       pulseKeyboardRefits();
     },
@@ -1180,10 +1183,10 @@ export function TerminalPane({
     emulatorRef.current?.blur();
     onOpenFileExplorer();
   }, [swipeGesturesEnabled, onOpenFileExplorer]);
-  const showPasteAction = shouldShowTerminalPasteAction({ isNative });
+  const showPasteAction = shouldShowTerminalPasteAction({ hasSoftwareKeyboard });
   const showFloatingCopyAction = shouldShowTerminalFloatingCopyAction({
     hasSelection,
-    isNative,
+    hasSoftwareKeyboard,
   });
   const keyboardToggleIconColor = theme.colors.foregroundMuted;
 
@@ -1332,7 +1335,9 @@ export function TerminalPane({
           <View
             style={styles.keyboardRows}
             onLayout={handleKeyBarLayout}
-            testID={isNative && !isMobile ? "terminal-virtual-keyboard-native-wide" : undefined}
+            testID={
+              hasSoftwareKeyboard && !isMobile ? "terminal-virtual-keyboard-native-wide" : undefined
+            }
           >
             {virtualKeyboardRows.map((row) => (
               <View

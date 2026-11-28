@@ -28,7 +28,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { scheduleOnRN, scheduleOnUI } from "react-native-worklets";
 import { resolveDesktopSidebarWidth } from "@/components/desktop-sidebar-layout";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { isNative } from "@/constants/platform";
+import { hasSoftwareKeyboard } from "@/keyboard";
 import {
   usePanelStore,
   type MobilePanelSelection,
@@ -138,7 +138,7 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
       if (selection.revision !== revision || selection.target !== panel) {
         return;
       }
-      if (isNative && panel !== "agent") {
+      if (hasSoftwareKeyboard && panel !== "agent") {
         Keyboard.dismiss();
       }
       settledPanel.setState(panel);

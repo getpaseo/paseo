@@ -97,10 +97,10 @@ export function resolveTerminalVirtualKeyboardRows(input: {
 }
 
 export function shouldShowTerminalVirtualKeyBar(input: {
-  isNative: boolean;
+  hasSoftwareKeyboard: boolean;
   isCompact: boolean;
 }): boolean {
-  return input.isNative || input.isCompact;
+  return input.hasSoftwareKeyboard || input.isCompact;
 }
 
 export function getTerminalVirtualKeyboardControlId(
@@ -118,13 +118,13 @@ export function getTerminalVirtualKeyboardControlId(
   }
 }
 
-export function shouldShowTerminalPasteAction(input: { isNative: boolean }): boolean {
-  return input.isNative;
+export function shouldShowTerminalPasteAction(input: { hasSoftwareKeyboard: boolean }): boolean {
+  return input.hasSoftwareKeyboard;
 }
 
 export function shouldShowTerminalFloatingCopyAction(input: {
   hasSelection: boolean;
-  isNative: boolean;
+  hasSoftwareKeyboard: boolean;
 }): boolean {
-  return input.isNative && input.hasSelection;
+  return input.hasSoftwareKeyboard && input.hasSelection;
 }

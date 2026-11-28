@@ -80,6 +80,7 @@ import { useIosHardwareKeyboardSubmit } from "@/hooks/use-ios-hardware-keyboard-
 import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
+import { supportsConfigurableComposerSendKeys } from "@/keyboard";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { isNative, isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -457,6 +458,14 @@ function SendButtonContent({
   );
 }
 
+function resolveComposerSubmitBehavior(
+  shouldSubmitOnEnter: boolean,
+  sendShortcut: SendShortcut,
+): EditingTextInputProps["submitBehavior"] {
+  if (!shouldSubmitOnEnter || sendShortcut !== "enter" || isWeb) return undefined;
+  return "submit";
+}
+
 interface DesktopKeyPressContext {
   onKeyPressCallback: ((event: ComposerKeyPressEvent) => boolean) | undefined;
   input: ComposerKeyPressEvent["input"];
@@ -692,6 +701,7 @@ interface ComposerTextSurfaceProps {
   editable: boolean;
   scrollEnabled: boolean;
   autoFocus: boolean;
+  submitBehavior?: EditingTextInputProps["submitBehavior"];
   onKeyPress: ((event: WebTextInputKeyPressEvent) => void) | undefined;
   onSelectionChange: (event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => void;
   onPasteImages: ((files: readonly NativePastedFile[]) => void) | undefined;
@@ -785,6 +795,7 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
         onBlur={props.onBlur}
         style={textInputStyle}
         multiline
+        submitBehavior={props.submitBehavior}
         scrollEnabled={props.scrollEnabled}
         editable={props.editable}
         onKeyPress={props.onKeyPress}
@@ -1886,12 +1897,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       [onSelectionChangeCallback],
     );
 
-    const shouldHandleWebKeyPress = isWeb;
-    const shouldSubmitOnEnter = isWeb && !isCompact;
+    const shouldHandleKeyPress = supportsConfigurableComposerSendKeys;
+    const shouldSubmitOnEnter = supportsConfigurableComposerSendKeys && !isCompact;
+    const composerSubmitBehavior = resolveComposerSubmitBehavior(shouldSubmitOnEnter, sendShortcut);
 
     const handleDesktopKeyPress = useCallback(
       (event: WebTextInputKeyPressEvent) => {
-        if (!shouldHandleWebKeyPress) return;
+        if (!shouldHandleKeyPress) return;
         handleDesktopKeyPressImpl(event, {
           onKeyPressCallback,
           input: getComposerInputSnapshot(
@@ -1911,7 +1923,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         });
       },
       [
-        shouldHandleWebKeyPress,
+        shouldHandleKeyPress,
         onKeyPressCallback,
         shouldSubmitOnEnter,
         sendShortcut,
@@ -2189,14 +2201,20 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             editable={!isDictating && !isRealtimeVoiceForCurrentAgent && !disabled}
             scrollEnabled={isComposerScrollEnabled}
             autoFocus={false}
-            onKeyPress={shouldHandleWebKeyPress ? handleDesktopKeyPress : undefined}
+            submitBehavior={composerSubmitBehavior}
+            onKeyPress={shouldHandleKeyPress ? handleDesktopKeyPress : undefined}
             onSelectionChange={handleSelectionChange}
             onPasteImages={onPasteImages}
             onPasteError={handlePasteError}
             fullscreen={isFullscreen}
             compact={isCompact}
             onRenderedLinesChange={setRenderedLines}
-            focusHintVisible={!isFullscreen && isWeb && !isInputFocused && !hasLiveText}
+            focusHintVisible={
+              !isFullscreen &&
+              supportsConfigurableComposerSendKeys &&
+              !isInputFocused &&
+              !hasLiveText
+            }
             focusInputKeys={focusInputKeys}
             focusHintLabel={t("composer.input.focusHint", {
               shortcut: focusInputKeys ? formatShortcut(focusInputKeys[0], getShortcutOs()) : "",
@@ -2220,7 +2238,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         isRealtimeVoiceForCurrentAgent,
         disabled,
         isComposerScrollEnabled,
-        shouldHandleWebKeyPress,
+        composerSubmitBehavior,
+        shouldHandleKeyPress,
         handleDesktopKeyPress,
         handleSelectionChange,
         onPasteImages,

@@ -45,11 +45,19 @@ function controlsByType(
 }
 
 describe("terminal virtual keyboard policy", () => {
-  it("keeps terminal controls on wide native touch screens with either IME state", () => {
-    expect(shouldShowTerminalVirtualKeyBar({ isNative: true, isCompact: false })).toBe(true);
-    expect(shouldShowTerminalVirtualKeyBar({ isNative: true, isCompact: true })).toBe(true);
-    expect(shouldShowTerminalVirtualKeyBar({ isNative: false, isCompact: true })).toBe(true);
-    expect(shouldShowTerminalVirtualKeyBar({ isNative: false, isCompact: false })).toBe(false);
+  it("keeps terminal controls on wide software-keyboard screens and compact windows", () => {
+    expect(shouldShowTerminalVirtualKeyBar({ hasSoftwareKeyboard: true, isCompact: false })).toBe(
+      true,
+    );
+    expect(shouldShowTerminalVirtualKeyBar({ hasSoftwareKeyboard: true, isCompact: true })).toBe(
+      true,
+    );
+    expect(shouldShowTerminalVirtualKeyBar({ hasSoftwareKeyboard: false, isCompact: true })).toBe(
+      true,
+    );
+    expect(shouldShowTerminalVirtualKeyBar({ hasSoftwareKeyboard: false, isCompact: false })).toBe(
+      false,
+    );
   });
 
   it("selects the same controls in narrow and wide row arrangements", () => {
@@ -116,29 +124,29 @@ describe("terminal virtual keyboard policy", () => {
     expect(controlIds()).not.toContain("terminal-copy");
   });
 
-  it("shows Copy only as a native selection affordance", () => {
+  it("shows Copy only as a software-keyboard selection affordance", () => {
     expect(
       shouldShowTerminalFloatingCopyAction({
         hasSelection: false,
-        isNative: true,
+        hasSoftwareKeyboard: true,
       }),
     ).toBe(false);
     expect(
       shouldShowTerminalFloatingCopyAction({
         hasSelection: true,
-        isNative: false,
+        hasSoftwareKeyboard: false,
       }),
     ).toBe(false);
     expect(
       shouldShowTerminalFloatingCopyAction({
         hasSelection: true,
-        isNative: true,
+        hasSoftwareKeyboard: true,
       }),
     ).toBe(true);
   });
 
-  it("keeps Paste native-gated", () => {
-    expect(shouldShowTerminalPasteAction({ isNative: true })).toBe(true);
-    expect(shouldShowTerminalPasteAction({ isNative: false })).toBe(false);
+  it("keeps Paste gated to software-keyboard targets", () => {
+    expect(shouldShowTerminalPasteAction({ hasSoftwareKeyboard: true })).toBe(true);
+    expect(shouldShowTerminalPasteAction({ hasSoftwareKeyboard: false })).toBe(false);
   });
 });

@@ -11,7 +11,11 @@ export { hasFocusedTextInput, registerFocusedTextInput } from "./internal/focuse
 export { useKeyboardFocusSurface } from "./internal/use-focus-surface";
 export { subscribeHardwareKeyboard } from "./internal/sources/hardware";
 export type { HardwareKeyboardEvent } from "./internal/sources/hardware";
-export { usesDesktopBindings, supportsConfigurableComposerSendKeys } from "./internal/conventions";
+export {
+  hasSoftwareKeyboard,
+  usesDesktopBindings,
+  supportsConfigurableComposerSendKeys,
+} from "./internal/conventions";
 export type { BrowserKeyboardPolicy } from "./internal/sources/electron-browser";
 export { useHardwareKeyboardPresent } from "./availability";
 export { readPressModifiers } from "./internal/press-modifiers";

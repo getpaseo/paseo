@@ -63,7 +63,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useProviderIcon } from "@/components/provider-icons";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
-import { useHardwareKeyboardPresent, type KeyboardInputEvent } from "@/keyboard";
+import {
+  hasSoftwareKeyboard,
+  useHardwareKeyboardPresent,
+  type KeyboardInputEvent,
+} from "@/keyboard";
 import {
   buildProviderQualifiedDescription,
   buildSelectedTriggerLabel,
@@ -366,7 +370,7 @@ export function useModelBrowser({
   selectedProvider,
   selectedModel,
   isLoading,
-  autoFocusSearch = isWeb,
+  autoFocusSearch = !hasSoftwareKeyboard,
   profiles = null,
   serverId = null,
 }: ModelBrowserInput): ModelBrowserState {
@@ -1631,7 +1635,7 @@ function ModelSearchEmptyState() {
 // React Native Web blurs the focused input on every scroll in "on-drag" mode, including wheel
 // scrolls and the scroll that reveals an arrowed-to row. That moves focus out of search, so
 // typing stops and Enter lands on the header's Back button. Only a native keyboard needs it.
-const MODEL_LIST_KEYBOARD_DISMISS_MODE = isNative ? "on-drag" : "none";
+const MODEL_LIST_KEYBOARD_DISMISS_MODE = hasSoftwareKeyboard ? "on-drag" : "none";
 
 interface ModelBrowserKeyboardBinding {
   view: ModelBrowserView;
