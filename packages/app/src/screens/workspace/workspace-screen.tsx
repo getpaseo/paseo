@@ -23,6 +23,8 @@ import {
   useComposerTabFullscreen,
 } from "@/composer/editing-session";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { Button } from "@/components/ui/button";
+import type { DismissToast } from "@/components/toast-host";
 import { SheetHostScope } from "@/components/ui/isolated-bottom-sheet-modal";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
@@ -1038,6 +1040,34 @@ function DesktopCenterColumnChrome({
     <WindowChromeRegion corners={explorerOpen && !focusModeEnabled ? "top-left" : "both"}>
       <View style={styles.centerColumn}>{children}</View>
     </WindowChromeRegion>
+  );
+}
+
+interface ResumeCommandErrorToastProps {
+  message: string;
+  agentId: string;
+  onRetry: (agentId: string) => Promise<void>;
+  onDismiss: () => void;
+}
+
+function ResumeCommandErrorToast({
+  message,
+  agentId,
+  onRetry,
+  onDismiss,
+}: ResumeCommandErrorToastProps) {
+  const { t } = useTranslation();
+  const handleRetry = useCallback(() => void onRetry(agentId), [agentId, onRetry]);
+  return (
+    <View style={styles.resumeCommandErrorToast}>
+      <Text style={styles.resumeCommandErrorText}>{message}</Text>
+      <Button variant="ghost" size="sm" onPress={handleRetry} testID="resume-command-retry">
+        {t("common.actions.retry")}
+      </Button>
+      <Button variant="ghost" size="sm" onPress={onDismiss} testID="resume-command-dismiss">
+        {t("common.actions.dismiss")}
+      </Button>
+    </View>
   );
 }
 
@@ -2170,9 +2200,12 @@ function WorkspaceScreenContent({
     workspaceRoot: workspaceDirectory ?? "",
   });
 
+  const copyResumeCommandPending = useRef(false);
+  const dismissResumeCommandError = useRef<DismissToast>(() => {});
+  const dismissCopyResumeFailure = useCallback(() => dismissResumeCommandError.current(), []);
   const handleCopyResumeCommand = useCallback(
-    async (agentId: string) => {
-      if (!agentId) return;
+    async (agentId: string): Promise<void> => {
+      if (!agentId || copyResumeCommandPending.current) return;
       const agent =
         useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
       const providerSessionId =
@@ -2182,24 +2215,54 @@ function WorkspaceScreenContent({
         return;
       }
 
-      const command =
-        buildProviderCommand({
+      copyResumeCommandPending.current = true;
+      dismissCopyResumeFailure();
+      function showFailure(message: string): void {
+        dismissResumeCommandError.current = toast.show(
+          <ResumeCommandErrorToast
+            message={message}
+            agentId={agentId}
+            onRetry={handleCopyResumeCommand}
+            onDismiss={dismissCopyResumeFailure}
+          />,
+          { variant: "error", durationMs: null },
+        );
+      }
+      try {
+        let command = buildProviderCommand({
           provider: agent.provider,
           id: "resume",
           sessionId: providerSessionId,
-        }) ?? null;
-      if (!command) {
-        toast.error(t("workspace.tabs.toasts.resumeCommandUnavailable"));
-        return;
-      }
-      try {
+          cwd: agent.cwd,
+        });
+        if (!command) {
+          if (!client || !isConnected) {
+            showFailure(t("workspace.terminal.hostDisconnected"));
+            return;
+          }
+          toast.show(t("common.loading"), { durationMs: null });
+          const { config } = await client.getDaemonConfig();
+          command = buildProviderCommand({
+            provider: agent.provider,
+            id: "resume",
+            sessionId: providerSessionId,
+            cwd: agent.cwd,
+            providers: config.providers,
+          });
+        }
+        if (!command) {
+          showFailure(t("workspace.tabs.toasts.resumeCommandUnavailable"));
+          return;
+        }
         await Clipboard.setStringAsync(command);
         toast.copied(t("workspace.tabs.toasts.resumeCommandCopiedLabel"));
       } catch {
-        toast.error(t("workspace.tabs.toasts.copyFailed"));
+        showFailure(t("workspace.tabs.toasts.copyFailed"));
+      } finally {
+        copyResumeCommandPending.current = false;
       }
     },
-    [normalizedServerId, toast, t],
+    [client, isConnected, normalizedServerId, toast, t, dismissCopyResumeFailure],
   );
 
   const handleReloadAgent = useCallback(
@@ -3943,6 +4006,16 @@ function WorkspaceMarkdownLinks({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  resumeCommandErrorToast: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  resumeCommandErrorText: {
+    flexShrink: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+  },
   container: {
     flex: 1,
     backgroundColor: theme.colors.surface0,
