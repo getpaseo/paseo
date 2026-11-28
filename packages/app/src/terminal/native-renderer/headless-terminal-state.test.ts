@@ -207,4 +207,75 @@ describe("native headless terminal state", () => {
     ]);
     expect(terminal.getViewportState().cursor.col).toBe(3);
   });
+
+  describe("OSC 52 clipboard", () => {
+    const base64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
+
+    function createWithOsc52() {
+      const copies: string[] = [];
+      const terminal = createNativeHeadlessTerminal({
+        rows: 5,
+        cols: COLS,
+        onOsc52: (text) => copies.push(text),
+      });
+      return { terminal, copies };
+    }
+
+    test("copies BEL-terminated text", async () => {
+      const { terminal, copies } = createWithOsc52();
+      await terminal.write(`\x1b]52;c;${base64("hello")}\x07`);
+      expect(copies).toEqual(["hello"]);
+    });
+
+    test("copies ST-terminated text", async () => {
+      const { terminal, copies } = createWithOsc52();
+      await terminal.write(`\x1b]52;c;${base64("hello")}\x1b\\`);
+      expect(copies).toEqual(["hello"]);
+    });
+
+    test("copies a sequence split across writes", async () => {
+      const { terminal, copies } = createWithOsc52();
+      const sequence = `\x1b]52;c;${base64("split across chunks")}\x07`;
+      const midpoint = Math.floor(sequence.length / 2);
+      await terminal.write(sequence.slice(0, midpoint));
+      await terminal.write(sequence.slice(midpoint));
+      expect(copies).toEqual(["split across chunks"]);
+    });
+
+    test("copies non-ASCII text as UTF-8", async () => {
+      const { terminal, copies } = createWithOsc52();
+      await terminal.write(`\x1b]52;c;${base64("한국어 테스트")}\x07`);
+      expect(copies).toEqual(["한국어 테스트"]);
+    });
+
+    test("clears the clipboard on an empty payload", async () => {
+      const { terminal, copies } = createWithOsc52();
+      await terminal.write("\x1b]52;c;\x07");
+      expect(copies).toEqual([""]);
+    });
+
+    test("ignores primary selection, read queries, and malformed payloads", async () => {
+      const { terminal, copies } = createWithOsc52();
+      await terminal.write(`\x1b]52;p;${base64("nope")}\x07`);
+      await terminal.write("\x1b]52;c;?\x07");
+      await terminal.write("\x1b]52;c;not!base64\x07");
+      await terminal.write("\x1b]52;c;abc\x07"); // length not a multiple of 4
+      expect(copies).toEqual([]);
+    });
+
+    test("leaves no cells behind", async () => {
+      const { terminal, copies } = createWithOsc52();
+      await terminal.write(`before\x1b]52;c;${base64("x")}\x07after`);
+      expect(copies).toEqual(["x"]);
+      const [row] = terminal.getBufferWindow({ startRow: 0, rowCount: 1 }).rows;
+      expect(rowText(row)).toBe("beforeafter");
+    });
+
+    test("works without a handler registered", async () => {
+      const terminal = createNativeHeadlessTerminal({ rows: 5, cols: COLS });
+      await terminal.write(`\x1b]52;c;${base64("dropped")}\x07text`);
+      const [row] = terminal.getBufferWindow({ startRow: 0, rowCount: 1 }).rows;
+      expect(rowText(row)).toBe("text");
+    });
+  });
 });

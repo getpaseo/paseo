@@ -1,4 +1,5 @@
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
+import { Buffer } from "buffer";
 import type { TerminalCharacterWidths } from "../character-widths";
 import {
   Terminal as HeadlessTerminal,
@@ -21,6 +22,40 @@ export interface NativeHeadlessTerminalOptions {
   scrollbackLines?: number;
   /** Defaults to `graphemes`, the table current daemons use. */
   characterWidths?: TerminalCharacterWidths;
+  /** Clipboard text the program in the PTY asked to copy with an OSC 52 sequence. */
+  onOsc52?: (text: string) => void;
+}
+
+const OSC52_BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
+
+/**
+ * Decodes the `selection;payload` data of an OSC 52 sequence. Only the system
+ * clipboard selector `c` is copied, matching the desktop clipboard addon; `p`
+ * and other selectors, clipboard read queries (`?`), and malformed payloads are
+ * ignored. The payload is base64 of the UTF-8 text; an empty payload clears the
+ * clipboard. Returns `null` when there is nothing to copy.
+ */
+function decodeOsc52ClipboardText(data: string): string | null {
+  const separator = data.indexOf(";");
+  if (separator === -1) {
+    return null;
+  }
+  const selection = data.slice(0, separator);
+  const payload = data.slice(separator + 1);
+  if (selection !== "c" || payload === "?") {
+    return null;
+  }
+  if (payload === "") {
+    return "";
+  }
+  if (payload.length % 4 !== 0 || !OSC52_BASE64_PATTERN.test(payload)) {
+    return null;
+  }
+  try {
+    return Buffer.from(payload, "base64").toString("utf8");
+  } catch {
+    return null;
+  }
 }
 
 export interface NativeHeadlessTerminal {
@@ -307,6 +342,17 @@ export function createNativeHeadlessTerminal(
   if ((options.characterWidths ?? "graphemes") === "graphemes") {
     terminal.loadAddon(new UnicodeGraphemesAddon());
   }
+  // Register on the parser itself: it owns OSC framing, both terminators, and
+  // reassembly across the chunks the output drain splits at arbitrary points.
+  const osc52Subscription = options.onOsc52
+    ? terminal.parser.registerOscHandler(52, (data) => {
+        const text = decodeOsc52ClipboardText(data);
+        if (text !== null) {
+          options.onOsc52?.(text);
+        }
+        return true;
+      })
+    : null;
   const decoder = new TextDecoder();
   let coordinateEpoch = 0;
   const coordinateStorage = new Map<object, TerminalCoordinateStorage>();
@@ -375,6 +421,7 @@ export function createNativeHeadlessTerminal(
       getActiveCoordinateStorage().oldestRow = 0;
     },
     dispose(): void {
+      osc52Subscription?.dispose();
       bufferChangeSubscription.dispose();
       for (const storage of coordinateStorage.values()) {
         storage.trimSubscription?.dispose();
