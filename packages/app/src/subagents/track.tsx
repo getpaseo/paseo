@@ -26,6 +26,7 @@ import {
   buildSubagentPillPresentation,
   buildSubagentRowPresentationData,
   countFinishedSubagents,
+  sortSubagentRows,
 } from "./track-presentation";
 
 const ThemedArchive = withUnistyles(Archive);
@@ -80,6 +81,7 @@ export function SubagentsTrack({
   onDetachSubagent,
 }: SubagentsTrackProps): ReactElement | null {
   const { t } = useTranslation();
+  const sortedRows = useMemo(() => sortSubagentRows(rows), [rows]);
   const sheetPanePage = useSheetPanePage();
 
   const isArchivingFinished = archiveFinishedStatus.kind === "archiving";
@@ -92,6 +94,7 @@ export function SubagentsTrack({
   const finishedCount = countFinishedSubagents(rows);
   const showArchiveFinished = finishedCount > 0 || isArchivingFinished || isArchiveFinishedFailed;
   const sheets = rows.map(sheetTabFor);
+  const sheetByRow = new Map(rows.map((row, index) => [row, sheets[index]]));
   const pages = sheets.flatMap((sheet) => (sheet ? [sheetPanePage(sheet)] : []));
 
   return (
@@ -111,14 +114,14 @@ export function SubagentsTrack({
           />
         </ComposerTrackActions>
       ) : null}
-      {rows.map((row, index) => (
+      {sortedRows.map((row) => (
         <SubagentsTrackRow
           key={row.kind === "paseo" ? `${row.address.serverId}:${row.id}` : row.id}
           row={row}
           serverId={serverId}
           onOpenSubagent={onOpenSubagent}
           onOpenProviderSubagent={onOpenProviderSubagent}
-          sheetTabId={sheets[index]?.tab.tabId ?? null}
+          sheetTabId={sheetByRow.get(row)?.tab.tabId ?? null}
           onArchiveSubagent={onArchiveSubagent}
           onDetachSubagent={onDetachSubagent}
         />
