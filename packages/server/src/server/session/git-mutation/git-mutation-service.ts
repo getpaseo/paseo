@@ -123,7 +123,9 @@ export function createGitMutationService(deps: {
       // remote-tracking ref or branch.autoSetupMerge asks for inheritance, and every later
       // push then reads that upstream and lands the work on the default branch. The worktree
       // path makes the same promise with `git worktree add -b <branch> --no-track <base>`.
-      await runGitCommand(["checkout", "-b", newBranchName, "--no-track", baseBranch], {
+      const startPoint =
+        baseResolution.kind === "local" ? baseResolution.name : baseResolution.remoteRef;
+      await runGitCommand(["checkout", "-b", newBranchName, "--no-track", startPoint], {
         cwd,
         timeout: 120_000,
       });
