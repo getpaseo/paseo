@@ -168,9 +168,11 @@ function buildWorkerExitMessage(params: {
           .map(formatPendingRequestForMessage)
           .join(", ")}`
       : "";
+  const crashLogs =
+    process.platform === "darwin" ? "daemon.log and macOS DiagnosticReports" : "daemon.log";
   const stderr = params.stderrTail
     ? ` Last stderr: ${truncateStart(params.stderrTail, USER_ERROR_STDERR_MAX_CHARS)}`
-    : " Check daemon.log and macOS DiagnosticReports for Paseo Voice crash details.";
+    : ` Check ${crashLogs} for Paseo Voice crash details.`;
   return `Local speech worker exited (${formatExitStatus(params.code, params.signal)})${pending}.${stderr}`;
 }
 

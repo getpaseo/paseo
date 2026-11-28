@@ -311,6 +311,24 @@ describe("LocalSpeechWorkerClient", () => {
     });
   });
 
+  it.each([
+    ["linux", "daemon.log"],
+    ["win32", "daemon.log"],
+    ["darwin", "daemon.log and macOS DiagnosticReports"],
+  ])("suggests crash logs available on %s when stderr is empty", async (platform, logs) => {
+    const original = process.platform;
+    const { client, workers } = createClient();
+    try {
+      const pending = client.synthesizeSpeech("hello");
+      Object.defineProperty(process, "platform", { value: platform });
+      workers[0].emit("close", null, "SIGKILL");
+      await expect(pending).rejects.toThrow("Check " + logs + " for Paseo Voice crash details.");
+    } finally {
+      Object.defineProperty(process, "platform", { value: original });
+      client.shutdown();
+    }
+  });
+
   it("does not log intentional shutdowns as worker crashes", async () => {
     const { logger, records } = createCapturingLogger();
     const workers: FakeLocalSpeechWorker[] = [];
