@@ -1,6 +1,6 @@
 import { type Dirent, type FSWatcher, watch } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import type { BackendDiagnostics, ObservationBackend, ObservationHost } from "./contracts.js";
 import type { ObserverPaths } from "./paths.js";
 import { isMissingPathError, toError } from "./paths.js";
@@ -30,6 +30,12 @@ const MAX_DIRECTORY_RESCANS = 3;
 // starts, so it reports nothing. "changes" scans topology that appeared while
 // observed, so files found before their directory was covered are creates.
 type ReconcileMode = "baseline" | "changes";
+
+interface Classification {
+  path: string;
+  // The watched directory whose watcher reported `path`.
+  directory: string;
+}
 
 interface DirectoryIdentity {
   dev: bigint;
@@ -70,7 +76,7 @@ export function createLinuxBackend(
 class LinuxBackend implements ObservationBackend {
   private readonly watchers = new Map<string, WatchedDirectory>();
   private readonly classifications = new Set<Promise<void>>();
-  private readonly classificationQueue: Array<{ path: string }> = [];
+  private readonly classificationQueue: Classification[] = [];
   private readonly pendingScopes = new Set<string>();
   private reconcileTail: Promise<void> = Promise.resolve();
   private queueDepth = 0;
@@ -159,7 +165,7 @@ class LinuxBackend implements ObservationBackend {
       const path = filename ? resolve(directory, filename.toString()) : directory;
       if (!this.host.isIgnored(path)) {
         if (eventType === "change") this.host.queueEvent("update", path);
-        else this.classify(path);
+        else this.classify({ path, directory });
       }
       if (eventType === "rename" || !filename) this.requestReconcile(path);
     });
@@ -466,7 +472,7 @@ class LinuxBackend implements ObservationBackend {
     return "ok";
   }
 
-  private classify(path: string): void {
+  private classify(classification: Classification): void {
     if (this.classificationQueue.length >= MAX_QUEUED_CLASSIFICATIONS) {
       // This backend has no file-level inventory and no full-tree safety
       // audit to fall back on (see the comment on MAX_QUEUED_CLASSIFICATIONS
@@ -480,7 +486,7 @@ class LinuxBackend implements ObservationBackend {
       );
       return;
     }
-    this.classificationQueue.push({ path });
+    this.classificationQueue.push(classification);
     this.pumpClassifications();
   }
 
@@ -501,27 +507,46 @@ class LinuxBackend implements ObservationBackend {
     ) {
       const next = this.classificationQueue.shift();
       if (!next) return;
-      this.startClassification(next.path);
+      this.startClassification(next);
     }
   }
 
-  private startClassification(path: string): void {
+  private startClassification(pending: Classification): void {
     this.host.metrics.nativeClassificationCount += 1;
     let classification!: Promise<void>;
-    classification = stat(path)
-      .then(() => this.host.queueEvent("create", path))
-      .catch((error: unknown) => {
-        if (isMissingPathError(error)) {
-          this.host.queueEvent("delete", path);
-          return;
-        }
-        this.host.fail(toError(error));
-      })
+    classification = this.classifyPath(pending)
+      .catch((error: unknown) => this.host.fail(toError(error)))
       .finally(() => {
         this.classifications.delete(classification);
         if (this.host.isActive()) this.pumpClassifications();
       });
     this.classifications.add(classification);
+  }
+
+  private async classifyPath({ path, directory }: Classification): Promise<void> {
+    try {
+      await stat(path);
+    } catch (error) {
+      if (!isMissingPathError(error)) throw error;
+      if (!(await this.isOwnDeletion({ path, directory }))) this.host.queueEvent("delete", path);
+      return;
+    }
+    this.host.queueEvent("create", path);
+  }
+
+  // inotify names a watched directory's own deletion after the directory, so
+  // `<directory>/<basename(directory)>` is either a child of that name or the
+  // directory itself. Once the directory is gone, its parent's watcher and the
+  // reconciliation report it, and that delete covers a same-named child too.
+  private async isOwnDeletion({ path, directory }: Classification): Promise<boolean> {
+    if (path !== resolve(directory, basename(directory))) return false;
+    try {
+      await stat(directory);
+      return false;
+    } catch (error) {
+      if (isMissingPathError(error)) return true;
+      throw error;
+    }
   }
 
   private cancelQueued(): void {
