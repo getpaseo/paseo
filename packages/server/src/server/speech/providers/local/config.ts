@@ -2,6 +2,7 @@ import path from "node:path";
 
 import { z } from "zod";
 
+import { expandTilde } from "../../../../utils/path.js";
 import type { PersistedConfig } from "../../../persisted-config.js";
 import type { RequestedSpeechProviders } from "../../speech-types.js";
 import {
@@ -208,17 +209,18 @@ export function resolveLocalSpeechConfig(params: {
     buildLocalSpeechResolutionInput({ ...params, includeProviderConfig }),
   );
 
+  const modelsDir = expandTilde(parsed.modelsDir);
   const resolvedVoiceTtsSpeakerId = parsed.voiceLocalTtsSpeakerId ?? 0;
 
   return {
-    modelsDir: parsed.modelsDir,
+    modelsDir,
     sttLanguages: {
       dictation: parsed.dictationLanguage,
       voice: parsed.voiceLanguage,
     },
     local: parsed.includeProviderConfig
       ? {
-          modelsDir: parsed.modelsDir,
+          modelsDir,
           models: {
             dictationStt: parsed.dictationLocalSttModel,
             voiceStt: parsed.voiceLocalSttModel,
