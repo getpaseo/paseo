@@ -1525,6 +1525,7 @@ function PermissionRequestCard({
     state.sessions[serverId]?.planReviews.get(permission.key),
   );
   if (permission.request.metadata?.acpPlanReview === true) {
+    // COMPAT(acpPlanReview): added after v0.18.1, remove gate after 2027-05-28.
     if (!supportsACPPlanReview) {
       return <Text>{t("planReview.updateHost")}</Text>;
     }

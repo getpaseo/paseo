@@ -4,7 +4,6 @@ import { pluginSettings } from "./plugin-settings";
 export const zhCN: TranslationResources = {
   planReview: {
     wholePlan: "整个计划",
-    commentTarget: "留言对象",
     comment: "针对这些行留言",
     addComment: "添加留言",
     lineRange: "第 {{start}}–{{end}} 行",

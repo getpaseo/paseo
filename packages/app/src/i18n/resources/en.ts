@@ -3,7 +3,6 @@ import { pluginGallery } from "./plugin-gallery";
 export const en = {
   planReview: {
     wholePlan: "Whole plan",
-    commentTarget: "Comment target",
     comment: "Comment on these lines",
     addComment: "Add comment",
     lineRange: "Lines {{start}}–{{end}}",

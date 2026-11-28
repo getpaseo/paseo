@@ -164,6 +164,11 @@ export function ACPPlanReviewCard({
             abandon={abandon}
           />
         </View>
+        {hasPlan && hasFeedback ? (
+          <Text style={styles.label} testID="plan-review-approval-hint">
+            {t("planReview.feedbackBeforeApproval")}
+          </Text>
+        ) : null}
         {error ? (
           <Text accessibilityRole="alert" style={styles.error} testID="plan-review-error">
             {error}
@@ -173,6 +178,7 @@ export function ACPPlanReviewCard({
     ),
     [
       hasPlan,
+      hasFeedback,
       draft,
       model,
       pending,
