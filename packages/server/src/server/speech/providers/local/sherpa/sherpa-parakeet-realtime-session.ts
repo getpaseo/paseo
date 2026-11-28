@@ -58,20 +58,19 @@ export class SherpaParakeetRealtimeTranscriptionSession
       return;
     }
 
+    const segmentId = this.currentSegmentId;
+    const previousSegmentId = this.previousSegmentId;
+    const committedPcm16 = this.pcm16;
+    this.previousSegmentId = segmentId;
+    this.currentSegmentId = uuidv4();
+    this.lastPartialText = "";
+    this.pcm16 = Buffer.alloc(0);
+    this.emit("committed", { segmentId, previousSegmentId });
+
     void (async () => {
       try {
-        await this.maybeDecode(true);
-        const finalText = this.lastPartialText;
-        const segmentId = this.currentSegmentId!;
-        const previousSegmentId = this.previousSegmentId;
-
-        this.emit("committed", { segmentId, previousSegmentId });
+        const finalText = await this.decodePcm16(committedPcm16);
         this.emit("transcript", { segmentId, transcript: finalText, isFinal: true });
-
-        this.previousSegmentId = segmentId;
-        this.currentSegmentId = uuidv4();
-        this.lastPartialText = "";
-        this.pcm16 = Buffer.alloc(0);
       } catch (err) {
         this.emit("error", err instanceof Error ? err : new Error(String(err)));
       }
@@ -110,12 +109,16 @@ export class SherpaParakeetRealtimeTranscriptionSession
 
     this.decoding = true;
     try {
-      const text = await this.decodeNow();
+      const segmentId = this.currentSegmentId;
+      const text = await this.decodePcm16(this.pcm16);
       this.lastDecodeAt = Date.now();
+      if (!this.connected || this.currentSegmentId !== segmentId) {
+        return;
+      }
       if (text !== this.lastPartialText) {
         this.lastPartialText = text;
         this.emit("transcript", {
-          segmentId: this.currentSegmentId,
+          segmentId,
           transcript: text,
           isFinal: false,
         });
@@ -129,12 +132,12 @@ export class SherpaParakeetRealtimeTranscriptionSession
     }
   }
 
-  private async decodeNow(): Promise<string> {
-    if (this.pcm16.length === 0) {
+  private async decodePcm16(pcm16: Buffer): Promise<string> {
+    if (pcm16.length === 0) {
       return "";
     }
 
-    const peak = pcm16lePeakAbs(this.pcm16);
+    const peak = pcm16lePeakAbs(pcm16);
     const peakFloat = peak / 32768.0;
     const targetPeak = 0.6;
     const maxGain = 50;
@@ -143,7 +146,7 @@ export class SherpaParakeetRealtimeTranscriptionSession
 
     const stream = this.engine.createStream();
     try {
-      const floatSamples = pcm16leToFloat32(this.pcm16, gain);
+      const floatSamples = pcm16leToFloat32(pcm16, gain);
       this.engine.acceptWaveform(stream, this.engine.sampleRate, floatSamples);
       this.engine.recognizer.decode(stream);
       const result = this.engine.recognizer.getResult(stream);
