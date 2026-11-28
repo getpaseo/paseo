@@ -29,6 +29,8 @@ import {
 } from "./providers/codex-app-server-agent.js";
 import { spawnProcess } from "../../utils/spawn.js";
 import { createFakeCodexAppServer } from "./providers/codex/test-utils/fake-app-server.js";
+import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
+import { OpenCodeRuntimeClient } from "./providers/opencode/runtime-client.js";
 import { PiRpcAgentClient } from "./providers/pi/agent.js";
 import { FakePi } from "./providers/pi/test-utils/fake-pi.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
@@ -13766,6 +13768,37 @@ test("listImportableSessions skips providers that lack supportsSessionListing ev
   expect(listableClient.calls).toBe(1);
   expect(nonListableClient.calls).toBe(0);
   expect(result.sessions.map((d) => d.provider)).toEqual(["claude"]);
+});
+
+test("listImportableSessions skips missing default CLIs without skipping disk-backed history", async () => {
+  const emptyPath = join(process.cwd(), `missing-provider-path-${randomUUID()}`);
+  vi.stubEnv("PATH", emptyPath);
+  vi.stubEnv("LOCALAPPDATA", emptyPath);
+  vi.stubEnv("XDG_STATE_HOME", emptyPath);
+  vi.stubEnv("PASEO_OPENCODE_SERVER_URL", undefined);
+  const historyClient = new RecordingPersistedAgentsClient("claude");
+  historyClient.isAvailable = async () => false;
+  const opencode = new OpenCodeRuntimeClient(logger);
+  try {
+    const manager = new AgentManager({
+      clients: {
+        claude: historyClient,
+        codex: new CodexAppServerAgentClient(logger),
+        copilot: new CopilotACPAgentClient({ logger }),
+        opencode,
+      },
+      logger,
+    });
+
+    const result = await manager.listImportableSessions();
+    expect(
+      result.sessions.map(({ provider, providerHandleId }) => [provider, providerHandleId]),
+    ).toEqual([["claude", "claude-session"]]);
+    expect(result.providerErrors).toEqual([]);
+  } finally {
+    vi.unstubAllEnvs();
+    await opencode.shutdown();
+  }
 });
 
 test("listImportableSessions returns healthy rows alongside thrown and timed-out provider errors", async () => {

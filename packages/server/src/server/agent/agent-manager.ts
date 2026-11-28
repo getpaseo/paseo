@@ -112,6 +112,7 @@ import {
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { parseAgentMessage, projectAgentMessages } from "./agent-messages/index.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
+import { ProviderExecutableNotFoundError } from "./provider-launch-config.js";
 import {
   PASEO_MCP_SERVER_NAME,
   stripInternalPaseoMcpServer,
@@ -1378,6 +1379,10 @@ export class AgentManager {
           };
         } catch (error) {
           cancellation.abort(error);
+          // Some providers read history without a CLI, so only skip when listing needs one.
+          if (error instanceof ProviderExecutableNotFoundError) {
+            return { sessions: [], error: null };
+          }
           this.logger.warn(
             { err: error, provider },
             "Failed to list importable sessions for provider",

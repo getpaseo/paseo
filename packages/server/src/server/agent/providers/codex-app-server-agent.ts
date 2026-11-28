@@ -70,6 +70,7 @@ import {
 } from "./codex/tool-call-mapper.js";
 import { normalizeCodexFilePath } from "./codex/tool-call-detail-parser.js";
 import {
+  ProviderExecutableNotFoundError,
   checkProviderLaunchAvailable,
   createProviderEnv,
   createProviderEnvSpec,
@@ -661,7 +662,7 @@ async function resolveCodexLaunchPrefix(
   const launch = await resolveCodexLaunch(runtimeSettings);
   const availability = await checkCodexLaunchAvailable(launch);
   if (!availability.available) {
-    throw new Error(
+    throw new ProviderExecutableNotFoundError(
       "Codex binary not found. Install the Codex CLI (https://github.com/openai/codex) and ensure it is available in your shell PATH.",
     );
   }

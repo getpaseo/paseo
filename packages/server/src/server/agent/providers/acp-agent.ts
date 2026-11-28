@@ -122,6 +122,7 @@ import {
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import { StaleProviderSessionError } from "../stale-provider-session-error.js";
 import {
+  ProviderExecutableNotFoundError,
   checkProviderLaunchAvailable,
   createProviderEnv,
   createProviderEnvSpec,
@@ -1968,7 +1969,9 @@ export class ACPAgentClient implements AgentClient {
     });
     const availability = await checkProviderLaunchAvailable(prefix);
     if (!availability.available) {
-      throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
+      throw new ProviderExecutableNotFoundError(
+        `${this.provider} command '${prefix.command}' not found`,
+      );
     }
     return {
       command: prefix.command,
