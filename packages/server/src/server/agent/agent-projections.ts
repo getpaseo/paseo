@@ -508,6 +508,9 @@ function projectPersistenceHandleForWire(
     return projected;
   }
   delete projected.metadata.mcpServers;
+  // Resume log only. Clients read pending questions from pendingPermissions,
+  // and this array dominates directory snapshots (kilobytes per agent).
+  delete projected.metadata.asyncQuestions;
   delete projected.metadata.pluginAppendSystemPrompt;
   delete projected.metadata.daemonAppendSystemPrompt;
   delete projected.metadata.paseoInstructionReceipt;
