@@ -562,6 +562,12 @@ patch every build the consumers use: Metro resolves the `react-native` field of 
 (`src/*.ts` for `react-native-svg`), while Node and Vitest resolve `main`/`module`
 (`lib/commonjs`, `lib/module`). Patching only `lib/` leaves the app bundle unfixed.
 
+Expo modules whose `expo-module.config.json` has an Android `publication` ship a precompiled AAR
+in `local-maven-repo`, and Gradle links that instead of `android/src`. A patch to such a module's
+Kotlin or Java does nothing until the module is listed in `expo.autolinking.android.buildFromSource`
+in `packages/app/package.json` (full-match regexes against the Gradle project name). Remove the
+entry together with the patch. The F-Droid profile already builds every module from source.
+
 ## Dependency overrides and workspace tooling
 
 Root `package.json` `overrides` pin one Expo SDK across the tree (`expo`, `expo-router`,

@@ -63,6 +63,7 @@ import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
 import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
 import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
+import { ShareIntakeHost } from "@/share-intake/host";
 import { HostConfirmationSheet } from "@/hosts/host-confirmation-sheet";
 import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
 import {
@@ -576,6 +577,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
         <CommandCenter />
         <AddProjectFlowHost />
         <HostChooserModal />
+        <ShareIntakeHost />
         <HostConfirmationSheet />
         <ProviderSettingsHost />
         <WorkspaceSetupDialog />

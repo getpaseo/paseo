@@ -13,6 +13,7 @@ import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useSessionStore, type SessionState } from "@/stores/session-store";
 import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
 import {
+  appendToDraftInput,
   applyClearDraftRecord,
   editDraftRecordText,
   collectReferencedAttachmentIdsFromState,
@@ -69,6 +70,8 @@ interface DraftStoreActions {
     draftKey: string;
     attachment: WorkspaceFileComposerAttachment;
   }) => Promise<void>;
+  /** Adds text and attachments from outside the composer, after what the draft already holds. */
+  appendDraftInput: (input: { draftKey: string; addition: DraftInput }) => Promise<void>;
   getCreateModalDraft: () => DraftInput | null;
   saveCreateModalDraft: (draft: DraftInput | null) => void;
   collectActiveAttachmentIds: () => string[];
@@ -455,6 +458,41 @@ export const useDraftStore = create<DraftStore>()(
               ...state.attachmentFocusRequestByDraftKey,
               [draftKey]: (state.attachmentFocusRequestByDraftKey[draftKey] ?? 0) + 1,
             },
+          };
+        });
+        scheduleAttachmentGc();
+      },
+
+      appendDraftInput: async ({ draftKey, addition }) => {
+        await get().hydrateDraftInput({ draftKey });
+        set((state) => {
+          const existing = state.drafts[draftKey];
+          const draft = toDraftInputIfReady(existing) ?? { text: "", attachments: [] };
+          return {
+            drafts: {
+              ...state.drafts,
+              [draftKey]: createDraftRecord({
+                draft: appendToDraftInput(draft, addition),
+                lifecycle: "active",
+                previousVersion: existing?.version,
+              }),
+            },
+            ...(addition.attachments.length > 0
+              ? {
+                  attachmentFocusRequestByDraftKey: {
+                    ...state.attachmentFocusRequestByDraftKey,
+                    [draftKey]: (state.attachmentFocusRequestByDraftKey[draftKey] ?? 0) + 1,
+                  },
+                }
+              : {}),
+            ...(addition.text.length > 0
+              ? {
+                  textReplacementRequestByDraftKey: {
+                    ...state.textReplacementRequestByDraftKey,
+                    [draftKey]: (state.textReplacementRequestByDraftKey[draftKey] ?? 0) + 1,
+                  },
+                }
+              : {}),
           };
         });
         scheduleAttachmentGc();
