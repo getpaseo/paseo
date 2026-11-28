@@ -16,6 +16,11 @@ const ApiOptionalStringSchema = z.preprocess(
   z.coerce.string().optional(),
 );
 
+const ZaiRejectedLoginSchema = z.object({
+  success: z.literal(false),
+  code: z.literal([401, 403]),
+});
+
 const ZaiUsageResponseSchema = z.object({
   data: z
     .array(
@@ -53,7 +58,11 @@ export async function fetchUsage(
     return unavailable({ kind: "rejected", status: res.status });
   if (!res.ok) throw new Error(`Z.ai usage API returned ${res.status}`);
 
-  const resp = ZaiUsageResponseSchema.parse(await res.json());
+  const body: unknown = await res.json();
+  const rejected = ZaiRejectedLoginSchema.safeParse(body);
+  if (rejected.success) return unavailable({ kind: "rejected", status: rejected.data.code });
+
+  const resp = ZaiUsageResponseSchema.parse(body);
   const sub = resp.data?.[0];
   if (!sub) return unavailable({ kind: "no_quota", detail: "No active coding plan" });
 

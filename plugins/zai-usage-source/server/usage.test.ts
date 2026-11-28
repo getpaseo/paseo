@@ -172,6 +172,31 @@ describe("zai usage source", () => {
     expect(zai).toMatchObject({ status: "available" });
   });
 
+  it.each([401, 403])(
+    "reports a rejected login from a successful HTTP response with code %i",
+    async (code) => {
+      process.env["ZAI_API_KEY"] = "fixture-rejected-login";
+      const report = await fetchFirst(async () =>
+        jsonResponse({ success: false, code, msg: "token expired or incorrect" }),
+      );
+      expect(report).toEqual({
+        status: "unavailable",
+        problem: { kind: "rejected", status: code },
+      });
+    },
+  );
+
+  it("reports no quota for a successful response with an empty subscription list", async () => {
+    process.env["ZAI_API_KEY"] = "fixture-empty-plan";
+    const report = await fetchFirst(async () =>
+      jsonResponse({ success: true, code: 200, data: [] }),
+    );
+    expect(report).toEqual({
+      status: "unavailable",
+      problem: { kind: "no_quota", detail: "No active coding plan" },
+    });
+  });
+
   it("discovery returns a locator when fetch finds zai credentials", async () => {
     process.env["ZAI_API_KEY"] = "fixture-token";
     let requested = false;
