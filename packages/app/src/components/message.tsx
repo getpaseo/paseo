@@ -1525,6 +1525,7 @@ interface CompactionMarkerProps {
   status: "loading" | "completed";
   trigger?: "auto" | "manual";
   preTokens?: number;
+  outcome?: "failed" | "canceled";
 }
 
 const compactionStylesheet = StyleSheet.create((theme) => ({
@@ -1556,8 +1557,9 @@ export const CompactionMarker = memo(function CompactionMarker({
   status,
   trigger,
   preTokens,
+  outcome,
 }: CompactionMarkerProps) {
-  const label = getCompactionMarkerLabel({ status, trigger, preTokens });
+  const label = getCompactionMarkerLabel({ status, trigger, preTokens, outcome });
 
   return (
     <View style={compactionStylesheet.container}>

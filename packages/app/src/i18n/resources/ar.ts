@@ -443,6 +443,8 @@ export const ar: TranslationResources = {
       manual: "تم ضغط السياق يدويًا",
       withTokens: "تم ضغط السياق (رموز{{tokens}}K)",
       completed: "تم ضغط السياق",
+      failed: "فشل ضغط السياق",
+      canceled: "أُلغي ضغط السياق",
     },
   },
   importSession: {

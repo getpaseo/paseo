@@ -22,6 +22,7 @@ import {
 import {
   isUnreconciledLocalUserMessage,
   type AgentToolCallData,
+  type CompactionItem,
   type StreamItem,
 } from "@/types/stream";
 import type { UnsettledTurn } from "@/timeline/turn-liveness";
@@ -161,6 +162,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     status: z.enum(["loading", "completed"]),
     trigger: z.enum(["auto", "manual"]).optional(),
     preTokens: z.number().nonnegative().optional(),
+    outcome: z.enum(["failed", "canceled"]).optional(),
   }),
   z.strictObject({
     ...TimelineItemBaseShape,
@@ -510,13 +512,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         message: item.message,
       };
     case "compaction":
-      return {
-        ...base,
-        kind: item.kind,
-        status: item.status,
-        ...(item.trigger ? { trigger: item.trigger } : {}),
-        ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
-      };
+      return { ...base, kind: item.kind, ...copyCompactionFields(item) };
     case "tool_call":
       if (item.payload.source !== "agent") return null;
       return {
@@ -540,6 +536,17 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
     case "turn_summary":
       return null;
   }
+}
+
+type CompactionFields = Pick<CompactionItem, "status" | "trigger" | "preTokens" | "outcome">;
+
+function copyCompactionFields(item: CompactionFields): CompactionFields {
+  return {
+    status: item.status,
+    ...(item.trigger ? { trigger: item.trigger } : {}),
+    ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
+    ...(item.outcome ? { outcome: item.outcome } : {}),
+  };
 }
 
 function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
@@ -605,13 +612,7 @@ function deserializeBuiltinTimelineItem(
         message: item.message,
       };
     case "compaction":
-      return {
-        ...base,
-        kind: item.kind,
-        status: item.status,
-        ...(item.trigger ? { trigger: item.trigger } : {}),
-        ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
-      };
+      return { ...base, kind: item.kind, ...copyCompactionFields(item) };
     case "tool_call": {
       const tool = item.item;
       if (tool.type !== "tool_call") {

@@ -406,6 +406,8 @@ export interface CompactionTimelineItem {
   status: "loading" | "completed";
   trigger?: "auto" | "manual";
   preTokens?: number;
+  /** Set on a "completed" marker when the compaction ended without compacting. */
+  outcome?: "failed" | "canceled";
 }
 
 export interface PluginTimelineItem {

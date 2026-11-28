@@ -899,6 +899,67 @@ describe("processTimelineResponse", () => {
     ]);
   });
 
+  it("merges a live compaction result into the newest loading compaction on bootstrap", () => {
+    const liveCompaction = hydrateStreamState(
+      [
+        {
+          event: {
+            type: "timeline",
+            provider: "claude",
+            item: { type: "compaction", status: "completed", outcome: "canceled" },
+          } as AgentStreamEventPayload,
+          timestamp: new Date(3000),
+          timelineCursor: { epoch: "epoch-1", seq: 3 },
+        },
+      ],
+      { source: "canonical" },
+    );
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentHead: liveCompaction,
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        reset: false,
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 2 },
+        entries: [
+          {
+            seqStart: 1,
+            seqEnd: 1,
+            provider: "claude",
+            item: { type: "compaction", status: "loading" },
+            timestamp: new Date(1000).toISOString(),
+          },
+          {
+            seqStart: 2,
+            seqEnd: 2,
+            provider: "claude",
+            item: { type: "compaction", status: "loading" },
+            timestamp: new Date(2000).toISOString(),
+          },
+        ],
+      },
+    });
+
+    expect(
+      [...result.tail, ...result.head]
+        .filter((item) => item.kind === "compaction")
+        .map((item) => ({
+          timestamp: item.timestamp.getTime(),
+          status: item.status,
+          outcome: item.outcome,
+        })),
+    ).toEqual([
+      { timestamp: 1000, status: "loading", outcome: undefined },
+      { timestamp: 2000, status: "completed", outcome: "canceled" },
+    ]);
+  });
+
   it("replaces a painted replica with an empty authoritative timeline", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,

@@ -1518,6 +1518,53 @@ describe("stream reducer canonical tool calls", () => {
     );
   });
 
+  it("closes the newest loading compaction when an older one never finished", () => {
+    // Daemons before the failed-compaction fix left an aborted compaction on "loading".
+    const state = hydrateStreamState([
+      {
+        event: compactionTimeline("loading", "manual"),
+        timestamp: new Date("2025-01-01T10:50:00Z"),
+      },
+      {
+        event: compactionTimeline("loading", "manual"),
+        timestamp: new Date("2025-01-01T10:51:00Z"),
+      },
+      {
+        event: compactionTimeline("completed", "manual"),
+        timestamp: new Date("2025-01-01T10:51:05Z"),
+      },
+    ]);
+
+    const compactions = state.filter(
+      (item): item is Extract<StreamItem, { kind: "compaction" }> => item.kind === "compaction",
+    );
+    expect(compactions.map((item) => [item.timestamp.toISOString(), item.status])).toEqual([
+      ["2025-01-01T10:50:00.000Z", "loading"],
+      ["2025-01-01T10:51:00.000Z", "completed"],
+    ]);
+  });
+
+  it("keeps the outcome of a compaction that did not finish", () => {
+    const state = hydrateStreamState([
+      {
+        event: compactionTimeline("loading"),
+        timestamp: new Date("2025-01-01T10:50:00Z"),
+      },
+      {
+        event: {
+          type: "timeline",
+          provider: "claude",
+          item: { type: "compaction", status: "completed", outcome: "canceled" },
+        },
+        timestamp: new Date("2025-01-01T10:50:01Z"),
+      },
+    ]);
+
+    expect(state.filter((item) => item.kind === "compaction")).toEqual([
+      expect.objectContaining({ status: "completed", outcome: "canceled" }),
+    ]);
+  });
+
   it("renders Claude TodoWrite as todo_list and suppresses tool call badge", () => {
     const state = hydrateStreamState([
       {

@@ -110,7 +110,9 @@ describe("daemon E2E (real claude) - steer during compaction", () => {
       await client.waitForFinish(agent.id, 120_000);
       const finalItems = await timelineItems(client, agent.id);
       expect(
-        finalItems.filter((item) => item.type === "compaction").map((item) => item.status),
+        finalItems.flatMap((item) =>
+          item.type === "compaction" ? [item.outcome ?? item.status] : [],
+        ),
       ).toContain("completed");
       expect(hasAssistantText(finalItems, "Compaction canceled")).toBe(false);
     } finally {
