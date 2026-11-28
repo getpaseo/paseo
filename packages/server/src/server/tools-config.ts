@@ -1,9 +1,5 @@
-import {
-  DEFAULT_DAEMON_TOOL_GROUPS,
-  type BuiltInToolGroup,
-  type MutableDaemonConfig,
-  type MutableDaemonToolGroups,
-} from "@getpaseo/protocol/messages";
+import type { MutableDaemonConfig, MutableDaemonToolGroups } from "@getpaseo/protocol/messages";
+import { DEFAULT_DAEMON_TOOL_GROUPS, type BuiltInToolGroup } from "@getpaseo/protocol/tool-groups";
 
 export type ResolvedDaemonToolGroups = Record<BuiltInToolGroup, boolean>;
 

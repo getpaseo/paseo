@@ -1171,9 +1171,6 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private isAgentToolsEnabled(): boolean {
-    if (!this.daemonConfigStore || typeof this.daemonConfigStore.get !== "function") {
-      return true;
-    }
     return resolveDaemonToolsFromMutableConfig(this.daemonConfigStore.get()).enabled;
   }
 

@@ -292,6 +292,7 @@ function createVoiceAssistantWebSocketServer(params: {
     }),
   };
   const daemonConfigStore = {
+    get: () => ({ tools: { enabled: true }, mcp: { injectIntoAgents: true } }),
     onApply: () => () => {},
     onChange: () => () => {},
   };

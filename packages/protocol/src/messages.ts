@@ -240,21 +240,11 @@ const MutableBrowserToolsConfigSchema = z
   })
   .passthrough();
 
-export const BUILTIN_TOOL_GROUPS = [
-  "orchestration",
-  "schedules",
-  "changeRequests",
-  "browser",
-] as const;
-
-export type BuiltInToolGroup = (typeof BUILTIN_TOOL_GROUPS)[number];
-
-export const DEFAULT_DAEMON_TOOL_GROUPS = {
-  orchestration: true,
-  schedules: true,
-  changeRequests: true,
-  browser: false,
-} as const satisfies Record<BuiltInToolGroup, boolean>;
+export {
+  BUILTIN_TOOL_GROUPS,
+  DEFAULT_DAEMON_TOOL_GROUPS,
+  type BuiltInToolGroup,
+} from "./tool-groups.js";
 
 export const MutableDaemonToolGroupsSchema = z
   .object({
