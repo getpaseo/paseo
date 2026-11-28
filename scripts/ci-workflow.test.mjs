@@ -402,7 +402,9 @@ test("Docker packaging runs on main while Nix verifies packaging PRs on Linux", 
     "nix/**",
     "packages/server/**",
     "packages/cli/**",
+    "packages/desktop/**",
     "scripts/trace-daemon.mjs",
+    "scripts/is-main-module.mjs",
     ".github/workflows/nix.yml",
   ]) {
     assert.match(
