@@ -11,6 +11,10 @@ import type {
 } from "@getpaseo/protocol/messages";
 import { CreationService, type CreationInput } from "./index.js";
 
+import { UnknownBranchError, BranchAlreadyCheckedOutError } from "../../utils/worktree.js";
+import { MissingCheckoutTargetError } from "../resolve-worktree-creation-intent.js";
+import { WorktreeRequestError } from "../worktree-errors.js";
+
 const silentLogger = pino({ level: "silent" });
 const directories: string[] = [];
 afterEach(async () => {
@@ -487,4 +491,75 @@ test("validates committed resources before publishing an orphan as completed", a
   ).rejects.toThrow("Previously created agent no longer exists");
   expect(updates).toEqual([]);
   expect(JSON.parse(await readFile(file, "utf8")).snapshot.phase).toBe("prompt_started");
+});
+
+test.each([
+  {
+    code: "unknown_branch",
+    error: new UnknownBranchError({ branchName: "deleted", cwd: "/project" }),
+  },
+  { code: "branch_already_checked_out", error: new BranchAlreadyCheckedOutError("main") },
+  { code: "missing_checkout_target", error: new MissingCheckoutTargetError() },
+  {
+    code: "unknown_branch",
+    error: new WorktreeRequestError({ code: "unknown_branch", message: "Unknown branch: deleted" }),
+  },
+])(
+  "keeps $code validation conclusively retryable after receipt reload ($error.name)",
+  async ({ code, error }) => {
+    const f = await fixture();
+    let valid = false;
+    let provisions = 0;
+    f.input.provision = async () => {
+      provisions += 1;
+      if (!valid) throw error;
+      return { workspace };
+    };
+    const failed = await f.service.create(f.input);
+    expect(failed).toMatchObject({
+      phase: "failed",
+      failedStage: "workspace",
+      outcomeUnknown: false,
+      errorCode: code,
+    });
+    expect(f.calls).toEqual([]);
+    const restored = new CreationService(f.directory, silentLogger);
+    const saved = await restored.subscribe(f.input.kind, f.input.key, () => {});
+    expect(saved.snapshot).toEqual(failed);
+    saved.unsubscribe();
+    valid = true;
+    f.provider.resolve();
+    expect(await restored.create(f.input)).toMatchObject({ phase: "completed", workspace, agent });
+    expect(provisions).toBe(2);
+    expect(f.calls).toEqual(["agent", "prompt"]);
+  },
+);
+
+test("does not treat an untyped branch code after partial provisioning as proof of rejection", async () => {
+  const f = await fixture();
+  let provisions = 0;
+  f.input.provision = async () => {
+    provisions += 1;
+    await writeFile(join(f.directory, "partial-checkout"), "partial worktree");
+    throw Object.assign(new Error("Checkout failed after writing"), { code: "unknown_branch" });
+  };
+  const failed = await f.service.create(f.input);
+  expect(failed).toMatchObject({ phase: "failed", outcomeUnknown: true });
+  expect(await new CreationService(f.directory, silentLogger).create(f.input)).toEqual(failed);
+  expect(provisions).toBe(1);
+});
+
+test("preserves uncertainty when a validation error follows workspace registration", async () => {
+  const f = await fixture();
+  let exists = false;
+  f.input.exists = async (kind) => kind === "workspace" && exists;
+  f.input.provision = async () => {
+    exists = true;
+    throw new UnknownBranchError({ branchName: "deleted", cwd: "/project" });
+  };
+  expect(await f.service.create(f.input)).toMatchObject({
+    phase: "failed",
+    outcomeUnknown: true,
+    errorCode: "unknown_branch",
+  });
 });

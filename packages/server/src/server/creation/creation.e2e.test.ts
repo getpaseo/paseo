@@ -573,3 +573,95 @@ test("Hub-shaped keyed agent worktree creation uses workspace setup and preserve
     await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 }, 60000);
+
+test("modern checkout validation remains retryable after selecting a valid branch and reconnecting", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "creation-branch-validation-"));
+  execFileSync("git", ["init", "-b", "main", directory], { stdio: "pipe" });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "initial",
+    ],
+    { cwd: directory, stdio: "pipe" },
+  );
+  execFileSync("git", ["branch", "selected-then-deleted"], { cwd: directory, stdio: "pipe" });
+  execFileSync("git", ["branch", "-D", "selected-then-deleted"], { cwd: directory, stdio: "pipe" });
+  let starts = 0;
+  const daemon = await createCreationDaemon({
+    agentClients: createTestAgentClients({
+      beforeCreateSession: async (config) => {
+        if (!config.internal) starts += 1;
+      },
+    }),
+  });
+  let client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    reconnect: { enabled: false },
+  });
+  try {
+    await client.connect();
+    const before = new Set((await client.fetchWorkspaces()).entries.map((entry) => entry.id));
+    const input = {
+      idempotencyKey: "deleted-checkout-branch",
+      source: {
+        kind: "worktree" as const,
+        cwd: directory,
+        worktreeSlug: "branch-retry",
+        action: "checkout" as const,
+        refName: "selected-then-deleted",
+      },
+      agent: { config: { provider: "codex", cwd: directory } },
+    };
+    const failed = await client.createWorkspace(input);
+    expect(failed.creation).toMatchObject({
+      phase: "failed",
+      failedStage: "workspace",
+      errorCode: "unknown_branch",
+      outcomeUnknown: false,
+    });
+    expect(
+      (await client.fetchWorkspaces()).entries.filter((entry) => !before.has(entry.id)),
+    ).toHaveLength(0);
+    expect(starts).toBe(0);
+    expect(
+      execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: directory, encoding: "utf8" })
+        .split("\n")
+        .filter((line) => line.startsWith("worktree ")),
+    ).toHaveLength(1);
+    await client.close();
+    client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      reconnect: { enabled: false },
+    });
+    await client.connect();
+    expect(await client.waitForCreation("workspace", input.idempotencyKey, () => {})).toEqual(
+      failed.creation,
+    );
+    const corrected = {
+      ...input,
+      idempotencyKey: "corrected-checkout-branch",
+      source: { ...input.source, refName: "main" },
+    };
+    const created = await client.createWorkspace(corrected);
+    expect(created.error).toBeNull();
+    expect(created.creation?.phase).toBe("completed");
+    const replay = await client.createWorkspace(corrected);
+    expect(replay.workspace?.id).toBe(created.workspace?.id);
+    expect(replay.agent?.id).toBe(created.agent?.id);
+    expect(starts).toBe(1);
+    expect(
+      (await client.fetchWorkspaces()).entries.filter((entry) => !before.has(entry.id)),
+    ).toHaveLength(1);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+}, 60000);

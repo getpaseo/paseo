@@ -11,6 +11,7 @@ import {
 } from "@getpaseo/protocol/messages";
 import { writeFileAtomic } from "../atomic-file.js";
 import { generateWorkspaceId } from "../workspace-registry-model.js";
+import { WorktreeRequestError, toWorktreeWireError } from "../worktree-errors.js";
 
 type Observer = (snapshot: CreationSnapshot) => void;
 export interface CreatedAgent {
@@ -221,11 +222,7 @@ export class CreationService {
       const stage = record.inFlight ?? "agent";
       const resourceId =
         stage === "workspace" ? record.snapshot.workspaceId : record.snapshot.agentId;
-      const code =
-        error instanceof Error && "code" in error && typeof error.code === "string"
-          ? error.code
-          : undefined;
-      const rejectedBeforeProvision = code === "directory_not_found" || code === "source_required";
+      const { code, rejectedBeforeProvision } = classifyCreationFailure(error);
       const unknown =
         stage === "prompt" ||
         (stage === "workspace" && !rejectedBeforeProvision) ||
@@ -365,6 +362,24 @@ export class CreationService {
     return result;
   }
 }
+function classifyCreationFailure(error: unknown): {
+  code: string | undefined;
+  rejectedBeforeProvision: boolean;
+} {
+  const worktreeError = error instanceof WorktreeRequestError ? error : toWorktreeWireError(error);
+  let code =
+    error instanceof Error && "code" in error && typeof error.code === "string"
+      ? error.code
+      : undefined;
+  if (worktreeError.code !== "unknown") code = worktreeError.code;
+  // An arbitrary branch code does not prove that checkout side effects were rejected.
+  const rejectedBeforeProvision =
+    code === "directory_not_found" ||
+    code === "source_required" ||
+    worktreeError.code !== "unknown";
+  return { code, rejectedBeforeProvision };
+}
+
 function hasCommittedCreation(record: Record): boolean {
   if (record.inFlight !== null) return false;
   const snapshot = record.snapshot;
