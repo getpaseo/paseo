@@ -8629,6 +8629,220 @@ test("preserves terminal fallback when no active turn identity was observed", as
   );
 });
 
+async function startIdleAgentForRuntimeExit(label: string) {
+  const workdir = mkdtempSync(join(tmpdir(), `agent-manager-${label}-`));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let session: TestAgentSession | null = null;
+  class CapturingClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new TestAgentSession(config);
+      return session;
+    }
+  }
+  const attentionReasons: Array<"finished" | "error" | "permission"> = [];
+  const manager = new AgentManager({
+    clients: { codex: new CapturingClient() },
+    registry: storage,
+    logger,
+    onAgentAttention: ({ reason }) => attentionReasons.push(reason),
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  await manager.runAgent(agent.id, "finish a task");
+  await manager.flush();
+  expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+  // Reading the finished turn clears its unread attention, like a user who saw it complete.
+  await manager.clearAgentAttention(agent.id);
+  await manager.flush();
+  attentionReasons.length = 0;
+  const dispatchedStreamTypes: string[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_stream") dispatchedStreamTypes.push(event.event.type);
+    },
+    { agentId: agent.id, replayState: false },
+  );
+  onTestFinished(async () => {
+    await manager.closeAgent(agent.id).catch(() => undefined);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  const runtimeExited = async () => {
+    // Claude reports an idle runtime death as a turn failure with no turn of its own.
+    session!.pushEvent({
+      type: "turn_failed",
+      provider: "codex",
+      error: "Claude stopped unexpectedly (signal SIGTERM).",
+    });
+    await manager.flush();
+  };
+  const systemErrors = () =>
+    manager
+      .getTimeline(agent.id)
+      .filter((item) => item.type === "assistant_message" && item.text.includes("[System Error]"));
+  return {
+    manager,
+    storage,
+    agentId: agent.id,
+    attentionReasons,
+    dispatchedStreamTypes,
+    runtimeExited,
+    systemErrors,
+  };
+}
+
+test("an idle runtime that exits during daemon shutdown does not fail the agent", async () => {
+  const idle = await startIdleAgentForRuntimeExit("shutdown-idle-exit");
+  const warnSpy = vi.spyOn(logger, "warn");
+  onTestFinished(() => warnSpy.mockRestore());
+
+  idle.manager.beginShutdown();
+  await idle.runtimeExited();
+
+  expect(warnSpy).not.toHaveBeenCalled();
+
+  const agent = idle.manager.getAgent(idle.agentId);
+  expect(agent?.lifecycle).toBe("idle");
+  expect(agent?.lastError).toBeUndefined();
+  expect(agent?.attention).toEqual({ requiresAttention: false });
+  expect(idle.systemErrors()).toEqual([]);
+  expect(idle.dispatchedStreamTypes).not.toContain("turn_failed");
+  expect(idle.attentionReasons).toEqual([]);
+  const persisted = await idle.storage.get(idle.agentId);
+  expect(persisted).toMatchObject({
+    lastStatus: "idle",
+    requiresAttention: false,
+    attentionReason: null,
+  });
+  expect(persisted?.lastError ?? undefined).toBeUndefined();
+});
+
+test("an idle runtime that exits outside daemon shutdown still fails the agent", async () => {
+  const idle = await startIdleAgentForRuntimeExit("idle-exit");
+
+  await idle.runtimeExited();
+
+  const agent = idle.manager.getAgent(idle.agentId);
+  expect(agent?.lifecycle).toBe("error");
+  expect(agent?.lastError).toBe("Claude stopped unexpectedly (signal SIGTERM).");
+  expect(agent?.attention).toMatchObject({ requiresAttention: true, attentionReason: "error" });
+  expect(idle.systemErrors()).toHaveLength(1);
+  expect(idle.dispatchedStreamTypes).toContain("turn_failed");
+  expect(idle.attentionReasons).toEqual(["error"]);
+  expect(await idle.storage.get(idle.agentId)).toMatchObject({
+    lastStatus: "error",
+    lastError: "Claude stopped unexpectedly (signal SIGTERM).",
+    requiresAttention: true,
+    attentionReason: "error",
+  });
+});
+
+test("a foreground turn that fails during daemon shutdown still fails the agent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-shutdown-foreground-failure-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class FailingTurnSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "shutdown-foreground-turn";
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        this.pushEvent({
+          type: "turn_failed",
+          provider: this.provider,
+          turnId,
+          error: "Claude stopped mid-turn.",
+        });
+      }, 0);
+      return { turnId };
+    }
+  }
+  class FailingTurnClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new FailingTurnSession(config);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new FailingTurnClient() },
+    registry: storage,
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  onTestFinished(async () => {
+    await manager.closeAgent(agent.id).catch(() => undefined);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+
+  manager.beginShutdown();
+  await expect(manager.runAgent(agent.id, "keep working")).rejects.toThrow(
+    "Claude stopped mid-turn.",
+  );
+  await manager.flush();
+
+  const failed = manager.getAgent(agent.id);
+  expect(failed?.lifecycle).toBe("error");
+  expect(failed?.lastError).toBe("Claude stopped mid-turn.");
+  expect(failed?.attention).toMatchObject({ requiresAttention: true, attentionReason: "error" });
+  expect(manager.getTimeline(agent.id)).toContainEqual(
+    expect.objectContaining({
+      type: "assistant_message",
+      text: expect.stringContaining("Claude stopped mid-turn."),
+    }),
+  );
+  expect(await storage.get(agent.id)).toMatchObject({
+    lastStatus: "error",
+    requiresAttention: true,
+    attentionReason: "error",
+  });
+});
+
+test("a pending foreground turn that fails before returning a turnId during daemon shutdown still fails the agent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-shutdown-pending-start-failure-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class RejectingStartSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      throw new Error("Codex stopped before returning a turnId.");
+    }
+  }
+  class RejectingStartClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new RejectingStartSession(config);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new RejectingStartClient() },
+    registry: storage,
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  onTestFinished(async () => {
+    await manager.closeAgent(agent.id).catch(() => undefined);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+
+  manager.beginShutdown();
+  await expect(manager.runAgent(agent.id, "keep working")).rejects.toThrow(
+    "Codex stopped before returning a turnId.",
+  );
+  await manager.flush();
+
+  const failed = manager.getAgent(agent.id);
+  expect(failed?.lifecycle).toBe("error");
+  expect(failed?.lastError).toBe("Codex stopped before returning a turnId.");
+  expect(failed?.attention).toMatchObject({ requiresAttention: true, attentionReason: "error" });
+  expect(manager.getTimeline(agent.id)).toContainEqual(
+    expect.objectContaining({
+      type: "assistant_message",
+      text: expect.stringContaining("Codex stopped before returning a turnId."),
+    }),
+  );
+});
+
 test("cancelAgentRun waits for an acknowledged autonomous interrupt to settle", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-live-cancel-"));
   const storagePath = join(workdir, "agents");
