@@ -39,6 +39,321 @@ describe("opencode tool-call mapper", () => {
     expect(new Set(stages.map((item) => item.detail.type)).size).toBe(1);
   });
 
+  it("labels execute calls with the Code Mode tool name", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-1",
+        status: "running",
+        input: {
+          code: 'const r = await tools.hzmcp.memory__write_note({ project: "benjamin", title: "x" });\nreturn r;',
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "plain_text",
+      label: "hzmcp.memory__write_note",
+      title: "hzmcp.memory__write_note",
+      summary: "x",
+      icon: "wrench",
+      text: 'const r = await tools.hzmcp.memory__write_note({ project: "benjamin", title: "x" });\nreturn r;',
+    });
+  });
+
+  it("labels execute calls with bracketed server accessors", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-2",
+        status: "completed",
+        input: { code: 'const tabs = await tools["charlotte"].charlotte_tabs({});' },
+        output: "tab list",
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "plain_text",
+      label: "charlotte.charlotte_tabs",
+      title: "charlotte.charlotte_tabs",
+      icon: "wrench",
+      text: 'const tabs = await tools["charlotte"].charlotte_tabs({});\n\ntab list',
+    });
+  });
+
+  it("keeps unknown detail for execute calls without a recognizable tool chain", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-3",
+        status: "completed",
+        input: { code: "return 1 + 1;" },
+        output: "2",
+      }),
+    );
+
+    expect(item.detail?.type).toBe("unknown");
+  });
+
+  it("labels execute calls with the Code Mode tool name and its key argument", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-summary-1",
+        status: "completed",
+        input: {
+          code: 'const r = await tools.searxng.searxng_web_search({ query: "paseo default model", categories: ["general"] });',
+        },
+        output: "{}",
+      }),
+    );
+
+    expect(item.detail).toMatchObject({
+      type: "plain_text",
+      title: "searxng.searxng_web_search",
+      label: "searxng.searxng_web_search",
+      summary: "paseo default model",
+    });
+  });
+
+  it("keeps bracket accessor server names and reads string arguments", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-summary-2",
+        status: "completed",
+        input: {
+          code: 'await tools["hzmcp"].memory__read_note({ identifier: "benjamin/memory" });',
+        },
+        output: "note",
+      }),
+    );
+
+    expect(item.detail).toMatchObject({
+      type: "plain_text",
+      title: "hzmcp.memory__read_note",
+      summary: "benjamin/memory",
+    });
+  });
+
+  it("summarizes bare string arguments and falls back to the first string value", () => {
+    const stringArgument = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-summary-3",
+        status: "completed",
+        input: {
+          code: 'await tools.webfetch.webfetch("https://example.com/docs/setup");',
+        },
+        output: "page",
+      }),
+    );
+    expect(stringArgument.detail).toMatchObject({
+      title: "webfetch.webfetch",
+      summary: "https://example.com/docs/setup",
+    });
+
+    const firstStringFallback = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-summary-4",
+        status: "completed",
+        input: {
+          code: 'await tools.hzmcp.memory__write_note({ folder: "benjamin", title: "status update" });',
+        },
+        output: "ok",
+      }),
+    );
+    expect(firstStringFallback.detail).toMatchObject({
+      title: "hzmcp.memory__write_note",
+      summary: "status update",
+    });
+  });
+
+  it("truncates long argument summaries", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-summary-5",
+        status: "completed",
+        input: {
+          code: 'await tools.shell.exec({ command: "npm run build -- --single --skip-web-ui --verbose --environment production --output-path dist/bundle" });',
+        },
+        output: "ok",
+      }),
+    );
+    expect(item.detail).toMatchObject({
+      type: "plain_text",
+      title: "shell.exec",
+    });
+    const summary = (item.detail as { summary?: string }).summary ?? "";
+    expect(summary.length).toBeLessThanOrEqual(80);
+    expect(summary.endsWith("...")).toBe(true);
+  });
+
+  it("ignores tools mentioned in comments and keeps the executed call label", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-4",
+        status: "running",
+        input: {
+          code: "// tools.old.lookup({})\n// use tools here\nawait tools.hzmcp.memory__write_note({});",
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__write_note" });
+  });
+
+  it("ignores tools mentioned in string literals", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-5",
+        status: "running",
+        input: {
+          code: 'const hint = "tools.fake.lookup({})";\nawait tools.hzmcp.memory__search_notes({});',
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__search_notes" });
+  });
+
+  it("keeps template-literal interpolations as executed code", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-6",
+        status: "running",
+        input: {
+          code: "const prefix = `result: ${tools.hzmcp.memory__search_notes({})}`;",
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__search_notes" });
+  });
+
+  it("keeps UTF-16 offsets when astral characters precede the call", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-8",
+        status: "running",
+        input: {
+          code: 'const title = "📌 note";\nawait tools.hzmcp.memory__write_note({});',
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__write_note" });
+  });
+
+  it("ignores quotes inside regular-expression literals", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-9",
+        status: "running",
+        input: {
+          code: "const re = /'/g;\nawait tools.hzmcp.memory__search_notes({});",
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__search_notes" });
+  });
+
+  it("treats division slashes as code, not regex literals", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-10",
+        status: "running",
+        input: {
+          code: "const half = total / 2;\nawait tools.hzmcp.memory__search_notes({});",
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__search_notes" });
+  });
+
+  it("does not let masked strings change division-vs-regex detection", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-11",
+        status: "running",
+        input: {
+          code: 'const half = "100" / 2;\nawait tools.hzmcp.memory__search_notes({ query: "/tmp" });',
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__search_notes" });
+  });
+
+  it("does not join keywords across whitespace when detecting regexes", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-12",
+        status: "running",
+        input: {
+          code: "async function check(s) { return await /'/.test(s); }\nawait tools.hzmcp.memory__search_notes({});",
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__search_notes" });
+  });
+
+  it("starts each template interpolation with fresh scanner state", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-13",
+        status: "running",
+        input: {
+          code: "const s = `${1}${/'/.test(text)}`;\nawait tools.hzmcp.memory__search_notes({});",
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__search_notes" });
+  });
+
+  it("keeps the executed code in the detail text alongside the output", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-7",
+        status: "completed",
+        input: { code: "await tools.hzmcp.memory__search_notes({ query: 'paseo' });" },
+        output: "search results",
+      }),
+    );
+
+    expect(item.detail).toMatchObject({
+      type: "plain_text",
+      label: "hzmcp.memory__search_notes",
+      text: "await tools.hzmcp.memory__search_notes({ query: 'paseo' });\n\nsearch results",
+    });
+  });
+
   it("maps running shell calls", () => {
     const item = expectMapped(
       mapOpencodeToolCall({
@@ -443,23 +758,24 @@ describe("opencode tool-call mapper", () => {
     });
   });
 
-  it("maps unknown tools to unknown detail with raw payloads", () => {
+  it("promotes unknown MCP tools to a titled detail with the key argument", () => {
     const item = expectMapped(
       mapOpencodeToolCall({
-        toolName: "my_custom_tool",
+        toolName: "webfetch",
         callId: "opencode-call-4",
         status: "completed",
-        input: { foo: "bar" },
+        input: { url: "https://example.com/docs", format: "markdown" },
         output: { ok: true },
       }),
     );
 
     expect(item.status).toBe("completed");
     expect(item.error).toBeNull();
-    expect(item.detail).toEqual({
-      type: "unknown",
-      input: { foo: "bar" },
-      output: { ok: true },
+    expect(item.detail).toMatchObject({
+      type: "plain_text",
+      title: "webfetch",
+      label: "webfetch",
+      summary: "https://example.com/docs",
     });
   });
 
@@ -576,10 +892,10 @@ describe("opencode tool-call mapper", () => {
     );
 
     expect(item.name).toBe("paseo_voice.speak");
-    expect(item.detail).toEqual({
-      type: "unknown",
-      input: { text: "Voice response from OpenCode." },
-      output: { ok: true },
+    expect(item.detail).toMatchObject({
+      type: "plain_text",
+      title: "paseo_voice.speak",
+      summary: "Voice response from OpenCode.",
     });
   });
 
