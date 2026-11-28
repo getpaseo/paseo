@@ -118,8 +118,9 @@ An explicit user instruction can select another base.
    `chore(release): cut <version>` without a tag.
 5. Push the release branch (`git push -u origin HEAD`). Pushing any `release/**` branch triggers
    `CI` (all 21 jobs) and `Desktop Packages` (Linux user-namespace smoke) in their own concurrency
-   groups, isolated from `main` traffic. Never wait on `main` CI, because `main` cancels in-progress
-   runs on every merge. Wait for both runs on the release branch commit to pass before shipping.
+   groups, isolated from `main` traffic. Never wait on `main` CI, because `main` runs queue behind
+   each other and a newer merge replaces the pending one.
+   Wait for both runs on the release branch commit to pass before shipping.
    Complete the [pre-release dependency checks](#pre-release-dependency-checks) on that commit.
    Pushing a `release/**` branch without a `v*` tag triggers no publish workflows.
 6. After go-ahead, push the tag first with `npm run release:push` so remote builds start right away.
@@ -278,7 +279,7 @@ The tag push triggers `Desktop Release`, `Android APK Release`, `Docker`, `Relea
 
 Confirm that `npm view @getpaseo/cli dist-tags` shows `latest` at the shipped version, and `beta` at the shipped version or an active newer beta, before considering the stable release complete.
 
-The Docker workflow builds images from the checked-out source tree on `main` as non-publishing checks (cancelling superseded `main` runs). Stable `vX.Y.Z` tag pushes publish `ghcr.io/getpaseo/paseo:X.Y.Z` and `ghcr.io/getpaseo/paseo:latest`; beta `vX.Y.Z-beta.N` tag pushes publish only `ghcr.io/getpaseo/paseo:X.Y.Z-beta.N` and never move `latest`.
+The Docker workflow builds images from the checked-out source tree on `main` as non-publishing checks (a running check finishes, and a newer merge replaces the pending one). Stable `vX.Y.Z` tag pushes publish `ghcr.io/getpaseo/paseo:X.Y.Z` and `ghcr.io/getpaseo/paseo:latest`; beta `vX.Y.Z-beta.N` tag pushes publish only `ghcr.io/getpaseo/paseo:X.Y.Z-beta.N` and never move `latest`.
 
 The production relay is the Elixir service in [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay), with its own deployment process. Paseo releases and pushes to this repository do not deploy it. The Cloudflare relay code and workflow in this repository are legacy and are not used in production.
 

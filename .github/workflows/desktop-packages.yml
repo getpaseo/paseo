@@ -13,9 +13,11 @@ on:
       - ".github/workflows/desktop-packages.yml"
   workflow_dispatch:
 
+# A main run finishes. A run cancelled mid-flight leaves CANCELLED checks that
+# paint the commit red.
 concurrency:
   group: desktop-packages-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
