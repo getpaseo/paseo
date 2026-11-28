@@ -161,6 +161,8 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       ipcRenderer.invoke("paseo:browser-proxy:deliver-ticket", input),
     executeAutomationCommand: (request: Record<string, unknown>) =>
       ipcRenderer.invoke("paseo:browser:execute-automation-command", request),
+    acknowledgeFocusGuard: (input: { token: string; composing: boolean }) =>
+      ipcRenderer.send("paseo:browser:focus-guard-ready", input),
     captureElement: (
       browserId: string,
       rect: { x: number; y: number; width: number; height: number },

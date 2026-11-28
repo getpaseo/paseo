@@ -89,6 +89,7 @@ import {
   takeResidentBrowserWebview,
 } from "../resident-webviews";
 import { useHostBrowserProxy, type BrowserProxyPaneState } from "../proxy";
+import { isAgentInputMovingFocus } from "../automation/focus-guard";
 import {
   createElementSelectorController,
   type BrowserElementSelection,
@@ -1098,6 +1099,9 @@ export function BrowserPane({
       }
     };
     const handleWebviewFocus = () => {
+      if (!isPresentedRef.current || isAgentInputMovingFocus(browserIdRef.current)) {
+        return;
+      }
       onFocusPane?.();
       webview.focus?.();
       const focusBrowser = getDesktopHost()?.browser?.focus;

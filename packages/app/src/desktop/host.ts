@@ -211,6 +211,7 @@ export interface DesktopBrowserBridge {
   executeAutomationCommand?: (
     request: BrowserAutomationExecuteRequest,
   ) => Promise<BrowserAutomationExecuteResponse["payload"]>;
+  acknowledgeFocusGuard?: (input: { token: string; composing: boolean }) => void;
   /** Capture a PNG screenshot of the guest viewport cropped to `rect`. */
   captureElement?: (
     browserId: string,
