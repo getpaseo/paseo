@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -6,6 +7,9 @@ import { PaneContentToolbar } from "@/components/ui/pane-content-toolbar";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import type { Theme } from "@/styles/theme";
 import { formatFileSize } from "@/utils/format-file-size";
+import { usePaneContext } from "@/panels/pane-context";
+import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
+import { FilePathBreadcrumb } from "./path-breadcrumb";
 import { FileConflictAlert, type FileConflictAlertState } from "./conflict-alert";
 import type { FileEditorStatus } from "./editor/model";
 
@@ -38,6 +42,13 @@ export function TextFileToolbar({
   conflict?: FileConflictAlertState | null;
 }) {
   const { t } = useTranslation();
+  const { serverId, workspaceId, target, openFileInWorkspace } = usePaneContext();
+  const workspaceRoot = useWorkspaceDirectory(serverId, workspaceId);
+  const handleOpenFile = useCallback(
+    (openPath: string) =>
+      openFileInWorkspace({ location: { path: openPath }, disposition: "main" }),
+    [openFileInWorkspace],
+  );
   const views = [
     {
       value: "preview" as const,
@@ -50,10 +61,21 @@ export function TextFileToolbar({
     <View style={styles.chrome}>
       <PaneContentToolbar testID="file-panel-bar">
         <View style={styles.row}>
+          {target.kind === "file" && workspaceRoot ? (
+            <FilePathBreadcrumb
+              embedded
+              serverId={serverId}
+              workspaceRoot={workspaceRoot}
+              path={target.path}
+              onOpenFile={handleOpenFile}
+            />
+          ) : (
+            <View style={styles.breadcrumbPlaceholder} />
+          )}
           <View style={styles.metadata}>
             <Text
-              style={styles.whisper}
               numberOfLines={1}
+              style={styles.whisper}
               accessibilityLabel={t("panels.file.editor.fileSize", { size: formatFileSize(size) })}
             >
               {formatFileSize(size)}
@@ -133,9 +155,12 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[3],
     paddingHorizontal: theme.spacing[3],
   },
-  metadata: {
+  breadcrumbPlaceholder: {
     flex: 1,
     minWidth: 0,
+  },
+  metadata: {
+    flexShrink: 0,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
