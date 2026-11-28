@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { openPairingLinks } from "@/hosts/add-host/internal/opened-link-model";
 import type { AppStateStatus } from "react-native";
 import {
   bindHostRuntimeAppState,
@@ -6015,6 +6016,36 @@ describe("HostRuntimeStore initial connection hint bootstrap", () => {
       (snapshot) => snapshot?.authFailureReason === "password_required",
     );
     expect(store.getSnapshot("srv_deep")?.connectionStatus).toBe("error");
+    store.syncHosts([]);
+  });
+  it("asks for the password of a deep-linked host rejected for one, then connects it without asking again", async () => {
+    const store = createPairingStore({ password: "correct-password" });
+    const requests = answerHostConfirmations(store, true);
+    const link = "relay://relay.example:443/srv_deep?key=AAAA&ssl=true";
+    const links = openPairingLinks({
+      importConnectionLink: (opened) => store.importConnectionLink(opened, "openProject"),
+      beginLinkPairing: () => store.beginLinkPairing(),
+      getSnapshot: (serverId) => store.getSnapshot(serverId),
+      subscribeToHost: (serverId, listener) => store.subscribe(serverId, listener),
+      onImported: () => undefined,
+    });
+
+    links.open(link);
+    await vi.waitFor(() => expect(links.getState().status).toBe("passwordRequired"));
+    expect(store.getHosts()).toHaveLength(1);
+    const state = links.getState();
+    if (state.status !== "passwordRequired") throw new Error("expected passwordRequired");
+
+    const { passwordRequired } = state;
+    await passwordRequired.pairing.submit(passwordRequired.link, "correct-password");
+    await waitForHostOnline(store, "srv_deep");
+    expect(requests).toHaveLength(1);
+    expect(store.getHosts()).toHaveLength(1);
+    expect(store.getHosts()[0]).toMatchObject({
+      serverId: "srv_deep",
+      password: "correct-password",
+    });
+    links.close();
     store.syncHosts([]);
   });
   it("stops connecting to a host removed while its first probe is pending", async () => {

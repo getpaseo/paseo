@@ -7,7 +7,7 @@ import {
   useWindowLayout,
   resolveDesktopDivisionLayout,
 } from "@/window-layout";
-import { AddHostProvider, AddHostFlowHost } from "@/hosts/add-host";
+import { AddHostProvider, AddHostFlowHost, OpenedPairingLinks } from "@/hosts/add-host";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useIsExplorerSidebarOpen } from "@/workspace-tabs/explorer-sidebar";
@@ -17,7 +17,6 @@ import "@/styles/unistyles";
 import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { PortalProvider } from "@gorhom/portal";
 import { LucideProvider } from "lucide-react-native";
-import * as Linking from "expo-linking";
 import { Stack, useNavigationContainerRef, usePathname, useRouter } from "expo-router";
 import {
   createContext,
@@ -732,36 +731,8 @@ function DesktopWindowControlsSync() {
 
 function OfferLinkListener() {
   const router = useRouter();
-
-  useEffect(() => {
-    let cancelled = false;
-    const handleUrl = async (url: string | null) => {
-      if (!url) return;
-      if (!url.includes("#offer=") && !url.includes("#connect=") && !url.startsWith("relay://"))
-        return;
-      try {
-        const result = await getHostRuntimeStore().importConnectionLink(url, "openProject");
-        if (!cancelled && result.status === "connected") router.replace(buildOpenProjectRoute());
-      } catch (error) {
-        console.warn("[OfferLinkListener] Pairing link failed", error);
-      }
-    };
-
-    void Linking.getInitialURL()
-      .then((url) => handleUrl(url))
-      .catch(() => undefined);
-
-    const subscription = Linking.addEventListener("url", (event) => {
-      void handleUrl(event.url);
-    });
-
-    return () => {
-      cancelled = true;
-      subscription.remove();
-    };
-  }, [router]);
-
-  return null;
+  const openProject = useCallback(() => router.replace(buildOpenProjectRoute()), [router]);
+  return <OpenedPairingLinks onImported={openProject} />;
 }
 
 interface OpenProjectEventPayload {
