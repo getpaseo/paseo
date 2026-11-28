@@ -2181,8 +2181,11 @@ function WorkspaceScreenContent({
       if (!agentId) return;
       const agent =
         useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
+      // A plugin runtime without persistence exposes its internal transport ID.
       const providerSessionId =
-        agent?.runtimeInfo?.sessionId ?? agent?.persistence?.sessionId ?? null;
+        agent?.provider === "antigravity"
+          ? agent.persistence?.sessionId
+          : (agent?.runtimeInfo?.sessionId ?? agent?.persistence?.sessionId);
       if (!agent || !providerSessionId) {
         toast.error(t("workspace.tabs.toasts.resumeIdUnavailable"));
         return;
@@ -2193,6 +2196,7 @@ function WorkspaceScreenContent({
           provider: agent.provider,
           id: "resume",
           sessionId: providerSessionId,
+          pluginPersistence: agent.persistence?.metadata?.pluginProviderPersistence,
         }) ?? null;
       if (!command) {
         toast.error(t("workspace.tabs.toasts.resumeCommandUnavailable"));
