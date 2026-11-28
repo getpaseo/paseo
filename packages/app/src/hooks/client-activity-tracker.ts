@@ -93,6 +93,7 @@ export function createClientActivityTracker(
       appVisibilityChangedAtMs = now();
       if (!nextVisible) {
         backgroundedAtMs = now();
+        sendHeartbeat();
         return { changed: true };
       }
       const at = backgroundedAtMs;
@@ -101,6 +102,7 @@ export function createClientActivityTracker(
         onAppResumed?.(Math.max(0, now() - at));
       }
       recordUserActivity();
+      sendHeartbeat();
       return { changed: true };
     },
     notifySystemIdleMs(idleMs) {
