@@ -408,3 +408,33 @@ describe("press modifiers", () => {
     });
   });
 });
+
+describe("non-TextInput native focus registration", () => {
+  it("reports focused native text editors and keeps terminal shortcuts blocked until released", async () => {
+    const { hasRegisteredFocusedTextInput, registerFocusedTextInput } =
+      await import("./internal/native-focused-input");
+    const { createKeyboardFocusScope } = await import("./internal/focus-surfaces");
+
+    expect(hasRegisteredFocusedTextInput()).toBe(false);
+    const scope = createKeyboardFocusScope(hasRegisteredFocusedTextInput);
+    expect(scope.resolve(false)).toBe("other");
+
+    const releaseFirst = registerFocusedTextInput();
+    expect(hasRegisteredFocusedTextInput()).toBe(true);
+    expect(scope.resolve(false)).toBe("editable");
+
+    // Overlapping focus from a second terminal must survive the first terminal blurring.
+    const releaseSecond = registerFocusedTextInput();
+    releaseFirst();
+    expect(hasRegisteredFocusedTextInput()).toBe(true);
+
+    // Declaring the terminal focus surface narrows the scope to "terminal".
+    const releaseSurface = scope.declare("terminal");
+    expect(scope.resolve(false)).toBe("terminal");
+
+    releaseSurface();
+    releaseSecond();
+    expect(hasRegisteredFocusedTextInput()).toBe(false);
+    expect(scope.resolve(false)).toBe("other");
+  });
+});

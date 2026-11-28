@@ -7,8 +7,6 @@ class PaseoTerminalModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("PaseoTerminal")
 
-    OnCreate { TerminalInputKeyboard.install() }
-
     View(PaseoTerminalView::class) {
       Events("onCellMetrics")
 
@@ -21,6 +19,14 @@ class PaseoTerminalModule : Module() {
       }
 
       OnViewDidUpdateProps { view: PaseoTerminalView -> view.commit() }
+    }
+
+    View(PaseoTerminalInputView::class) {
+      Events("onTerminalInput", "onTerminalKey", "onFocusChange")
+
+      AsyncFunction("focusInput") { view: PaseoTerminalInputView -> view.focusInput() }
+      AsyncFunction("showKeyboard") { view: PaseoTerminalInputView -> view.showKeyboard() }
+      AsyncFunction("blurInput") { view: PaseoTerminalInputView -> view.blurInput() }
     }
   }
 }

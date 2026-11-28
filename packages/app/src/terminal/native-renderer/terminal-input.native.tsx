@@ -1,32 +1,38 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import {
-  Platform,
   StyleSheet,
   type NativeSyntheticEvent,
-  type StyleProp,
   type TextInputKeyPressEventData,
-  type TextStyle,
 } from "react-native";
 import {
   EditingTextInput as TextInput,
   type EditingTextInputHandle,
 } from "@/components/ui/text-input";
-import { hasActiveOverlay, subscribeHardwareKeyboard } from "@/keyboard";
+import {
+  resolveTerminalInputFocusRequest,
+  TERMINAL_INPUT_HITBOX_SIZE,
+  TERMINAL_INPUT_NATIVE_ID,
+  type TerminalInputHandle,
+  type TerminalInputProps,
+} from "./terminal-input.types";
 import {
   createNativeTerminalKeyEvent,
-  resolveHardwareTerminalKey,
   resolveNativeTerminalKey,
   type NativeTerminalKey,
-  type NativeTerminalKeyEvent,
 } from "./terminal-key-events";
 
+// iOS. Android resolves `terminal-input.android.tsx`.
+
+export {
+  resolveTerminalInputFocusRequest,
+  TERMINAL_INPUT_HITBOX_SIZE,
+  TERMINAL_INPUT_NATIVE_ID,
+  type TerminalInputFocusRequest,
+  type TerminalInputHandle,
+  type TerminalInputProps,
+} from "./terminal-input.types";
+
 export const TERMINAL_INPUT_CONTEXT_MENU_HIDDEN = true;
-export const TERMINAL_INPUT_HITBOX_SIZE = 1;
-/**
- * Matched on Android by the hardware keyboard module to claim arrow keys for this input, and by
- * PaseoTerminal to keep the keyboard from learning what is typed here, such as passwords.
- */
-export const TERMINAL_INPUT_NATIVE_ID = "paseo-terminal-input";
 
 export interface TerminalTextInputChange {
   data: string;
@@ -38,22 +44,6 @@ export interface TerminalTextInputState {
   receiveKeyPress: (key: string) => TerminalTextInputChange;
   receiveTextChange: (text: string) => TerminalTextInputChange;
   reset: () => void;
-}
-
-export type TerminalInputFocusRequest = "focus" | "refocus" | "none";
-
-export interface TerminalInputHandle {
-  focus: () => void;
-  showKeyboard: () => void;
-  blur: () => void;
-}
-
-interface TerminalInputProps {
-  isKeyboardVisible: boolean;
-  onFocus?: () => void;
-  onInput?: (data: string) => void;
-  onTerminalKey?: (event: NativeTerminalKeyEvent) => void;
-  style?: StyleProp<TextStyle>;
 }
 
 // Scripts produced by CJK IMEs when they commit or update a candidate. The
@@ -103,16 +93,6 @@ function resolveCompositionEdit(previousText: string, text: string): string {
     return "";
   }
   return `${"\x7f".repeat(removed.length)}${inserted}`;
-}
-
-export function resolveTerminalInputFocusRequest(input: {
-  isInputFocused: boolean;
-  isKeyboardVisible: boolean;
-}): TerminalInputFocusRequest {
-  if (!input.isInputFocused) {
-    return "focus";
-  }
-  return input.isKeyboardVisible ? "none" : "refocus";
 }
 
 export function createTerminalTextInputState(): TerminalTextInputState {
@@ -200,8 +180,6 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
     const inputRef = useRef<EditingTextInputHandle>(null);
     const isFocusedRef = useRef(false);
     const pendingFocusFrameRef = useRef<number | null>(null);
-    const onTerminalKeyRef = useRef(onTerminalKey);
-    onTerminalKeyRef.current = onTerminalKey;
     const inputState = useMemo(() => createTerminalTextInputState(), []);
     const inputStyle = useMemo(() => [styles.input, style], [style]);
 
@@ -264,27 +242,6 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
     }, [showNativeKeyboard]);
 
     useEffect(() => clearPendingFocus, [clearPendingFocus]);
-
-    useEffect(() => {
-      // Physical arrows arrive through the native key stream, never through
-      // TextInput.onKeyPress (RN builds that event from the IME connection).
-      // The native module claims them for this input so the hidden buffer
-      // cannot move its caret, then re-emits them here for the PTY.
-      if (Platform.OS !== "android") return;
-      return subscribeHardwareKeyboard((event) => {
-        if (!isFocusedRef.current || event.phase !== "down" || event.isComposing) return;
-        if (hasActiveOverlay()) return;
-        const key = resolveHardwareTerminalKey(event);
-        if (!key) return;
-        onTerminalKeyRef.current?.({
-          key,
-          ctrl: event.ctrlKey,
-          shift: event.shiftKey,
-          alt: event.altKey,
-          meta: event.metaKey,
-        });
-      });
-    }, []);
 
     useImperativeHandle(
       ref,
