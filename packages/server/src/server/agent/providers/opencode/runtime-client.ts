@@ -112,11 +112,13 @@ export class OpenCodeRuntimeClient implements AgentClient {
         });
       }
       let output: string;
+      let launchCommand = "opencode";
       try {
         const launch = await resolveProviderLaunch({
           commandConfig: this.settings?.command,
           defaultBinary: "opencode",
         });
+        launchCommand = launch.command;
         const result = await execCommand(launch.command, [...launch.args, "--version"], {
           ...createProviderEnvSpec({ runtimeSettings: this.settings }),
           timeout: 5_000,
@@ -129,6 +131,13 @@ export class OpenCodeRuntimeClient implements AgentClient {
         return this.legacy;
       }
       if (!VERSION_PATTERN.test(output.trim())) this.selected = null;
+      // Kilo Code is an opencode fork: it reports its own version (e.g. 7.8.27)
+      // but exposes the opencode v1 HTTP surface. Detect the `kilo` binary and
+      // use the legacy v1 client instead of failing the opencode version gate.
+      if (launchCommand.split(/[\\/]/).pop() === "kilo") {
+        this.legacySelected = true;
+        return this.legacy;
+      }
       if (openCodeMajorVersion(output) === 1) {
         this.legacySelected = true;
         return this.legacy;

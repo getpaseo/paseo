@@ -147,19 +147,19 @@ export class OpenCodeBridge {
       baseUrl: this.requireBaseUrl(),
       token: this.token,
     };
-    const config = parseOpenCodeConfig(env.OPENCODE_CONFIG_CONTENT);
+    const config = parseOpenCodeConfig(env.OPENCODE_CONFIG_CONTENT ?? env.KILO_CONFIG_CONTENT);
     const plugins = config.plugin ?? [];
     const withoutBridge = plugins.filter((entry) => {
       const specifier = Array.isArray(entry) ? entry[0] : entry;
       return !specifier.includes("/paseo-") || !specifier.endsWith(".mjs");
     });
-    return {
-      ...env,
-      OPENCODE_CONFIG_CONTENT: JSON.stringify({
-        ...config,
-        plugin: [...withoutBridge, [pluginUrl, options]],
-      }),
-    };
+    const content = JSON.stringify({
+      ...config,
+      plugin: [...withoutBridge, [pluginUrl, options]],
+    });
+    // opencode reads OPENCODE_CONFIG_CONTENT; opencode forks (e.g. Kilo) may read
+    // KILO_CONFIG_CONTENT. Set both so the bridge plugin is injected either way.
+    return { ...env, OPENCODE_CONFIG_CONTENT: content, KILO_CONFIG_CONTENT: content };
   }
 
   async materializeV2Plugin(): Promise<string> {

@@ -261,3 +261,32 @@ test("keeps native Paseo tools available when an external server is configured",
     await local.shutdown();
   }
 });
+
+test("treats a kilo (opencode fork) binary as the legacy v1 runtime", async () => {
+  const { mkdtemp, writeFile, symlink, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+  const { OpenCodeAgentClient } = await import("../opencode-agent.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const root = await mkdtemp(join(tmpdir(), "opencode-kilo-probe-"));
+  const kiloBinary = join(root, "kilo");
+  await symlink(process.execPath, kiloBinary);
+  const script = join(root, "version.cjs");
+  // Kilo reports its own version (e.g. 7.8.27), which the opencode gate rejects.
+  await writeFile(script, 'console.log("7.8.27")');
+  const logger = createTestLogger();
+  const client = new OpenCodeRuntimeClient(logger, {
+    command: { mode: "replace", argv: [kiloBinary, script] },
+    env: { XDG_STATE_HOME: root },
+  });
+  const legacy = new OpenCodeAgentClient(logger);
+  const config = { provider: "opencode", cwd: root };
+  try {
+    expect(await client.listControls(config)).toEqual(await legacy.listControls(config));
+  } finally {
+    await client.shutdown();
+    await legacy.shutdown();
+    await rm(root, { recursive: true, force: true });
+  }
+});
