@@ -9,6 +9,8 @@ import { promisify } from "node:util";
 import { Writable } from "node:stream";
 import pino from "pino";
 import { WebSocket } from "ws";
+import { Client as McpSdkClient } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type {
   AgentSnapshotPayload,
   HubExecutionAgentCreateResponse,
@@ -1476,6 +1478,50 @@ export class HubRelationshipHarness {
   private async stopDaemon(): Promise<void> {
     await this.daemon?.stop();
     this.daemon = null;
+  }
+
+  withTrustedClient<T>(action: (client: DaemonClient) => Promise<T>): Promise<T> {
+    return this.withClient(action);
+  }
+
+  async spawnSubagentViaLatestMcp(input: {
+    provider: string;
+    title: string;
+    initialPrompt: string;
+    modeId?: string;
+    notifyOnFinish?: boolean;
+  }): Promise<{ agentId: string }> {
+    const paseoMcp = this.latestProviderCreateConfig()?.mcpServers?.paseo;
+    if (!paseoMcp || paseoMcp.type !== "http") {
+      throw new Error("Latest created agent did not receive an HTTP Paseo MCP configuration");
+    }
+    const client = new McpSdkClient({ name: "hub-test-mcp-client", version: "1.0.0" });
+    const transport = new StreamableHTTPClientTransport(new URL(paseoMcp.url), {
+      requestInit: paseoMcp.headers ? { headers: paseoMcp.headers } : undefined,
+    });
+    await client.connect(transport);
+    try {
+      const result = await client.callTool({
+        name: "create_agent",
+        arguments: {
+          provider: input.provider,
+          title: input.title,
+          initialPrompt: input.initialPrompt,
+          ...(input.notifyOnFinish !== undefined ? { notifyOnFinish: input.notifyOnFinish } : {}),
+          ...(input.modeId ? { settings: { modeId: input.modeId } } : {}),
+        },
+      });
+      if (result.isError) {
+        throw new Error(`MCP create_agent failed: ${JSON.stringify(result)}`);
+      }
+      const structured = result.structuredContent as { agentId?: unknown } | undefined;
+      if (typeof structured?.agentId !== "string") {
+        throw new Error(`MCP create_agent returned no agentId: ${JSON.stringify(result)}`);
+      }
+      return { agentId: structured.agentId };
+    } finally {
+      await client.close();
+    }
   }
 
   private withClient<T>(action: (client: DaemonClient) => Promise<T>): Promise<T> {
