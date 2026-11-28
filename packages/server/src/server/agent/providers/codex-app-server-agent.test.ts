@@ -6092,6 +6092,8 @@ describe("Codex app-server provider", () => {
         if (threadId !== "test-thread") {
           return {
             thread: {
+              model: "gpt-6.2-sol",
+              reasoningEffort: "medium",
               turns: [
                 {
                   items: [
@@ -6156,8 +6158,14 @@ describe("Codex app-server provider", () => {
         id: "legacy-child-thread",
         status: "completed",
         title: "Sentinel child",
+        subtitle: "Sentinel child · gpt-6.2-sol · medium",
       },
-      { type: "upsert", id: "v2-child-thread", status: "completed" },
+      {
+        type: "upsert",
+        id: "v2-child-thread",
+        status: "completed",
+        subtitle: "V2 child · gpt-6.2-sol · medium",
+      },
     ]);
     expect(
       history.flatMap((event) =>
@@ -6456,6 +6464,47 @@ describe("Codex app-server provider", () => {
       }
 
       expect(providerSubagentIds).toEqual(new Set(["child-thread"]));
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("publishes the child thread's model and effort without changing its status", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/read": (params) => ({
+        thread:
+          (params as { threadId: string }).threadId === "child-thread"
+            ? { model: "gpt-6.2-sol", reasoningEffort: "medium" }
+            : {},
+      }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      const result = session.run("Delegate.");
+      await appServer.waitForTurnStart();
+      appServer.startsSubAgent({
+        callId: "spawn",
+        threadId: "child-thread",
+        agentPath: "/root/child",
+      });
+      await vi.waitFor(() =>
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "provider_subagent",
+            event: { type: "upsert", id: "child-thread", subtitle: "Child · gpt-6.2-sol · medium" },
+          }),
+        ),
+      );
+      appServer.completeTurn();
+      await result;
       appServer.assertNoErrors();
     } finally {
       await session.close();

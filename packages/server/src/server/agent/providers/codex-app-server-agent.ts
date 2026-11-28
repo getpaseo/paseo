@@ -3783,6 +3783,7 @@ interface CodexSubAgentCallState {
   pendingCommandOutputDeltas: Map<string, string[]>;
   pendingFileChangeOutputDeltas: Map<string, string[]>;
   childThreadIds: Set<string>;
+  childFacts: Map<string, string[]>;
 }
 
 function resolveCodexParentSubagentId(
@@ -4573,6 +4574,7 @@ export class CodexAppServerAgentSession implements AgentSession {
           "Failed to load persisted Codex child history",
         );
       }
+      await this.readSubagentFacts(client, next.route.childThreadId, state);
       replayed.push({ route: next.route, state, timeline });
     }
     // Settle nested cards before emitting the parent timelines that contain them.
@@ -6529,6 +6531,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         pendingCommandOutputDeltas: new Map<string, string[]>(),
         pendingFileChangeOutputDeltas: new Map<string, string[]>(),
         childThreadIds: new Set<string>(),
+        childFacts: new Map<string, string[]>(),
       } satisfies CodexSubAgentCallState);
 
     state.toolCall = timelineItem;
@@ -6548,10 +6551,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (owningCallId && owningCallId !== timelineItem.callId) {
         continue;
       }
+      const isNew = !state.childThreadIds.has(receiverThreadId);
       this.subAgentCallIdByChildThreadId.set(receiverThreadId, timelineItem.callId);
       state.childThreadIds.add(receiverThreadId);
       if (!params.deferUpsert) {
         this.emitProviderSubagentUpsert(receiverThreadId, state, timelineItem.status);
+        if (isNew && this.client) void this.readSubagentFacts(this.client, receiverThreadId, state);
       }
     }
     return childThreadIds;
@@ -6773,8 +6778,51 @@ export class CodexAppServerAgentSession implements AgentSession {
         status: providerStatus,
         toolCallId: state.callId,
         parentSubagentId: state.parentSubagentId,
+        ...(state.childFacts.has(childThreadId)
+          ? {
+              subtitle: [
+                detail.subAgentType ?? "Codex subagent",
+                ...state.childFacts.get(childThreadId)!,
+              ].join(" · "),
+            }
+          : {}),
       },
     });
+  }
+
+  private async readSubagentFacts(
+    client: CodexAppServerClientLike,
+    threadId: string,
+    state: CodexSubAgentCallState,
+  ): Promise<void> {
+    try {
+      const response = z
+        .object({
+          thread: z.object({
+            model: z.string().nullable().optional(),
+            reasoningEffort: z.string().nullable().optional(),
+          }),
+        })
+        .parse(await client.request("thread/read", { threadId, includeTurns: false }));
+      if (this.closed || this.subAgentCallsByCallId.get(state.callId) !== state) return;
+      const detail = state.toolCall.detail;
+      if (detail.type !== "sub_agent") return;
+      const facts = [response.thread.model, response.thread.reasoningEffort].filter(Boolean);
+      if (facts.length === 0) return;
+      state.childFacts.set(threadId, facts as string[]);
+      if (this.historySubagentEvents) return;
+      this.emitEvent({
+        type: "provider_subagent",
+        provider: CODEX_PROVIDER,
+        event: {
+          type: "upsert",
+          id: threadId,
+          subtitle: [detail.subAgentType ?? "Codex subagent", ...facts].join(" · "),
+        },
+      });
+    } catch (error) {
+      this.logger.debug({ err: error, threadId }, "Failed to read Codex subagent metadata");
+    }
   }
 
   private emitProviderSubagentTimeline(
