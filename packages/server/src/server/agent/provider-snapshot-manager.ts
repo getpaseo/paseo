@@ -20,6 +20,7 @@ import {
   type AgentProvider,
   type FetchCatalogOptions,
   type ProviderSnapshotEntry,
+  type ProviderUsageEnvironment,
 } from "./agent-sdk-types.js";
 import { ProviderCatalogCache } from "./provider-catalog-cache.js";
 import {
@@ -30,9 +31,10 @@ import type { ManagedAgent } from "./agent-manager.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { ManagedProcessRegistry } from "../managed-processes/managed-processes.js";
 import type { OpenCodeBridge } from "./providers/opencode/bridge.js";
-import type {
-  AgentProviderRuntimeSettingsMap,
-  ProviderOverride,
+import {
+  createProviderEnv,
+  type AgentProviderRuntimeSettingsMap,
+  type ProviderOverride,
 } from "./provider-launch-config.js";
 import {
   buildProviderRegistry,
@@ -439,6 +441,23 @@ export class ProviderSnapshotManager {
 
   getAgentManagerProviderState(): AgentManagerProviderState {
     return this.createAgentManagerState(this.generation.definitions, this.providerClients);
+  }
+
+  /** Enabled providers that configure their own env, for host usage discovery. */
+  listProviderEnvironments(): ProviderUsageEnvironment[] {
+    return this.generation.order.flatMap((provider) => {
+      const definition = this.generation.definitions[provider];
+      const runtimeSettings = definition?.configuration?.runtimeSettings;
+      if (!definition?.enabled || !runtimeSettings?.env) return [];
+      return [
+        {
+          provider: definition.derivedFromProviderId ?? provider,
+          label: definition.label,
+          env: createProviderEnv({ baseEnv: process.env, runtimeSettings }),
+          configuredEnvKeys: Object.keys(runtimeSettings.env),
+        },
+      ];
+    });
   }
 
   private createAgentManagerState(

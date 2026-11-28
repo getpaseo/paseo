@@ -601,6 +601,7 @@ interface UsageSourceRegistration {
   label: string;
   icon?: string;
   provider?: string;
+  providers?: readonly string[];
   input: ZodType;
   discover(scope: UsageScope): Promise<UsageAccount[]>;
   fetch(input: unknown): Promise<UsageReport>;
@@ -630,6 +631,18 @@ return `[]`. Global discovery lists every account, including expired logins.
 Resolve the session account from that session's launch environment. Return `[]` when no login exists.
 Never scan default stores from session discovery or scan agents from global discovery. Discovery is a query, with no agent
 lifecycle hooks. Closed agents have no session scope until resumed.
+
+The host's Usage list also runs session discovery once for each enabled provider that configures a
+config-directory or credential-store locator env var, so a custom provider's login appears before any
+of its agents run. The daemon dispatches that scope **only** to usage sources whose declared
+`providers` list explicitly includes that provider's base ID (or its own ID when it extends none),
+with no `model` and with `env` filtered to this explicit allowlist of non-secret locator variables:
+`HOME`, `USERPROFILE`, `USER`, `APPDATA`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`,
+`CLAUDE_CONFIG_DIR`, `CLAUDE_SECURESTORAGE_CONFIG_DIR`, `CODEX_HOME`, `OPENCODE_CONFIG_DIR`,
+`OPENCODE_DB`, `PI_CODING_AGENT_DIR`, `PI_CONFIG_DIR`, `PI_PROFILE`, `OMP_PROFILE`,
+`KIMI_CODE_HOME`, and `AGENT_CLI_CREDENTIAL_STORE`. Auth tokens, API keys, and arbitrary env entries
+are stripped. The daemon sets the `harness` of each login found this way to the provider's label, so
+a failed login names its provider. A login that global discovery found first keeps its `harness`.
 
 Inputs name credential stores; never put credentials in inputs or reports. Paseo validates each
 input against your schema before calling `fetch()`. The same key in any scope is the same report;

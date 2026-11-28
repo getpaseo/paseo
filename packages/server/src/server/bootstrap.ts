@@ -629,6 +629,7 @@ export async function createPaseoDaemon(
     usageAgents: {
       hasAgent: (id) => agentManager.getAgent(id) !== null,
       usageSession: (id) => agentManager.usageSession(id),
+      providerEnvironments: () => providerSnapshotManager.listProviderEnvironments(),
       resolveLaunch: (provider) => providerSnapshotManager.resolveUsageLaunch(provider),
       isProviderActive: (provider, options) =>
         providerSnapshotManager.isProviderActiveForUsage(provider, options),

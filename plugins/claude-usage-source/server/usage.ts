@@ -415,7 +415,10 @@ export async function discover(
 
 function claudeKeychainRoute(lookup: ClaudeCredentialLookup) {
   const env = lookup.env ?? process.env;
-  const configDir = env.CLAUDE_CONFIG_DIR;
+  const secureStorageDir = env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+  // CLAUDE_SECURESTORAGE_CONFIG_DIR short-circuits CLAUDE_CONFIG_DIR for macOS Keychain naming:
+  // non-empty hashes that directory; explicitly empty forces the plain service name.
+  const configDir = secureStorageDir !== undefined ? secureStorageDir : env.CLAUDE_CONFIG_DIR;
   // macOS still uses Keychain with CLAUDE_CONFIG_DIR, with an entry keyed to that directory:
   // https://code.claude.com/docs/en/authentication#credential-management
   // Verified in @anthropic-ai/claude-code 2.1.59, package/cli.js: _c() appends the first

@@ -736,6 +736,18 @@ export interface AgentUsageSession {
   sessionKey: string;
 }
 
+/** An enabled provider configured with its own env, supplied to host usage discovery. */
+export interface ProviderUsageEnvironment {
+  /** Base provider ID (the provider a custom provider extends, or its own ID). */
+  provider: string;
+  /** Provider display label, used to name logins discovered through it. */
+  label: string;
+  /** Effective launch environment for the provider (sanitized at the usage registry boundary). */
+  env: Record<string, string>;
+  /** Keys explicitly configured in the provider's own `env` override, when known. */
+  configuredEnvKeys?: readonly string[];
+}
+
 export interface AgentSession {
   /** Persist the session's current handle immediately after an interactive resume. */
   readonly persistenceUpdatedOnResume?: boolean;

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AgentUsageSession } from "../../agent/agent-sdk-types.js";
+import type { AgentUsageSession, ProviderUsageEnvironment } from "../../agent/agent-sdk-types.js";
 import type { UsageScope } from "@getpaseo/plugin/server/usage";
 import { z } from "zod";
 import type { Logger } from "pino";
@@ -10,12 +10,13 @@ import {
   type UsageProblem,
   type UsageReport,
 } from "@getpaseo/protocol/messages";
+import { selectProviderUsageEnv } from "./provider-env.js";
 
 export interface UsageSource {
   id: string;
   label: string;
   icon?: string;
-  /** Provider IDs associated with this source, used as a hint for default visibility. */
+  /** Provider IDs associated with this source, used for default visibility and scoped host discovery. */
   providers?: readonly string[];
   discover(scope: UsageScope): Promise<unknown>;
   fetch(input: unknown): Promise<unknown>;
@@ -36,11 +37,33 @@ interface KnownReport {
 export interface AgentUsageLookup {
   hasAgent(id: string): boolean;
   usageSession(id: string): AgentUsageSession | null;
+  /** Enabled providers configured with usage-locator env vars for scoped host discovery. */
+  providerEnvironments?(): ProviderUsageEnvironment[];
   resolveLaunch?(
     provider: string,
   ): Promise<import("@getpaseo/plugin/server/provider").ProviderLaunch | undefined>;
   /** Whether the provider (or a custom provider derived from it) is installed and enabled. */
   isProviderActive?(provider: string, options?: { forceRefresh?: boolean }): Promise<boolean>;
+}
+
+interface DiscoverOptions {
+  scope: UsageScope;
+  /** When set, dispatch ONLY to usage sources whose declared `providers` includes this ID. */
+  matchProvider?: string;
+  /** Names logins discovered in this scope; defaults to the account's harness or source label. */
+  harness?: string;
+  /** This scope's last result; a source whose discovery fails keeps its accounts from it. */
+  previous?: ReadonlyMap<string, KnownReport>;
+}
+
+interface PresentReportOptions {
+  entry: UsageReportEntry;
+  known: KnownReport;
+}
+
+interface MergeReportsOptions {
+  into: Map<string, KnownReport>;
+  reports: Iterable<[string, KnownReport]>;
 }
 
 export interface ListUsageReportsOptions {
@@ -55,6 +78,7 @@ export class UsageSourceRegistry {
   private readonly sources = new Map<string, UsageSource>();
   private readonly known = new Map<string, KnownReport>();
   private defaults = new Map<string, KnownReport>();
+  private defaultsByScope = new Map<string, Map<string, KnownReport>>();
   private readonly byAgent = new Map<string, Map<string, KnownReport>>();
   private readonly cache = new Map<string, { at: number; entry: UsageReportEntry }>();
   private readonly successful = new Map<string, NonNullable<UsageReportEntry["lastSuccessful"]>>();
@@ -76,6 +100,9 @@ export class UsageSourceRegistry {
   unregister(id: string): void {
     this.sources.delete(id);
     for (const key of this.defaults.keys()) if (key.startsWith(`${id}:`)) this.defaults.delete(key);
+    for (const reports of this.defaultsByScope.values()) {
+      for (const key of reports.keys()) if (key.startsWith(`${id}:`)) reports.delete(key);
+    }
     for (const reports of this.byAgent.values()) {
       for (const key of reports.keys()) if (key.startsWith(`${id}:`)) reports.delete(key);
     }
@@ -102,7 +129,7 @@ export class UsageSourceRegistry {
       ids = options.reportIds;
     } else {
       const [defaults] = await Promise.all([
-        this.discover({ kind: "global" }, this.defaults),
+        this.discoverHost(),
         ...[...this.byAgent.keys()].map((agentId) => this.discoverAgent(agentId)),
       ]);
       this.defaults = defaults;
@@ -125,13 +152,65 @@ export class UsageSourceRegistry {
             this.fetchId(id, known, options.forceRefresh),
             this.resolveDefaultEnabled(known, checkProvider),
           ]).then(([entry, defaultEnabled]) => {
-            const stamped = defaultEnabled === false ? { ...entry, defaultEnabled: false } : entry;
+            const presented = presentReport({ entry, known });
+            const stamped =
+              defaultEnabled === false ? { ...presented, defaultEnabled: false } : presented;
             options.onReport?.(stamped);
             return stamped;
           }),
         ];
       }),
     );
+  }
+
+  private configuredProviderScopes(): DiscoverOptions[] {
+    const scopes: DiscoverOptions[] = [];
+    for (const {
+      provider,
+      label,
+      env,
+      configuredEnvKeys,
+    } of this.agents.providerEnvironments?.() ?? []) {
+      const sanitizedEnv = selectProviderUsageEnv({ provider, env, configuredEnvKeys });
+      if (!sanitizedEnv) continue;
+      scopes.push({
+        scope: { kind: "session", provider, env: sanitizedEnv },
+        matchProvider: provider,
+        harness: label,
+      });
+    }
+    return scopes;
+  }
+
+  private async discoverHost(): Promise<Map<string, KnownReport>> {
+    // A configured provider's own locator env can name a login the daemon's default env doesn't,
+    // so discover it before any of its agents run. The host's global logins come first in each
+    // account's fallback order. Configured-provider scopes are dispatched ONLY to sources whose
+    // declared `providers` includes that provider's base ID and carry ONLY allowlisted locator vars.
+    const scopes: DiscoverOptions[] = [
+      { scope: { kind: "global" } },
+      ...this.configuredProviderScopes(),
+    ];
+    // Each launch environment is discovered once, under the first provider that uses it,
+    // and keeps its own last result across transient discovery failures.
+    const unique = new Map<string, DiscoverOptions>();
+    for (const entry of scopes) {
+      const key = canonicalJson(entry.scope);
+      if (!unique.has(key)) unique.set(key, entry);
+    }
+    const previous = this.defaultsByScope;
+    const settled = await Promise.all(
+      [...unique].map(
+        async ([key, entry]) =>
+          [key, await this.discover({ ...entry, previous: previous.get(key) })] as const,
+      ),
+    );
+    this.defaultsByScope = new Map(settled);
+    const defaults = new Map<string, KnownReport>();
+    for (const scoped of this.defaultsByScope.values()) {
+      mergeReports({ into: defaults, reports: scoped });
+    }
+    return defaults;
   }
 
   private hintedProviders(known: KnownReport): string[] {
@@ -185,11 +264,13 @@ export class UsageSourceRegistry {
     }
     const previous = this.byAgent.get(agentId);
     const reports = await this.discover({
-      kind: "session",
-      provider: session.provider,
-      model: session.model,
-      env: session.env,
-      launch: session.launch,
+      scope: {
+        kind: "session",
+        provider: session.provider,
+        model: session.model,
+        env: session.env,
+        launch: session.launch,
+      },
     });
     const current = this.agents.usageSession(agentId);
     if (
@@ -208,18 +289,12 @@ export class UsageSourceRegistry {
   private mergeKnown(): void {
     this.known.clear();
     for (const reports of [this.defaults, ...this.byAgent.values()]) {
-      for (const [id, report] of reports) {
-        if (this.sources.get(report.source.id) !== report.source) continue;
-        const known = this.known.get(id);
-        if (!known) {
-          this.known.set(id, { ...report, logins: [...report.logins] });
-          continue;
-        }
-        for (const login of report.logins) {
-          if (!known.logins.some((existing) => loginKey(existing) === loginKey(login)))
-            known.logins.push(login);
-        }
-      }
+      mergeReports({
+        into: this.known,
+        reports: [...reports].filter(
+          ([, report]) => this.sources.get(report.source.id) === report.source,
+        ),
+      });
     }
     // Fetch freshness expires independently of successful snapshots. Retain only live identities.
     const active = this.activeCacheKeys();
@@ -235,12 +310,17 @@ export class UsageSourceRegistry {
     );
   }
 
-  private async discover(
-    scope: UsageScope,
-    previous: ReadonlyMap<string, KnownReport> = new Map(),
-  ): Promise<Map<string, KnownReport>> {
+  private async discover({
+    scope,
+    matchProvider,
+    harness,
+    previous = new Map(),
+  }: DiscoverOptions): Promise<Map<string, KnownReport>> {
+    const targets = matchProvider
+      ? [...this.sources.values()].filter((source) => source.providers?.includes(matchProvider))
+      : [...this.sources.values()];
     const discovered = await Promise.all(
-      [...this.sources.values()].map(async (source) => {
+      targets.map(async (source) => {
         const reports = new Map<string, KnownReport>();
         try {
           const accounts = z
@@ -260,17 +340,17 @@ export class UsageSourceRegistry {
             // COMPAT(usageLoginHarness): added in v0.11.0, remove after 2027-04-05 once plugin floor >= v0.11.0.
             const login: Login = {
               input: account.input,
-              harness: account.harness ?? source.label,
+              harness: harness ?? account.harness ?? source.label,
               ...(account.provider ? { provider: account.provider } : {}),
             };
             if (known) {
-              if (!known.logins.some((existing) => loginKey(existing) === loginKey(login)))
+              if (!known.logins.some((existing) => sameLogin(existing, login)))
                 known.logins.push(login);
             } else reports.set(id, { source, logins: [login], label: account.label });
           }
         } catch (error) {
           this.logger.warn({ sourceId: source.id, err: error }, "Usage source discovery failed");
-          // A failed store read does not confirm removal. Session discovery has no previous
+          // A failed store read does not confirm removal. Agent session discovery has no previous
           // mapping because a resumed agent may use a different launch environment.
           for (const [id, report] of previous) {
             if (report.source === source) reports.set(id, report);
@@ -433,19 +513,63 @@ function legacyError(report: UsageReport, now: number): string | null {
   return null;
 }
 
+// An account found in several scopes is one report; its logins keep discovery order, once each.
+function mergeReports({ into, reports }: MergeReportsOptions): void {
+  for (const [id, report] of reports) {
+    const known = into.get(id);
+    if (!known) {
+      into.set(id, { ...report, logins: [...report.logins] });
+      continue;
+    }
+    if (!known.label && report.label) known.label = report.label;
+    for (const login of report.logins) {
+      const existing = known.logins.find((candidate) => sameLogin(candidate, login));
+      if (!existing) {
+        known.logins.push(login);
+      } else if (!existing.provider && login.provider) {
+        existing.provider = login.provider;
+      }
+    }
+  }
+}
+
 // Inputs are opaque JSON locators. Canonical equality deduplicates discovery across scopes.
-function loginKey(login: Login): string {
-  return JSON.stringify(login, (_key, value) =>
-    value !== null && typeof value === "object" && !Array.isArray(value)
-      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)))
-      : value,
+// The harness only names a login, so the scope that finds it first decides what it is called.
+function sameLogin(a: Login, b: Login): boolean {
+  return canonicalJson(a.input) === canonicalJson(b.input);
+}
+
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, nested) =>
+    nested !== null && typeof nested === "object" && !Array.isArray(nested)
+      ? Object.fromEntries(Object.entries(nested).sort(([a], [b]) => a.localeCompare(b)))
+      : nested,
   );
 }
 
 function cacheIdentity(id: string, known: KnownReport): string {
   return `${id}:${createHash("sha256")
-    .update(JSON.stringify([known.label, known.logins.map(loginKey)]))
+    .update(canonicalJson(known.logins.map((login) => login.input)))
     .digest("hex")}`;
+}
+
+// Labels describe the current discovery, while cached polls and history belong to login inputs.
+function presentReport({ entry, known }: PresentReportOptions): UsageReportEntry {
+  return {
+    ...entry,
+    sourceLabel: known.source.label,
+    icon: known.source.icon,
+    account: { label: known.label },
+    ...(entry.loginErrors
+      ? {
+          // Errors are emitted only when every ordered login failed, so positions match inputs.
+          loginErrors: entry.loginErrors.map((error, index) => ({
+            ...error,
+            harness: known.logins[index]?.harness ?? error.harness,
+          })),
+        }
+      : {}),
+  };
 }
 
 /** Resolves true as soon as any check resolves true, or false once every check resolves false. */
