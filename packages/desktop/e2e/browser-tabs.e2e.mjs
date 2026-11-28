@@ -18,6 +18,11 @@ import { runAppearanceFontSizeRegression } from "./appearance-font-size.electron
 import { runAdaptiveThemeRegression } from "./appearance-theme.electron.mjs";
 import { runSettingsScrollRegression } from "./settings-scroll.electron.mjs";
 import { buildFillFixture, verifyReactFormFill } from "./browser-fill.electron.mjs";
+import {
+  buildFocusFixture,
+  FOCUS_FIXTURE_PATH,
+  runBrowserFocusIsolationRegression,
+} from "./browser-focus.electron.mjs";
 import { runSettingsMemoryRegression } from "./settings-memory.electron.mjs";
 
 import { seedPluginLinks, runPluginLinksRegression } from "./plugin-links.electron.mjs";
@@ -218,10 +223,16 @@ const CSP_PAGE_PATH = "/csp-no-eval";
 
 async function startTargetPage() {
   const fillFixture = await buildFillFixture();
+  const focusFixture = buildFocusFixture();
   const server = createServer((request, response) => {
     if (request.url === "/react-fill") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       response.end(fillFixture);
+      return;
+    }
+    if (request.url === FOCUS_FIXTURE_PATH) {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(focusFixture);
       return;
     }
     if (request.url === CSP_PAGE_PATH) {
@@ -1462,6 +1473,31 @@ async function main() {
         artifactDir,
         externalOpenLog: process.platform === "linux" ? externalOpenLog : null,
       });
+    const checkFocusIsolation = (browserClient, callerAgentId, typingAgent) =>
+      runBrowserFocusIsolationRegression({
+        page,
+        client: browserClient,
+        call: (name, args) => callBrowserTool(browserClient, name, args),
+        serverId: status.serverId,
+        targetUrl: target.url,
+        browserWorkspaceId: workspaceIds[0],
+        callerAgentId,
+        typingAgent,
+        resizeWindow: (size) => resizeDesktopWindow(inspectorPort, size),
+        evaluateMain: (expression) => evaluateDesktopWindow(inspectorPort, expression),
+      });
+    if (process.env.PASEO_DESKTOP_BROWSER_FOCUS_ONLY === "1") {
+      const callerAgentId = await createCallerAgent(daemonPort);
+      const typingAgent = {
+        workspaceId: workspaceIds.at(-1),
+        agentId: await createCallerAgent(daemonPort, workspaceIds.at(-1)),
+      };
+      client = await connectBrowserToolClient(daemonPort, callerAgentId);
+      const focusIsolation = await checkFocusIsolation(client, callerAgentId, typingAgent);
+      writeJson(path.join(artifactDir, "result.json"), { focusIsolation });
+      console.log("Desktop browser focus isolation regression passed.");
+      return;
+    }
     if (process.env.PASEO_DESKTOP_PLUGIN_LINKS_ONLY === "1") {
       const pluginLinks = await checkPluginLinks();
       writeJson(path.join(artifactDir, "result.json"), { pluginLinks });
@@ -1504,6 +1540,7 @@ async function main() {
       typingAgent,
       artifactDir,
     });
+    const focusIsolation = await checkFocusIsolation(client, callerAgentId, typingAgent);
     const pluginLinks = await checkPluginLinks();
     const routingClient = await connectBrowserToolClient(daemonPort, typingAgent.agentId);
     try {
@@ -1518,6 +1555,7 @@ async function main() {
     }
     writeJson(path.join(artifactDir, "result.json"), {
       ...report,
+      focusIsolation,
       settingsMemory,
       pluginLinks,
       adaptiveTheme,

@@ -11,6 +11,7 @@ import type {
   BrowserAutomationNetworkLogEntry,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { waitForActionableTarget, type ActionabilityResult } from "./actionability.js";
+import type { PointerFocusGuardResult } from "./focus-guard.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import {
   dispatchTrustedClick,
@@ -43,6 +44,8 @@ export interface TabContents {
   // Commits text into this tab's focused element. CDP Input.insertText would
   // commit into whichever element has focus in the Paseo window instead.
   insertText(text: string): Promise<void>;
+  // Brackets CDP pointer presses that move native Chromium focus into the guest.
+  guardPointerFocus?(): Promise<PointerFocusGuardResult>;
   getConsoleMessages?(): BrowserAutomationConsoleLogEntry[];
   captureDialogs?<T>(
     task: () => Promise<T>,
@@ -630,7 +633,12 @@ async function executeClick(
     if (!actionable.ok) {
       return actionabilityFailure(requestId, ref, actionable);
     }
-    await dispatchTrustedClick(cdpSender(target.contents), actionable.target.point, options);
+    const guarded = await withPointerFocusGuard(requestId, target.contents, () =>
+      dispatchTrustedClick(cdpSender(target.contents), actionable.target.point, options),
+    );
+    if (!guarded.ok) {
+      return guarded.failure;
+    }
     return {
       requestId,
       ok: true,
@@ -790,11 +798,12 @@ async function executeDrag(
     if (!dropTarget.ok) {
       return actionabilityFailure(requestId, targetRef, dropTarget);
     }
-    await dispatchTrustedDrag(
-      cdpSender(target.contents),
-      source.target.point,
-      dropTarget.target.point,
+    const guarded = await withPointerFocusGuard(requestId, target.contents, () =>
+      dispatchTrustedDrag(cdpSender(target.contents), source.target.point, dropTarget.target.point),
     );
+    if (!guarded.ok) {
+      return guarded.failure;
+    }
     return {
       requestId,
       ok: true,
@@ -1006,6 +1015,52 @@ function cdpSender(contents: TabContents): NonNullable<TabContents["sendDebugCom
   return contents.sendDebugCommand?.bind(contents) as NonNullable<TabContents["sendDebugCommand"]>;
 }
 
+async function enablePageFocusEmulation(contents: TabContents): Promise<void> {
+  if (!contents.sendDebugCommand) {
+    return;
+  }
+  // Suppress guest blur so restoring host focus does not close page menus; failure is tolerable.
+  await contents
+    .sendDebugCommand("Emulation.setFocusEmulationEnabled", { enabled: true })
+    .catch(() => undefined);
+}
+
+async function withPointerFocusGuard<T>(
+  requestId: string,
+  contents: TabContents,
+  task: () => Promise<T>,
+): Promise<{ ok: true; value: T } | { ok: false; failure: FailurePayload }> {
+  const guard = contents.guardPointerFocus ? await contents.guardPointerFocus() : null;
+  if (guard?.status === "composing") {
+    return {
+      ok: false,
+      failure: fail(
+        requestId,
+        "browser_denied",
+        "The user is typing with an input method, so pointer input was not sent. Retry in a moment.",
+        true,
+      ),
+    };
+  }
+  if (guard?.status === "unavailable") {
+    return {
+      ok: false,
+      failure: fail(
+        requestId,
+        "browser_timeout",
+        "Could not protect keyboard focus before pointer input. Retry in a moment.",
+        true,
+      ),
+    };
+  }
+  try {
+    await enablePageFocusEmulation(contents);
+    return { ok: true, value: await task() };
+  } finally {
+    guard?.release();
+  }
+}
+
 async function executeWait(
   requestId: string,
   workspaceId: string | undefined,
@@ -1079,9 +1134,6 @@ async function executeType(
     return target;
   }
   return withDialogCapture(target.contents, async () => {
-    if (!target.contents.sendDebugCommand) {
-      return fail(requestId, "browser_unsupported", "browser_type requires trusted browser input");
-    }
     let actionable: ActionabilityResult | null = null;
     if (ref) {
       const elementExpression = snapshotEngine.runtimeElementExpression({
@@ -1099,7 +1151,18 @@ async function executeType(
       if (!actionable.ok) {
         return actionabilityFailure(requestId, ref, actionable);
       }
-      await dispatchTrustedClick(cdpSender(target.contents), actionable.target.point);
+      const focusOutcome = await focusElementForKeyboardInput(target.contents, elementExpression);
+      if (focusOutcome === "stale_ref") {
+        return staleRefFailure(requestId, ref);
+      }
+      if (focusOutcome === "not_focused") {
+        return fail(
+          requestId,
+          "browser_timeout",
+          `Browser element ${ref} did not accept focus for typing. Click it first and try again.`,
+          true,
+        );
+      }
     }
     await target.contents.insertText(text);
     return {
@@ -1145,19 +1208,9 @@ async function executeKeypress(
       if (!actionable.ok) {
         return actionabilityFailure(requestId, ref, actionable);
       }
-      const focused = await focusKeypressTarget(target.contents, elementExpression);
-      if (focused === "stale_ref") {
+      const focusOutcome = await focusElementForKeyboardInput(target.contents, elementExpression);
+      if (focusOutcome === "stale_ref") {
         return staleRefFailure(requestId, ref);
-      }
-      if (focused === "editable") {
-        if (!target.contents.sendDebugCommand) {
-          return fail(
-            requestId,
-            "browser_unsupported",
-            "browser_keypress requires trusted browser input",
-          );
-        }
-        await dispatchTrustedClick(cdpSender(target.contents), actionable.target.point);
       }
     }
     dispatchTrustedKey((event) => target.contents.sendInputEvent(event), key);
@@ -1637,22 +1690,52 @@ function buildEvaluateScript(
 	  })(() => (${functionSource}))`;
 }
 
-async function focusKeypressTarget(
+async function focusElementForKeyboardInput(
   contents: TabContents,
   elementExpression: string,
-): Promise<"editable" | "focused" | "stale_ref"> {
+): Promise<"focused" | "not_focused" | "stale_ref"> {
   const result = await contents.executeJavaScript(String.raw`(() => {
     const element = ${elementExpression};
-    if (!element) return { staleRef: true };
-    const tagName = element.tagName ? element.tagName.toLowerCase() : '';
-    const inputType = tagName === 'input' ? String(element.getAttribute('type') || 'text').toLowerCase() : '';
-    const editableInput = tagName === 'textarea' ||
-      (tagName === 'input' && !['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'].includes(inputType));
-    const editable = editableInput || element.isContentEditable === true;
-    if (!editable && typeof element.focus === 'function') {
+    if (!element || !element.isConnected) return { staleRef: true };
+    if (typeof element.focus === 'function') {
       element.focus({ preventScroll: true });
     }
-    return { editable };
+    const root = typeof element.getRootNode === 'function' ? element.getRootNode() : element.ownerDocument;
+    const active = root && 'activeElement' in root ? root.activeElement : element.ownerDocument?.activeElement;
+    const focused = Boolean(
+      active &&
+        (active === element ||
+          (typeof element.contains === 'function' && element.contains(active))),
+    );
+    if (!focused) {
+      return { focused: false };
+    }
+    const tagName = element.tagName ? element.tagName.toLowerCase() : '';
+    const inputType = tagName === 'input'
+      ? String(element.getAttribute('type') || 'text').toLowerCase()
+      : '';
+    const isTextInput =
+      tagName === 'textarea' ||
+      (tagName === 'input' &&
+        !['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'].includes(inputType));
+    if (isTextInput && typeof element.setSelectionRange === 'function') {
+      try {
+        const end = typeof element.value === 'string' ? element.value.length : 0;
+        element.setSelectionRange(end, end);
+      } catch {
+        // Input types such as email and number reject setSelectionRange.
+      }
+    } else if (element.isContentEditable === true) {
+      const selection = element.ownerDocument?.defaultView?.getSelection?.();
+      if (selection) {
+        const range = element.ownerDocument.createRange();
+        range.selectNodeContents(element);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    }
+    return { focused: true };
   })()`);
   if (!result || typeof result !== "object") {
     return "stale_ref";
@@ -1661,7 +1744,7 @@ async function focusKeypressTarget(
   if (record.staleRef === true) {
     return "stale_ref";
   }
-  return record.editable === true ? "editable" : "focused";
+  return record.focused === true ? "focused" : "not_focused";
 }
 
 function readString(value: unknown): string | null {
