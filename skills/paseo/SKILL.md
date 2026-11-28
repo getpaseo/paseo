@@ -155,12 +155,14 @@ paseo workspace create --isolation worktree --mode checkout-branch --branch exis
 paseo workspace create --isolation worktree --mode checkout-pr --pr-number 42
 paseo run --provider codex/gpt-5.4 --mode full-access --workspace <workspace-id> "<prompt>"
 paseo run --provider codex/gpt-5.4 --mode full-access --new-workspace worktree --worktree-mode branch-off --new-branch fix-x --base origin/main "<prompt>"
-paseo send <agent-id> "<follow-up>"
-paseo send <agent-id> --behavior steer "<follow-up that cannot wait>"
+paseo send <agent-id> --no-wait "<follow-up>"
+paseo send <agent-id> --no-wait --behavior steer "<follow-up that cannot wait>"
 paseo ls
 paseo schedule create --cron "*/15 * * * *" "ping main build"
 paseo heartbeat create --cron "*/15 * * * *" "check the build"
 ```
+
+From an agent, pass `--no-wait`: without it, `paseo send` waits for the recipient's turn to end and can outlast the shell call's timeout.
 
 Discover with `paseo --help` and `paseo <cmd> --help`.
 
