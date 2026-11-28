@@ -3,7 +3,7 @@ import type {
   FetchAgentHistoryOptions,
   FetchAgentHistoryPageInfo,
 } from "@getpaseo/client/internal/daemon-client";
-import { keepPreviousData, useInfiniteQuery } from "@tanstack/react-query";
+import { CancelledError, keepPreviousData, useInfiniteQuery } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/shallow";
@@ -16,6 +16,7 @@ import {
 import { useSessionStore } from "@/stores/session-store";
 import { buildAgentDirectoryState } from "@/utils/agent-directory-sync";
 import { agentHistoryQueryKey, allAgentHistoryQueryKey } from "./agent-history-query-key";
+import { useAllDirectoryDemand } from "./use-directory-demand";
 
 const AGENT_HISTORY_PAGE_LIMIT = 200;
 const AGENT_HISTORY_SORT: NonNullable<FetchAgentHistoryOptions["sort"]> = [
@@ -68,7 +69,7 @@ export interface AgentHistoryHost {
   client: AgentHistoryClient;
 }
 
-interface AgentHistoryBatchPage {
+export interface AgentHistoryBatchPage {
   agents: AggregatedAgent[];
   pageInfoByServerId: Record<string, FetchAgentHistoryPageInfo>;
   hostErrors: AgentHistoryHostError[];
@@ -168,6 +169,7 @@ export async function fetchAgentHistoryBatch(input: {
   hosts: readonly AgentHistoryHost[];
   cursorByServerId: AgentHistoryCursorByServerId | null;
   search?: string;
+  signal?: AbortSignal;
 }): Promise<AgentHistoryBatchPage> {
   const cursorByServerId = input.cursorByServerId ?? {};
   const hasCursorFilter = Object.keys(cursorByServerId).length > 0;
@@ -186,6 +188,7 @@ export async function fetchAgentHistoryBatch(input: {
       return { host, page };
     }),
   );
+  if (input.signal?.aborted) throw new CancelledError();
   const pages = settledPages.flatMap((result) =>
     result.status === "fulfilled" ? [result.value] : [],
   );
@@ -225,6 +228,8 @@ export function useAgentHistory(options: {
   serverId?: string | null;
   enabled?: boolean;
   search?: string;
+  /** Refresh cached pages when opening History or switching its filters. */
+  revalidateCachedResults?: boolean;
   /**
    * Leave out hosts that predate search, instead of searching no host. For a surface that adds
    * history matches to other results, where a missing host is not a claim of "no matches".
@@ -253,6 +258,7 @@ export function useAgentHistory(options: {
     ),
   );
   const serverIds = options.searchableHostsOnly ? searchableServerIds : requestedServerIds;
+  useAllDirectoryDemand({ serverIds, enabled });
   const connectionStatuses = useHostRuntimeConnectionStatuses(serverIds);
   // A host the user asked about splits two ways: one this fetch can reach, and
   // one whose sessions will be missing from the answer. Both come out of here,
@@ -315,19 +321,24 @@ export function useAgentHistory(options: {
   >({
     queryKey,
     enabled: queryEnabled,
-    staleTime: 30_000,
+    // A disabled search observer would keep an abandoned History read alive.
+    subscribed: queryEnabled,
+    ...(options.revalidateCachedResults
+      ? { staleTime: 0, refetchOnMount: true }
+      : { staleTime: 30_000 }),
     // Previous results stand in only until the next query's arrive. With no host to search,
     // nothing will arrive, so they would stand in, and read as still loading, indefinitely.
     ...(options.keepPreviousResults && queryEnabled ? { placeholderData: keepPreviousData } : {}),
     initialPageParam: null,
     getNextPageParam: getNextAgentHistoryPageParam,
-    queryFn: async ({ pageParam }) => {
+    queryFn: async ({ pageParam, signal }) => {
       if (targetHosts.length === 0) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       return fetchAgentHistoryBatch({
         hosts: targetHosts,
         cursorByServerId: pageParam,
+        signal,
         ...(search ? { search } : {}),
       });
     },
@@ -352,11 +363,9 @@ export function useAgentHistory(options: {
   }, [enabled, refetch, targetHosts.length]);
 
   const loadMore = useCallback(() => {
-    if (!enabled || targetHosts.length === 0 || !hasNextPage || isFetchingNextPage) {
-      return;
-    }
-    void fetchNextPage();
-  }, [enabled, fetchNextPage, hasNextPage, isFetchingNextPage, targetHosts.length]);
+    if (!queryEnabled || !hasNextPage) return;
+    void fetchNextPage({ cancelRefetch: false });
+  }, [fetchNextPage, hasNextPage, queryEnabled]);
 
   const agents = useMemo(() => {
     const pages = data?.pages ?? [];

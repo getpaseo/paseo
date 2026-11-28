@@ -4,7 +4,7 @@ import { test } from "../support/fixtures";
 import { getServerId } from "../support/helpers/server-id";
 import { connectSeedClient } from "../support/helpers/seed-client";
 import { createTempGitRepo } from "../support/helpers/workspace";
-import { buildHostWorkspaceRoute } from "@/utils/host-routes";
+import { buildHostWorkspaceRoute, buildSessionsRoute } from "@/utils/host-routes";
 import {
   closeActiveAgentWithShortcut,
   archiveAgentFromDaemon,
@@ -13,6 +13,7 @@ import {
   createIdleAgent,
   expectArchivedAgentFocused,
   expectSessionRowArchived,
+  expectSessionRowNotArchived,
   expectSessionRowVisible,
   expectWorkspaceArchiveOutcome,
   expectWorkspaceTabHidden,
@@ -56,13 +57,14 @@ test.describe("Archive tab reconciliation", () => {
     await tempRepo?.cleanup();
   });
 
-  test("restoring a closed agent retains its unsent composer draft after reload", async ({
+  test("restoring a closed agent keeps its draft and updates open History on another client", async ({
     page,
   }) => {
     const agent = await seedMockAgentWorkspace({
       repoPrefix: "archived-composer-",
       title: "Restore unsent draft",
     });
+    const otherClient = await page.context().newPage();
     try {
       await openAgentRoute(page, agent);
       await submitMessage(page, "A completed conversation before closing");
@@ -75,11 +77,25 @@ test.describe("Archive tab reconciliation", () => {
       await page.reload();
       await openSessions(page);
       await expectSessionRowArchived(page, "Restore unsent draft");
+      await test.step("Keep a second client on the archived History row", async () => {
+        await otherClient.setViewportSize({ width: 390, height: 844 });
+        await primeAdditionalPage(otherClient, buildSessionsRoute());
+        await expectSessionRowArchived(otherClient, "Restore unsent draft");
+      });
       await clickSessionRow(page, "Restore unsent draft");
       await expectArchivedAgentFocused(page, agent.agentId);
       await unarchiveAgentFromConversation(page);
       await expectComposerDraft(page, "Keep this unsent message after closing");
+      await test.step("See the restored row on the second client without leaving History", async () => {
+        await expectSessionRowNotArchived(otherClient, "Restore unsent draft");
+        await expectSessionRowVisible(otherClient, "Restore unsent draft");
+      });
+      await test.step("See the same row become archived when its tab closes again", async () => {
+        await closeActiveAgentWithShortcut(page, agent.agentId);
+        await expectSessionRowArchived(otherClient, "Restore unsent draft");
+      });
     } finally {
+      await otherClient.close();
       await agent.cleanup();
     }
   });

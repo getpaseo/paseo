@@ -83,6 +83,7 @@ function SessionsScreenContent() {
     agents,
     hasMore,
     isInitialLoad,
+    isRevalidating,
     isLoadingMore,
     isError,
     isSearchSupported,
@@ -93,6 +94,7 @@ function SessionsScreenContent() {
   } = useAgentHistory({
     serverId: historyServerId,
     search,
+    revalidateCachedResults: true,
   });
   const isSearching = isSearchSupported && search.length > 0;
 
@@ -143,12 +145,12 @@ function SessionsScreenContent() {
     }
     return (
       <View style={styles.footer}>
-        <Button variant="ghost" onPress={loadMore} disabled={isLoadingMore}>
+        <Button variant="ghost" onPress={loadMore} disabled={isRevalidating || isLoadingMore}>
           {isLoadingMore ? "Loading..." : t("sessions.actions.loadMore")}
         </Button>
       </View>
     );
-  }, [hasMore, isLoadingMore, isSearchTruncated, loadMore, t]);
+  }, [hasMore, isLoadingMore, isRevalidating, isSearchTruncated, loadMore, t]);
 
   return (
     <View style={styles.container}>
