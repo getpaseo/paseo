@@ -638,6 +638,19 @@ npm run cli -- daemon status         # Check daemon status
 npm run cli -- clone owner/repo --dir ~/workspace # Clone GitHub repo and register project
 ```
 
+`attach <id> --json` (or `--format json` / `-o json`, including `agent attach`)
+streams compact NDJSON: one full received timeline item per line, first all
+projected history, then live items until SIGINT, SIGTERM, or a closed stdout reader.
+Empty history emits no stdout. Non-timeline events such as permission requests
+are excluded; use `permit ls` for pending permissions. For a finite snapshot,
+use `logs <id> --json`, which emits `{agentId, items}`.
+
+Attach notices and diagnostics go to stderr in JSON mode; keep stderr separate
+when parsing stdout. History is projected and live items can be fragments or
+updates. The stream is not gap-free or exactly-once: replacement invalidates
+earlier output, and reconnection may miss events. Watch stderr for these notices
+and use `logs --json` for a fresh snapshot after a discontinuity.
+
 Use the global `--host` option to point the CLI at a different daemon:
 
 ```bash

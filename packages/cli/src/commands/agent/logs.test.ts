@@ -181,3 +181,50 @@ describe("createFollowJsonWriter", () => {
     ).toEqual([toolCall]);
   });
 });
+
+it("preserves every timeline variant and future nested fields", () => {
+  const items = [
+    { type: "user_message", text: "hello\n한국어", messageId: "u1", clientMessageId: "client1" },
+    { type: "assistant_message", text: "answer", messageId: "a1" },
+    { type: "reasoning", text: "thinking" },
+    {
+      type: "tool_call",
+      callId: "c1",
+      name: "example",
+      status: "completed",
+      error: null,
+      detail: { type: "unknown", input: { x: [1, true, null] }, output: { result: "ok" } },
+      metadata: { nested: { value: "retained" } },
+    },
+    { type: "todo", items: [{ text: "task", completed: false }] },
+    { type: "error", message: "timeline error" },
+    { type: "notification", level: "warning", message: "notice" },
+    { type: "compaction", status: "completed", trigger: "auto", preTokens: 123 },
+    {
+      type: "plugin",
+      id: "p1",
+      pluginId: "example",
+      kind: "card",
+      version: 1,
+      data: { x: [true, null] },
+    },
+    { type: "user_message", text: "ten" },
+    { type: "user_message", text: "eleven" },
+  ];
+  const received = [
+    ...items,
+    { type: "future", nested: { x: [1, null] } } as unknown as AgentTimelineItem,
+  ];
+  const chunks: string[] = [];
+  const writer = createFollowJsonWriter(undefined, (chunk) => chunks.push(chunk));
+  for (const item of received) writer.push(item);
+  writer.end();
+  expect(chunks).toEqual(received.map((item) => `${JSON.stringify(item)}\n`));
+  expect(
+    chunks
+      .join("")
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line)),
+  ).toEqual(received);
+});

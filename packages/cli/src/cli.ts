@@ -86,7 +86,7 @@ export function createCli(): Command {
     )
     .action(withOutput(runCloneCommand));
 
-  addDaemonHostOption(addAttachOptions(program.command("attach"))).action(
+  addJsonAndDaemonHostOptions(addAttachOptions(program.command("attach"))).action(
     withGlobalOptions(runAttachCommand),
   );
 

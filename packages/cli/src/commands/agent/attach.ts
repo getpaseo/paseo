@@ -6,6 +6,9 @@ export function addAttachOptions(cmd: Command): Command {
     .argument("<id>", "Agent ID (or prefix)");
 }
 import { connectToDaemon } from "../../utils/client.js";
+import type { CommandOptions } from "../../output/index.js";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { createFollowJsonWriter } from "./logs.js";
 import { waitForStop } from "../../utils/wait-for-stop.js";
 import {
   fetchProjectedTimelineItems,
@@ -14,11 +17,7 @@ import {
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 
-export interface AgentAttachOptions {
-  host?: string;
-  daemonTarget: import("../../utils/daemon-target.js").DaemonTarget;
-  [key: string]: unknown;
-}
+export interface AgentAttachOptions extends CommandOptions {}
 
 /**
  * Format and print a timeline item to the terminal
@@ -124,6 +123,23 @@ export async function runAttachCommand(
     }
     const resolvedId = fetchResult.agent.id;
 
+    if (options.json === true || options.format?.trim().toLowerCase() === "json") {
+      await runJsonAttach(
+        {
+          history: () =>
+            fetchProjectedTimelineItems({
+              client,
+              agentId: resolvedId,
+              timeoutMs: LIVE_HISTORY_FETCH_TIMEOUT_MS,
+            }),
+          subscribe: (handler) => client.subscribeAgentTimeline(resolvedId, handler),
+          close: () => client.close(),
+        },
+        resolvedId,
+      );
+      return;
+    }
+
     // Print header
     console.log(`Fetching history for agent ${resolvedId.substring(0, 7)}...`);
     console.log(`(Press Ctrl+C to detach)\n`);
@@ -167,5 +183,58 @@ export async function runAttachCommand(
     const message = err instanceof Error ? err.message : String(err);
     console.error(`Error: Failed to attach to agent: ${message}`);
     process.exit(1);
+  }
+}
+
+/** JSON attach owns shutdown before history can write to a closed reader. */
+export interface JsonAttachPort {
+  history(): Promise<AgentTimelineItem[]>;
+  subscribe: (
+    handler: Parameters<DaemonClient["subscribeAgentTimeline"]>[1],
+  ) => ReturnType<DaemonClient["subscribeAgentTimeline"]>;
+  close(): Promise<void>;
+  write?: (chunk: string) => void;
+  notice?: (message: string, error?: unknown) => void;
+  wait?: (signal: AbortSignal) => Promise<void>;
+}
+
+export async function runJsonAttach(port: JsonAttachPort, agentId: string): Promise<void> {
+  const controller = new AbortController();
+  const stopped = (port.wait ?? waitForStop)(controller.signal);
+  const writer = createFollowJsonWriter(undefined, port.write);
+  const notice = port.notice ?? console.error;
+  let unsubscribe: (() => void) | undefined;
+  try {
+    notice(`Fetching history for agent ${agentId.substring(0, 7)}...`);
+    notice(`(Press Ctrl+C to detach)\n`);
+    try {
+      const history = await Promise.race([port.history(), stopped]);
+      if (!history) return;
+      for (const item of history) writer.push(item);
+    } catch (error) {
+      notice("Warning: failed to fetch existing timeline", error);
+    }
+    const subscription = port.subscribe((message) => {
+      if (message.type === "agent.timeline.replacement") {
+        notice("\n[Timeline replaced; earlier output is no longer current]");
+      } else if (message.type === "agent.timeline.subscription_restored") {
+        notice("\n[Reconnected; live output resumed. Events may have been missed.]");
+      } else if (message.type === "agent.timeline.error") {
+        notice(`Timeline observation stopped: ${message.payload.error}`);
+      } else if (message.payload.event.type === "timeline") {
+        writer.push(message.payload.event.item);
+      }
+    });
+    unsubscribe = subscription;
+    const ready = await Promise.race([subscription.ready.then(() => true), stopped]);
+    if (!ready) return;
+    notice(`Attached to agent ${agentId.substring(0, 7)}.`);
+    await stopped;
+    notice("\n\nDetaching from agent...");
+  } finally {
+    controller.abort();
+    writer.end();
+    unsubscribe?.();
+    await port.close();
   }
 }
