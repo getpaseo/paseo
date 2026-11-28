@@ -21,7 +21,11 @@ pub(crate) fn live_host() -> Option<&'static Host> {
 // the app-level e2e tests exercise the real C++/Fabric boundary.
 #[derive(Clone)]
 #[cfg_attr(test, allow(dead_code))]
-pub struct Host(Arc<Mutex<cxx::UniquePtr<ffi::GpuiHost>>>);
+pub struct Host {
+    inner: Arc<Mutex<cxx::UniquePtr<ffi::GpuiHost>>>,
+    #[cfg(test)]
+    dispatched_events: Arc<Mutex<Vec<(i32, String, serde_json::Value)>>>,
+}
 
 impl Host {
     pub fn new(
@@ -40,9 +44,11 @@ impl Host {
         #[cfg(not(test))]
         {
             crate::host_component::freeze();
-            let host = Self(Arc::new(Mutex::new(ffi::new_gpui_host(
-                app_id, dev_host, port, js_engine, js_thread, dev_mode,
-            ))));
+            let host = Self {
+                inner: Arc::new(Mutex::new(ffi::new_gpui_host(
+                    app_id, dev_host, port, js_engine, js_thread, dev_mode,
+                ))),
+            };
             let _ = LIVE_HOST.set(host.clone());
             host
         }
@@ -52,14 +58,22 @@ impl Host {
     /// only a raw handle behind, so a poisoned lock is still usable.
     #[cfg(not(test))]
     fn lock(&self) -> std::sync::MutexGuard<'_, cxx::UniquePtr<ffi::GpuiHost>> {
-        self.0
+        self.inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     #[cfg(test)]
     pub(crate) fn test_stub() -> Self {
-        Self(Arc::new(Mutex::new(cxx::UniquePtr::null())))
+        Self {
+            inner: Arc::new(Mutex::new(cxx::UniquePtr::null())),
+            dispatched_events: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_dispatched_events(&self) -> Vec<(i32, String, serde_json::Value)> {
+        std::mem::take(&mut self.dispatched_events.lock().unwrap())
     }
 
     pub fn load_script(&self, bundle: &str, url: &str) -> bool {
@@ -284,7 +298,10 @@ impl Host {
 
     pub fn dispatch_event(&self, tag: i32, ty: &str, payload: &serde_json::Value) {
         #[cfg(test)]
-        let _ = (self, tag, ty, payload);
+        self.dispatched_events
+            .lock()
+            .unwrap()
+            .push((tag, ty.to_string(), payload.clone()));
         #[cfg(not(test))]
         self.lock().dispatch_event(tag, ty, &payload.to_string());
         // React Native holds events until its next event beat, and nothing

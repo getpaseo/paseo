@@ -429,6 +429,7 @@ static ViewPropsFlat flattenView(const ShadowView& shadowView) {
   out.accessibility_has_tap_listener = props->onAccessibilityTap;
   out.accessibility_has_escape_listener = props->onAccessibilityEscape;
   out.accessibility_has_magic_tap_listener = props->onAccessibilityMagicTap;
+  out.on_layout = props->onLayout;
   out.accessibility_important =
       static_cast<uint8_t>(props->importantForAccessibility);
   out.accessibility_live_region =

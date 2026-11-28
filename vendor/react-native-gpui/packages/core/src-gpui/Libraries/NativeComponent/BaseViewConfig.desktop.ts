@@ -365,7 +365,9 @@ export default {
     onDropCapture: true,
     dragOverStyle: { process: processStateStyle('dragOverStyle') },
     // RN omits iOS listener flags when Platform.OS is an out-of-tree platform.
-    // Fabric's AccessibilityProps needs these flags for native action routing.
+    // Fabric's Layout and AccessibilityProps need these flags so JS forwards
+    // `onLayout` and accessibility listeners to native.
+    onLayout: true,
     onAccessibilityAction: true,
     onAccessibilityEscape: true,
     onAccessibilityTap: true,

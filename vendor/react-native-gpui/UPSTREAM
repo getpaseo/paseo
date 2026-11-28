@@ -34,6 +34,21 @@ Local patches (all other retained files match the revisions above):
 - packages/core/ReactGpui/rn-gpui-sys/build.rs: pass Cargo's
   MACOSX_DEPLOYMENT_TARGET to CMake. Otherwise source builds default to the
   installed SDK's version even when the app targets an older macOS release.
+  Also exports `RN_GPUI_LOOM_RENDERER_BUILT` so `store.rs` knows whether Loom
+  or Fabric owns `topLayout`.
+- packages/core/src-gpui/Libraries/NativeComponent/BaseViewConfig.desktop.ts,
+  packages/core/ReactGpui/rn-gpui-sys/src/lib.rs,
+  packages/core/ReactGpui/rn-gpui-sys/cpp/{MountBatchBuilder,LoomViewProps}.cpp,
+  packages/core/ReactGpui/rn-gpui/src/{bootstrap,view_props,store,host}.rs:
+  restore standard React Native `onLayout` behavior across all components
+  (Text/Paragraph, TextInput, Image, View, ScrollView, etc.) instead of
+  hardcoding `topLayout` to `View` and scroll containers. Add `onLayout: true`
+  to desktop `validAttributes` so JS forwards the listener flag; let Fabric's
+  `ShadowTree::emitLayoutEvents` emit `topLayout` without double-dispatching
+  in `store.rs` (selected explicitly via `LayoutEventOwner` at store
+  construction from `rn_gpui_sys::LOOM_RENDERER`), and propagate `on_layout`
+  into `ViewPropsFlat` so Loom dispatches `topLayout` for any laid-out node
+  with `on_layout` set. Covered by `native.test.ts` and `store.rs` unit tests.
 
 (Upstream now includes box-none pointer pass-through, uniform rounded border
 decoration, GpuiJsEngine.h hover flag, metro.config.js self-import bypass, and

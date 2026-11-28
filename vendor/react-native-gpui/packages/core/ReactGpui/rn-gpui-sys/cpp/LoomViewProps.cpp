@@ -270,6 +270,7 @@ BOOL_FIELD(setOnAccessibilityTap, accessibility_has_tap_listener)
 BOOL_FIELD(setOnAccessibilityMagicTap, accessibility_has_magic_tap_listener)
 BOOL_FIELD(setOnAccessibilityEscape, accessibility_has_escape_listener)
 BOOL_FIELD(setOnAccessibilityAction, accessibility_has_action_listener)
+BOOL_FIELD(setOnLayout, on_layout)
 BOOL_FIELD(setFocusable, focusable)
 BOOL_FIELD(setDesktopDragRegion, desktop_drag_region)
 BOOL_FIELD(setAcceptsFiles, accepts_files)
@@ -498,6 +499,7 @@ const std::unordered_map<std::string_view, Handler>& handlers() {
       {"onContextMenuCapture", &setOnContextMenuCapture},
       {"onWheel", &setOnWheel},
       {"onWheelCapture", &setOnWheelCapture},
+      {"onLayout", &setOnLayout},
       {"selectable", &setSelectable},
       {"onTextLayout", &setOnTextLayout},
   };

@@ -44,8 +44,30 @@ pub enum SurfaceKind {
     Embedded,
 }
 
+/// Which layer dispatches `topLayout` for laid-out nodes.
+///
+/// Fabric's `ShadowTree::emitLayoutEvents` already emits `topLayout` when
+/// `BaseViewProps::onLayout` is set; Loom has no `ShadowTree`, so `ViewStore`
+/// dispatches `topLayout` from mount ops.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayoutEventOwner {
+    ShadowTree,
+    Store,
+}
+
+impl LayoutEventOwner {
+    pub fn from_loom_flag(loom_renderer: bool) -> Self {
+        if loom_renderer {
+            Self::Store
+        } else {
+            Self::ShadowTree
+        }
+    }
+}
+
 pub struct ViewStore {
     pub host: Host,
+    layout_event_owner: LayoutEventOwner,
     pub frame_hook: FrameHook,
     pub window: AnyWindowHandle,
     pub windows: HashMap<i32, AnyWindowHandle>,
@@ -121,11 +143,13 @@ impl ViewStore {
         window: impl Into<AnyWindowHandle>,
         frame_hook: FrameHook,
         overlay_host: Entity<OverlayHost>,
+        layout_event_owner: LayoutEventOwner,
     ) -> Self {
         let window = window.into();
         note_surface_window(APP_SURFACE_ID, Some(window));
         Self {
             host,
+            layout_event_owner,
             frame_hook,
             window,
             windows: HashMap::from([(APP_SURFACE_ID, window)]),
@@ -981,24 +1005,31 @@ impl ViewStore {
                 }
                 _ => log::warn!("[store] unknown mount kind {}", op.kind.repr),
             }
-            let is_scroll = crate::extensions::component_scroll(
-                &op.component,
-                &crate::extensions::parse_extension_props(&op.extension_props_json),
-            )
-            .is_some();
-            if op.layout_changed && (op.component == "View" || is_scroll) {
-                self.host.dispatch_event(
-                    op.tag,
-                    "topLayout",
-                    &serde_json::json!({
-                        "layout": {
-                            "x": op.frame.x,
-                            "y": op.frame.y,
-                            "width": op.frame.w,
-                            "height": op.frame.h
-                        }
-                    }),
-                );
+            // Fabric emits `topLayout` from `ShadowTree::emitLayoutEvents` using
+            // `BaseViewProps::onLayout`. Loom has no `ShadowTree`, so the store
+            // dispatches `topLayout` for any laid-out node that asked for `onLayout`.
+            if self.layout_event_owner == LayoutEventOwner::Store
+                && op.layout_changed
+                && !matches!(op.kind, MountKind::Delete | MountKind::Remove)
+            {
+                let wants_layout = self
+                    .nodes
+                    .get(&op.tag)
+                    .is_some_and(|node| node.read(cx).view.on_layout);
+                if wants_layout {
+                    self.host.dispatch_event(
+                        op.tag,
+                        "topLayout",
+                        &serde_json::json!({
+                            "layout": {
+                                "x": op.frame.x,
+                                "y": op.frame.y,
+                                "width": op.frame.w,
+                                "height": op.frame.h
+                            }
+                        }),
+                    );
+                }
             }
         }
         self.restore_scroll_anchors(anchors, cx);
@@ -1489,7 +1520,7 @@ pub(crate) fn test_store_handle(cx: &mut gpui::TestAppContext) -> crate::extensi
     let any_window: gpui::AnyWindowHandle = window.into();
     let host = crate::host::Host::test_stub();
     let frame_hook = FrameHook::new(host.clone());
-    let store = cx.new(|_| ViewStore::new(host, any_window, frame_hook, overlay_host));
+    let store = cx.new(|_| ViewStore::new(host, any_window, frame_hook, overlay_host, LayoutEventOwner::ShadowTree));
     cx.update(|cx| cx.set_global(StoreGlobal(store.clone())));
     let _ = root;
     crate::extensions::StoreHandle::new(store.downgrade())
@@ -1497,7 +1528,9 @@ pub(crate) fn test_store_handle(cx: &mut gpui::TestAppContext) -> crate::extensi
 
 #[cfg(test)]
 mod test_app_context_tests {
-    use super::{OverlayHost, StoreGlobal, SurfaceKind, SurfaceRootView, ViewStore};
+    use super::{
+        LayoutEventOwner, OverlayHost, StoreGlobal, SurfaceKind, SurfaceRootView, ViewStore,
+    };
     use crate::{frame::FrameHook, host::Host};
     use gpui::{px, AppContext, TestAppContext};
     use rn_gpui_sys::ffi::{MountBatch, MountKind, MountOp, ParagraphFlat, RectF, ViewPropsFlat};
@@ -1563,8 +1596,9 @@ mod test_app_context_tests {
 
     /// Builds a store whose surface root is a real window root, and returns
     /// both the store and that root.
-    fn store_with_root(
+    fn store_with_layout_owner(
         cx: &mut TestAppContext,
+        layout_event_owner: LayoutEventOwner,
     ) -> (gpui::Entity<ViewStore>, gpui::Entity<SurfaceRootView>) {
         let overlay_host = cx.new(|_| OverlayHost::new());
         let window = cx.open_window(gpui::size(px(120.0), px(100.0)), {
@@ -1575,10 +1609,24 @@ mod test_app_context_tests {
         let any_window: gpui::AnyWindowHandle = window.into();
         let host = Host::test_stub();
         let frame_hook = FrameHook::new(host.clone());
-        let store = cx.new(|_| ViewStore::new(host, any_window, frame_hook, overlay_host));
+        let store = cx.new(|_| {
+            ViewStore::new(
+                host,
+                any_window,
+                frame_hook,
+                overlay_host,
+                layout_event_owner,
+            )
+        });
         cx.update(|cx| cx.set_global(StoreGlobal(store.clone())));
         store.update(cx, |store, _| store.register_root(1, root.clone()));
         (store, root)
+    }
+
+    fn store_with_root(
+        cx: &mut TestAppContext,
+    ) -> (gpui::Entity<ViewStore>, gpui::Entity<SurfaceRootView>) {
+        store_with_layout_owner(cx, LayoutEventOwner::ShadowTree)
     }
 
     /// Applies a batch of `(kind, tag, parent)` triples.
@@ -2011,7 +2059,7 @@ mod test_app_context_tests {
         let any_window: gpui::AnyWindowHandle = window.into();
         let host = Host::test_stub();
         let frame_hook = FrameHook::new(host.clone());
-        let store = cx.new(|_| ViewStore::new(host, any_window, frame_hook, overlay_host));
+        let store = cx.new(|_| ViewStore::new(host, any_window, frame_hook, overlay_host, LayoutEventOwner::ShadowTree));
         cx.update(|cx| cx.set_global(StoreGlobal(store.clone())));
         store.update(cx, |store, _| store.register_root(1, root));
 
@@ -2088,7 +2136,7 @@ mod test_app_context_tests {
         let any_window: gpui::AnyWindowHandle = window.into();
         let host = Host::test_stub();
         let frame_hook = FrameHook::new(host.clone());
-        let store = cx.new(|_| ViewStore::new(host, any_window, frame_hook, overlay_host));
+        let store = cx.new(|_| ViewStore::new(host, any_window, frame_hook, overlay_host, LayoutEventOwner::ShadowTree));
         cx.update(|cx| cx.set_global(StoreGlobal(store.clone())));
         store.update(cx, |store, _| store.register_root(1, root));
 
@@ -2140,7 +2188,7 @@ mod test_app_context_tests {
         let any_window: gpui::AnyWindowHandle = window.into();
         let host = Host::test_stub();
         let frame_hook = FrameHook::new(host.clone());
-        let store = cx.new(|_| ViewStore::new(host, any_window, frame_hook, overlay_host));
+        let store = cx.new(|_| ViewStore::new(host, any_window, frame_hook, overlay_host, LayoutEventOwner::ShadowTree));
         cx.update(|cx| cx.set_global(StoreGlobal(store.clone())));
         store.update(cx, |store, _| store.register_root(1, root));
 
@@ -2248,7 +2296,7 @@ mod test_app_context_tests {
         let any_window: gpui::AnyWindowHandle = window.into();
         let host = Host::test_stub();
         let frame_hook = FrameHook::new(host.clone());
-        let store = cx.new(|_| ViewStore::new(host, any_window, frame_hook, overlay_host));
+        let store = cx.new(|_| ViewStore::new(host, any_window, frame_hook, overlay_host, LayoutEventOwner::ShadowTree));
         cx.update(|cx| cx.set_global(StoreGlobal(store.clone())));
         store.update(cx, |store, _| store.register_root(1, root));
 
@@ -2425,7 +2473,7 @@ mod test_app_context_tests {
         let any_window: gpui::AnyWindowHandle = window.into();
         let host = Host::test_stub();
         let frame_hook = FrameHook::new(host.clone());
-        let store = cx.new(|_| ViewStore::new(host, any_window, frame_hook, overlay_host));
+        let store = cx.new(|_| ViewStore::new(host, any_window, frame_hook, overlay_host, LayoutEventOwner::ShadowTree));
         cx.update(|cx| cx.set_global(StoreGlobal(store.clone())));
         store.update(cx, |store, _| store.register_root(1, root));
 
@@ -2538,6 +2586,186 @@ mod test_app_context_tests {
             cx.read_entity(&store, |store, _| store.snapshots.contains_key(&7101)),
             true,
             "its parent must still be there"
+        );
+    }
+
+    #[gpui::test]
+    fn top_layout_dispatches_for_any_component_with_on_layout_and_skips_non_listeners(
+        cx: &mut TestAppContext,
+    ) {
+        let (store, _root) = store_with_layout_owner(cx, LayoutEventOwner::from_loom_flag(true));
+        let with_on_layout = |tag: i32, component: &'static str, on_layout: bool| {
+            let mut node = create(tag, component);
+            node.layout_changed = true;
+            node.view.on_layout = on_layout;
+            node
+        };
+        apply(
+            cx,
+            &store,
+            vec![
+                with_on_layout(101, "View", true),
+                with_on_layout(102, "Paragraph", true),
+                with_on_layout(103, "TextInput", true),
+                with_on_layout(104, "Image", true),
+                with_on_layout(105, "ScrollView", true),
+                with_on_layout(106, "View", false),
+                with_on_layout(107, "Paragraph", false),
+            ],
+        );
+
+        let events = cx.read_entity(&store, |store, _| store.host.take_dispatched_events());
+        let tags: Vec<i32> = events
+            .iter()
+            .filter(|(_, ty, _)| ty == "topLayout")
+            .map(|(tag, _, _)| *tag)
+            .collect();
+        assert_eq!(tags, vec![101, 102, 103, 104, 105]);
+        assert_eq!(
+            events[1].2,
+            serde_json::json!({
+                "layout": {
+                    "x": 10.0,
+                    "y": 12.0,
+                    "width": 40.0,
+                    "height": 30.0
+                }
+            })
+        );
+    }
+
+    #[gpui::test]
+    fn top_layout_tracks_on_layout_across_layout_only_updates_and_inserts(
+        cx: &mut TestAppContext,
+    ) {
+        let (store, _root) = store_with_layout_owner(cx, LayoutEventOwner::from_loom_flag(true));
+
+        let mut p_create = create(201, "Paragraph");
+        p_create.layout_changed = true;
+        p_create.view.on_layout = true;
+        p_create.frame = RectF {
+            x: 0.0,
+            y: 0.0,
+            w: 50.0,
+            h: 20.0,
+        };
+        apply(cx, &store, vec![p_create]);
+        assert_eq!(
+            cx.read_entity(&store, |store, _| store.host.take_dispatched_events())
+                .len(),
+            1
+        );
+
+        // Layout-only update (props_changed = false, op.view default) keeps on_layout = true.
+        let mut p_layout_only = op(MountKind::Update);
+        p_layout_only.tag = 201;
+        p_layout_only.component = "Paragraph".into();
+        p_layout_only.props_changed = false;
+        p_layout_only.layout_changed = true;
+        p_layout_only.frame = RectF {
+            x: 1.0,
+            y: 2.0,
+            w: 80.0,
+            h: 25.0,
+        };
+        apply(cx, &store, vec![p_layout_only]);
+        let events = cx.read_entity(&store, |store, _| store.host.take_dispatched_events());
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].2,
+            serde_json::json!({
+                "layout": {
+                    "x": 1.0,
+                    "y": 2.0,
+                    "width": 80.0,
+                    "height": 25.0
+                }
+            })
+        );
+
+        // Removing onLayout stops subsequent layout events.
+        let mut p_remove_prop = op(MountKind::Update);
+        p_remove_prop.tag = 201;
+        p_remove_prop.component = "Paragraph".into();
+        p_remove_prop.props_changed = true;
+        p_remove_prop.view.on_layout = false;
+        p_remove_prop.layout_changed = true;
+        p_remove_prop.frame = RectF {
+            x: 1.0,
+            y: 2.0,
+            w: 90.0,
+            h: 25.0,
+        };
+        apply(cx, &store, vec![p_remove_prop]);
+        assert!(
+            cx.read_entity(&store, |store, _| store.host.take_dispatched_events())
+                .is_empty()
+        );
+
+        // Insert carrying initial layout honors Create's on_layout flag.
+        let mut v_create = create(202, "Paragraph");
+        v_create.layout_changed = false;
+        v_create.view.on_layout = true;
+        let mut v_insert = insert(202, -1);
+        v_insert.component = "Paragraph".into();
+        v_insert.props_changed = false;
+        v_insert.layout_changed = true;
+        v_insert.frame = RectF {
+            x: 3.0,
+            y: 4.0,
+            w: 60.0,
+            h: 18.0,
+        };
+        apply(cx, &store, vec![v_create, v_insert]);
+        let insert_events = cx.read_entity(&store, |store, _| store.host.take_dispatched_events());
+        assert_eq!(insert_events.len(), 1);
+        assert_eq!(insert_events[0].0, 202);
+    }
+
+    #[gpui::test]
+    fn top_layout_does_not_dispatch_when_shadow_tree_owns_layout_events(cx: &mut TestAppContext) {
+        let (store, _root) = store_with_layout_owner(cx, LayoutEventOwner::from_loom_flag(false));
+
+        let with_on_layout = |tag: i32, component: &'static str| {
+            let mut node = create(tag, component);
+            node.layout_changed = true;
+            node.view.on_layout = true;
+            node
+        };
+        let mut insert_view = insert(306, -1);
+        insert_view.component = "View".into();
+        insert_view.props_changed = false;
+        insert_view.layout_changed = true;
+
+        let mut c306 = create(306, "View");
+        c306.layout_changed = false;
+        c306.view.on_layout = true;
+
+        apply(
+            cx,
+            &store,
+            vec![
+                with_on_layout(301, "View"),
+                with_on_layout(302, "Paragraph"),
+                with_on_layout(303, "TextInput"),
+                with_on_layout(304, "Image"),
+                with_on_layout(305, "ScrollView"),
+                c306,
+                insert_view,
+            ],
+        );
+
+        let mut update = op(MountKind::Update);
+        update.tag = 301;
+        update.component = "View".into();
+        update.props_changed = false;
+        update.layout_changed = true;
+        apply(cx, &store, vec![update]);
+
+        assert!(
+            cx.read_entity(&store, |store, _| store.host.take_dispatched_events())
+                .is_empty(),
+            "Fabric builds emit topLayout from ShadowTree and must not dispatch a second time from ViewStore"
         );
     }
 }

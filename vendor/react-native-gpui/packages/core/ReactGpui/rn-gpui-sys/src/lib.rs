@@ -116,6 +116,7 @@ pub mod ffi {
         /// "minimize" | "maximize" | "close" for a custom caption button.
         pub on_context_menu: bool,
         pub on_wheel: bool,
+        pub on_layout: bool,
         /// A node's group name, and the JSON of each state style prop; empty = not set.
         pub group: String,
         pub hover_style: String,
@@ -717,6 +718,11 @@ pub use ffi::{
 /// Where JavaScript runs with the Loom renderer: the `jsThread` autolink
 /// recorded, fixed when the app is built.
 pub const JS_THREAD: &str = env!("RN_GPUI_JS_THREAD_BUILT");
+/// Whether the Loom renderer was active when this crate was built.
+pub const LOOM_RENDERER: bool = match option_env!("RN_GPUI_LOOM_RENDERER_BUILT") {
+    Some(value) => matches!(value.as_bytes(), b"1"),
+    None => false,
+};
 
 pub type MountHandler = Box<dyn Fn(ffi::MountBatch) + Send + Sync>;
 pub type MeasureHandler =

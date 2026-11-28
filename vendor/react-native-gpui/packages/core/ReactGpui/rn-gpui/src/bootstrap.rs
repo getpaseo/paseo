@@ -1,5 +1,7 @@
 use crate::host::Host;
-use crate::store::{OverlayHost, StoreGlobal, SurfaceRootView, ViewStore, APP_SURFACE_ID};
+use crate::store::{
+    LayoutEventOwner, OverlayHost, StoreGlobal, SurfaceRootView, ViewStore, APP_SURFACE_ID,
+};
 use gpui::{point, px, size, App, AppContext, Application, Bounds, WindowBounds, WindowOptions};
 use rn_gpui_sys::ffi::MountBatch;
 use std::cell::Cell;
@@ -1871,7 +1873,15 @@ pub fn run_with(mut config: DesktopAppConfig) {
 
         #[cfg(feature = "visual-capture")]
         let host_for_input = host.clone();
-        let store = cx.new(|_| ViewStore::new(host, window, frame_hook.clone(), overlay_host));
+        let store = cx.new(|_| {
+            ViewStore::new(
+                host,
+                window,
+                frame_hook.clone(),
+                overlay_host,
+                LayoutEventOwner::from_loom_flag(rn_gpui_sys::LOOM_RENDERER),
+            )
+        });
         cx.set_global(StoreGlobal(store.clone()));
         #[cfg(feature = "test-driver")]
         if std::env::var("RN_GPUI_TEST_DRIVER").as_deref() == Ok("1") {

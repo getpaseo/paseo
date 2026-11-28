@@ -15,6 +15,7 @@ interface Node {
   component: string;
   testID: string;
   text: string;
+  frame?: [number, number, number, number];
   children?: Node[];
 }
 const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
@@ -206,5 +207,64 @@ test.skipIf(!endpoint || !appearanceFixture)(
     await expectBackground(row, 0xff00ff00);
     await request("hover", { tag: outside.tag });
     await expectBackground(row, 0xff0000ff);
+  },
+);
+
+test.skipIf(!endpoint || !appearanceFixture)(
+  "onLayout fires with React Native layout shape for View, Text, TextInput, Image, and ScrollView",
+  async () => {
+    interface LayoutEntry {
+      count: number;
+      keys: string[];
+      layout: { x: number; y: number; width: number; height: number };
+    }
+    const readLayouts = async () => {
+      const node = await nodeWithId("layout-results");
+      return JSON.parse(node.text) as Record<string, LayoutEntry>;
+    };
+    const targets = [
+      ["view", "layout-view"],
+      ["text", "layout-text"],
+      ["textInput", "layout-text-input"],
+      ["image", "layout-image"],
+      ["scrollView", "layout-scroll"],
+    ] as const;
+
+    await expect
+      .poll(async () => Object.keys(await readLayouts()).sort())
+      .toEqual(targets.map(([key]) => key).sort());
+
+    const initial = await readLayouts();
+    const treeNodes = await nodes();
+    for (const [key, testID] of targets) {
+      const entry = initial[key];
+      expect(entry.count, `${key} initial onLayout count`).toBe(1);
+      expect(entry.keys, `${key} layout keys`).toEqual(["height", "width", "x", "y"]);
+      expect(entry.layout.width, `${key} width`).toBeGreaterThan(0);
+      expect(entry.layout.height, `${key} height`).toBeGreaterThan(0);
+      const treeNode = treeNodes.find((n) => n.testID === testID);
+      expect(treeNode?.frame, `${testID} frame`).toBeDefined();
+      expect(entry.layout.x).toBeCloseTo(treeNode!.frame![0], 2);
+      expect(entry.layout.y).toBeCloseTo(treeNode!.frame![1], 2);
+      expect(entry.layout.width).toBeCloseTo(treeNode!.frame![2], 2);
+      expect(entry.layout.height).toBeCloseTo(treeNode!.frame![3], 2);
+    }
+
+    const toggle = await nodeWithId("layout-resize-toggle");
+    expect(await request("click", { tag: toggle.tag })).toEqual({ clicked: true });
+    await expect
+      .poll(async () => {
+        const parsed = await readLayouts();
+        return targets.every(([key]) => (parsed[key]?.count ?? 0) >= 2);
+      })
+      .toBe(true);
+
+    const resized = await readLayouts();
+    for (const [key] of targets) {
+      expect(resized[key].count, `${key} resized onLayout count`).toBe(2);
+      expect(resized[key].layout.width, `${key} resized width`).toBeGreaterThan(
+        initial[key].layout.width,
+      );
+    }
   },
 );

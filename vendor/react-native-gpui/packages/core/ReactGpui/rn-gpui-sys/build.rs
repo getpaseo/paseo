@@ -148,6 +148,10 @@ fn main() {
             &renderer.js_thread
         }
     );
+    println!(
+        "cargo:rustc-env=RN_GPUI_LOOM_RENDERER_BUILT={}",
+        if renderer.loom { "1" } else { "0" }
+    );
     let react_native_dir = match &renderer.react_native_dir {
         Some(dir) if renderer.loom => {
             assert!(
