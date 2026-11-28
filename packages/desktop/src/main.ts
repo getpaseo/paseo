@@ -8,6 +8,7 @@ log.transports.console.level = "info";
 log.initialize({ spyRendererConsole: true });
 
 import { inheritLoginShellEnv } from "./login-shell-env.js";
+import { configureLinuxInputMethod } from "./features/linux-input-method.js";
 
 import path from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -960,6 +961,9 @@ async function bootstrap(): Promise<void> {
     return;
   }
 
+  if (configureLinuxInputMethod()) {
+    log.info("[input-method] using reconnectable IBus portal");
+  }
   await app.whenReady();
   void startAppUpdatePacing();
 
