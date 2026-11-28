@@ -13,6 +13,7 @@ import {
   type StringCommandShellInvocation,
 } from "./string-command-shell.js";
 import { readPaseoConfig } from "./paseo-config-file.js";
+import { createWorktreeWithCowFallback } from "./cow-worktree.js";
 export {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
@@ -1918,9 +1919,25 @@ async function createWorktreeAtRepositoryRoot({
     await mkdir(dirname(worktreePath), { recursive: true });
 
     // Primitive owner for `git worktree add`; callers route through createWorktreeCore.
-    await runGitCommand(["worktree", "add", worktreePath, ...sourcePlan.addArguments], {
+    await createWorktreeWithCowFallback({
       cwd,
-      timeout: 120_000,
+      worktreePath,
+      addArguments: sourcePlan.addArguments,
+      runPlainAdd: async () => {
+        await runGitCommand(["worktree", "add", worktreePath, ...sourcePlan.addArguments], {
+          cwd,
+          timeout: 120_000,
+        });
+      },
+      runNoCheckoutAdd: async () => {
+        await runGitCommand(
+          ["worktree", "add", "--no-checkout", worktreePath, ...sourcePlan.addArguments],
+          {
+            cwd,
+            timeout: 120_000,
+          },
+        );
+      },
     });
     worktreePath = await normalizePathForOwnership(worktreePath);
 
