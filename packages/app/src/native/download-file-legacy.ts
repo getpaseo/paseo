@@ -1,4 +1,5 @@
 import * as FileSystem from "expo-file-system/legacy";
+import { i18n } from "@/i18n/i18next";
 
 export interface NativeDownloadOptions {
   url: string;
@@ -15,6 +16,6 @@ export async function downloadFile(options: NativeDownloadOptions): Promise<stri
     options.onProgress,
   );
   const result = await download.downloadAsync();
-  if (!result) throw new Error("Download was cancelled");
+  if (!result) throw new Error(i18n.t("downloads.cancelled"));
   return result.uri;
 }
