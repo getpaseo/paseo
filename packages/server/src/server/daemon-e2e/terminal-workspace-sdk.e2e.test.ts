@@ -197,7 +197,12 @@ test("script status started and stopped by one client reaches every subscribed c
   await writeFile(
     path.join(cwd, "paseo.json"),
     JSON.stringify({
-      scripts: { sleeper: { type: "script", command: 'node -e "setInterval(() => {}, 60000)"' } },
+      scripts: {
+        sleeper: {
+          type: "script",
+          command: `node -e "require('node:fs').writeFileSync('sleeper.pid', String(process.pid)); setInterval(() => {}, 60000)"`,
+        },
+      },
     }),
   );
   const observer = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -216,10 +221,20 @@ test("script status started and stopped by one client reaches every subscribed c
     expect((await client.startWorkspaceScript(workspaceId, "sleeper")).error).toBeNull();
     await expect.poll(() => actorSeen.at(-1)).toBe("running");
     await expect.poll(() => observerSeen.at(-1)).toBe("running");
+    const pidFile = path.join(cwd, "sleeper.pid");
+    await expect
+      .poll(async () => Number(await readFile(pidFile, "utf8").catch(() => "0")), {
+        timeout: 10_000,
+      })
+      .toBeGreaterThan(0);
+    const pid = Number(await readFile(pidFile, "utf8"));
 
     expect((await client.stopWorkspaceScript(workspaceId, "sleeper")).error).toBeNull();
     await expect.poll(() => actorSeen.at(-1)).toBe("stopped");
     await expect.poll(() => observerSeen.at(-1)).toBe("stopped");
+    // On Windows the PTY kill ends the shell at once and the script's own process a moment
+    // later, while it still holds cwd; the stop is complete once the program has exited.
+    await expect.poll(() => isFixtureProcessRunning(pid), { timeout: 15_000 }).toBe(false);
     expect(bystanderEvents).not.toContain("script_status_update");
   } finally {
     await observer.close();
