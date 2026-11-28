@@ -1,4 +1,9 @@
-import { GitMerge, GitPullRequest, GitPullRequestClosed } from "lucide-react-native";
+import {
+  GitMerge,
+  GitPullRequest,
+  GitPullRequestClosed,
+  GitPullRequestDraft,
+} from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import type { PrHint } from "@/git/pr-hint";
@@ -6,13 +11,16 @@ import type { PrHint } from "@/git/pr-hint";
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedGitMerge = withUnistyles(GitMerge);
 const ThemedGitPullRequestClosed = withUnistyles(GitPullRequestClosed);
+const ThemedGitPullRequestDraft = withUnistyles(GitPullRequestDraft);
 
 const successMapping = (theme: Theme) => ({ color: theme.colors.statusSuccess });
 const mergedMapping = (theme: Theme) => ({ color: theme.colors.statusMerged });
 const dangerMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
+const mutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 const PRESENTATION = {
   open: { Icon: ThemedGitPullRequest, color: successMapping },
+  draft: { Icon: ThemedGitPullRequestDraft, color: mutedMapping },
   merged: { Icon: ThemedGitMerge, color: mergedMapping },
   closed: { Icon: ThemedGitPullRequestClosed, color: dangerMapping },
 } as const;
