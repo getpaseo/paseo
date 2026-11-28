@@ -4068,14 +4068,7 @@ test("isProviderActiveForUsage rechecks on forceRefresh and enforces a real time
   }
 });
 
-test("listProviderEnvironments returns only enabled locator-configured providers with secrets stripped", async () => {
-  vi.stubEnv("ANTHROPIC_API_KEY", "shell-secret-key");
-  vi.stubEnv("OPENAI_API_KEY", "shell-openai-key");
-  vi.stubEnv("ANTHROPIC_BASE_URL", undefined);
-  vi.stubEnv("CLAUDE_CODE_USE_BEDROCK", undefined);
-  vi.stubEnv("CLAUDE_CODE_USE_VERTEX", undefined);
-  vi.stubEnv("OPENAI_BASE_URL", undefined);
-
+test("listProviderEnvironments returns enabled env-configured providers with base ID and configuredEnvKeys", async () => {
   const manager = new ProviderSnapshotManager({
     logger: createTestLogger(),
     providerOverrides: {
@@ -4085,26 +4078,6 @@ test("listProviderEnvironments returns only enabled locator-configured providers
         env: {
           CLAUDE_CONFIG_DIR: "/tmp/claude-work",
           CLAUDE_SECURESTORAGE_CONFIG_DIR: "/tmp/claude-work-secure",
-          ANTHROPIC_API_KEY: "provider-anthropic-secret",
-          ANTHROPIC_AUTH_TOKEN: "provider-auth-token",
-          CLAUDE_CODE_OAUTH_TOKEN: "provider-oauth-token",
-          MY_SECRET: "custom-secret",
-        },
-      },
-      "claude-secret-only": {
-        extends: "claude",
-        label: "Claude (API key only)",
-        env: {
-          ANTHROPIC_API_KEY: "sk-only",
-          MY_SECRET: "custom-only",
-        },
-      },
-      "claude-proxy": {
-        extends: "claude",
-        label: "Claude (Proxy)",
-        env: {
-          CLAUDE_CONFIG_DIR: "/tmp/claude-proxy",
-          ANTHROPIC_BASE_URL: "https://llm-proxy.example",
         },
       },
       "claude-disabled": {
@@ -4120,42 +4093,38 @@ test("listProviderEnvironments returns only enabled locator-configured providers
         label: "Codex (Work)",
         env: {
           CODEX_HOME: "/tmp/codex-work",
-          OPENAI_API_KEY: "provider-openai-secret",
-          MY_SECRET: "codex-secret",
         },
       },
-      "codex-proxy": {
+      "codex-no-env": {
         extends: "codex",
-        label: "Codex (Proxy)",
-        env: {
-          CODEX_HOME: "/tmp/codex-proxy",
-          OPENAI_BASE_URL: "https://proxy.example/v1",
-        },
+        label: "Codex (No Env)",
       },
     },
   });
   try {
     const envs = manager.listProviderEnvironments();
-    expect(envs.map(({ provider, label }) => ({ provider, label }))).toEqual([
-      { provider: "claude", label: "Claude (Work)" },
-      { provider: "codex", label: "Codex (Work)" },
+    expect(
+      envs.map(({ provider, label, configuredEnvKeys }) => ({
+        provider,
+        label,
+        configuredEnvKeys,
+      })),
+    ).toEqual([
+      {
+        provider: "claude",
+        label: "Claude (Work)",
+        configuredEnvKeys: ["CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR"],
+      },
+      {
+        provider: "codex",
+        label: "Codex (Work)",
+        configuredEnvKeys: ["CODEX_HOME"],
+      },
     ]);
-    const claudeEnv = envs[0]!.env;
-    expect(claudeEnv.CLAUDE_CONFIG_DIR).toBe("/tmp/claude-work");
-    expect(claudeEnv.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe("/tmp/claude-work-secure");
-    expect(claudeEnv).not.toHaveProperty("ANTHROPIC_API_KEY");
-    expect(claudeEnv).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
-    expect(claudeEnv).not.toHaveProperty("CLAUDE_CODE_OAUTH_TOKEN");
-    expect(claudeEnv).not.toHaveProperty("OPENAI_API_KEY");
-    expect(claudeEnv).not.toHaveProperty("MY_SECRET");
-
-    const codexEnv = envs[1]!.env;
-    expect(codexEnv.CODEX_HOME).toBe("/tmp/codex-work");
-    expect(codexEnv).not.toHaveProperty("OPENAI_API_KEY");
-    expect(codexEnv).not.toHaveProperty("ANTHROPIC_API_KEY");
-    expect(codexEnv).not.toHaveProperty("MY_SECRET");
+    expect(envs[0]!.env.CLAUDE_CONFIG_DIR).toBe("/tmp/claude-work");
+    expect(envs[0]!.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe("/tmp/claude-work-secure");
+    expect(envs[1]!.env.CODEX_HOME).toBe("/tmp/codex-work");
   } finally {
-    vi.unstubAllEnvs();
     await manager.shutdown();
     manager.destroy();
   }

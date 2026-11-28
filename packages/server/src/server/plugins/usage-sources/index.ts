@@ -10,19 +10,7 @@ import {
   type UsageProblem,
   type UsageReport,
 } from "@getpaseo/protocol/messages";
-import {
-  filterUsageDiscoveryEnv,
-  hasConfiguredUsageLocatorEnv,
-  targetsForeignUsageEndpoint,
-  USAGE_DISCOVERY_LOCATOR_ENV_KEYS,
-} from "./provider-env.js";
-
-export {
-  filterUsageDiscoveryEnv,
-  hasConfiguredUsageLocatorEnv,
-  targetsForeignUsageEndpoint,
-  USAGE_DISCOVERY_LOCATOR_ENV_KEYS,
-};
+import { selectProviderUsageEnv } from "./provider-env.js";
 
 export interface UsageSource {
   id: string;
@@ -177,9 +165,14 @@ export class UsageSourceRegistry {
 
   private configuredProviderScopes(): DiscoverOptions[] {
     const scopes: DiscoverOptions[] = [];
-    for (const { provider, label, env } of this.agents.providerEnvironments?.() ?? []) {
-      const sanitizedEnv = filterUsageDiscoveryEnv(env);
-      if (Object.keys(sanitizedEnv).length === 0) continue;
+    for (const {
+      provider,
+      label,
+      env,
+      configuredEnvKeys,
+    } of this.agents.providerEnvironments?.() ?? []) {
+      const sanitizedEnv = selectProviderUsageEnv({ provider, env, configuredEnvKeys });
+      if (!sanitizedEnv) continue;
       scopes.push({
         scope: { kind: "session", provider, env: sanitizedEnv },
         matchProvider: provider,

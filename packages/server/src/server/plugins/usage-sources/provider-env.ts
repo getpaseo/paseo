@@ -1,11 +1,11 @@
 /**
  * Explicit allowlist of non-secret config-directory and credential-store locator
- * environment variables read by usage sources during discovery.
+ * environment variables read by usage sources during host discovery.
  *
  * Raw auth tokens, API keys, and arbitrary custom provider env vars are never
  * included here and never cross into usage source discovery.
  */
-export const USAGE_DISCOVERY_LOCATOR_ENV_KEYS = [
+const USAGE_DISCOVERY_LOCATOR_ENV_KEYS = [
   "HOME",
   "USERPROFILE",
   "USER",
@@ -29,8 +29,7 @@ const USAGE_DISCOVERY_LOCATOR_ENV_SET: ReadonlySet<string> = new Set(
   USAGE_DISCOVERY_LOCATOR_ENV_KEYS,
 );
 
-/** Keep only allowlisted non-secret config-directory / locator environment variables. */
-export function filterUsageDiscoveryEnv(
+function filterUsageDiscoveryEnv(
   env: Readonly<Record<string, string | undefined>>,
 ): Record<string, string> {
   const filtered: Record<string, string> = {};
@@ -39,16 +38,6 @@ export function filterUsageDiscoveryEnv(
     if (value !== undefined) filtered[key] = value;
   }
   return filtered;
-}
-
-/** Whether a provider's own configured env sets at least one allowlisted locator variable. */
-export function hasConfiguredUsageLocatorEnv(
-  configuredEnv: Readonly<Record<string, string | undefined>> | undefined,
-): boolean {
-  if (!configuredEnv) return false;
-  return Object.entries(configuredEnv).some(
-    ([key, value]) => value !== undefined && USAGE_DISCOVERY_LOCATOR_ENV_SET.has(key),
-  );
 }
 
 function isEnabledFlag(value: string | undefined): boolean {
@@ -61,7 +50,7 @@ function isEnabledFlag(value: string | undefined): boolean {
  * Vertex, a custom proxy base URL, or an API-key override for Cursor). Evaluated
  * daemon-side so neither endpoint URLs nor auth secrets cross into usage plugins.
  */
-export function targetsForeignUsageEndpoint(
+function targetsForeignUsageEndpoint(
   baseProvider: string,
   effectiveEnv: Readonly<Record<string, string | undefined>>,
 ): boolean {
@@ -82,4 +71,32 @@ export function targetsForeignUsageEndpoint(
     return Boolean(effectiveEnv.CURSOR_API_KEY || effectiveEnv.CURSOR_AUTH_TOKEN);
   }
   return false;
+}
+
+export interface SelectProviderUsageEnvInput {
+  provider: string;
+  env: Readonly<Record<string, string | undefined>>;
+  configuredEnvKeys?: readonly string[];
+}
+
+/**
+ * Resolve the sanitized locator environment for configured-provider host discovery,
+ * or `null` when the provider configures no locator variable or targets a foreign endpoint.
+ */
+export function selectProviderUsageEnv({
+  provider,
+  env,
+  configuredEnvKeys,
+}: SelectProviderUsageEnvInput): Record<string, string> | null {
+  if (
+    configuredEnvKeys !== undefined &&
+    !configuredEnvKeys.some(
+      (key) => env[key] !== undefined && USAGE_DISCOVERY_LOCATOR_ENV_SET.has(key),
+    )
+  ) {
+    return null;
+  }
+  if (targetsForeignUsageEndpoint(provider, env)) return null;
+  const sanitized = filterUsageDiscoveryEnv(env);
+  return Object.keys(sanitized).length > 0 ? sanitized : null;
 }

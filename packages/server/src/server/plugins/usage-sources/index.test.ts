@@ -1398,9 +1398,31 @@ test("#3589: configured provider discovery strips secret and arbitrary env vars 
         provider: "claude",
         label: "Claude (secret-only)",
         env: {
+          HOME: "/home/alice",
           ANTHROPIC_API_KEY: "sk-ant-only",
           MY_SECRET: "only-secret",
         },
+        configuredEnvKeys: ["ANTHROPIC_API_KEY", "MY_SECRET"],
+      },
+      {
+        provider: "claude",
+        label: "Claude (proxy)",
+        env: {
+          HOME: "/home/alice",
+          CLAUDE_CONFIG_DIR: "/claude-proxy",
+          ANTHROPIC_BASE_URL: "https://llm-proxy.example",
+        },
+        configuredEnvKeys: ["CLAUDE_CONFIG_DIR", "ANTHROPIC_BASE_URL"],
+      },
+      {
+        provider: "claude",
+        label: "Claude (bedrock)",
+        env: {
+          HOME: "/home/alice",
+          CLAUDE_CONFIG_DIR: "/claude-bedrock",
+          CLAUDE_CODE_USE_BEDROCK: "1",
+        },
+        configuredEnvKeys: ["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_USE_BEDROCK"],
       },
     ],
   });
