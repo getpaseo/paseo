@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef } from "react";
+import { MermaidColorsContext } from "./colors-context";
+import { runtimeStyleOf } from "./options";
 import type { DiagramColorScheme, MermaidRenderRequest } from "./render-model";
 import { mermaidRuntimeHtml } from "./runtime/html.gen";
 import { parseMermaidRuntimeMessage, type MermaidRuntimeRenderMessage } from "./runtime/messages";
@@ -24,22 +26,28 @@ export function MermaidIframeRuntime({
   onRendered,
   onRenderFailed,
 }: MermaidIframeRuntimeProps) {
+  const options = useContext(MermaidColorsContext);
+  const style = useMemo(() => runtimeStyleOf(options), [options]);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const driverRef = useRef<MermaidRuntimeRequestDriver | null>(null);
   driverRef.current ??= new MermaidRuntimeRequestDriver();
 
-  const sendRequest = useCallback((current: MermaidRenderRequest | null) => {
-    const target = iframeRef.current?.contentWindow;
-    if (!current || !target) return;
-    const message: MermaidRuntimeRenderMessage = {
-      type: "render",
-      revision: current.revision,
-      source: current.source,
-      colorScheme: current.colorScheme,
-      interactive: false,
-    };
-    target.postMessage(message, "*");
-  }, []);
+  const sendRequest = useCallback(
+    (current: MermaidRenderRequest | null) => {
+      const target = iframeRef.current?.contentWindow;
+      if (!current || !target) return;
+      const message: MermaidRuntimeRenderMessage = {
+        type: "render",
+        revision: current.revision,
+        source: current.source,
+        colorScheme: current.colorScheme,
+        interactive: false,
+        style,
+      };
+      target.postMessage(message, "*");
+    },
+    [style],
+  );
 
   useEffect(() => {
     sendRequest(driverRef.current?.update(request) ?? null);

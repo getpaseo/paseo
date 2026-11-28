@@ -1,35 +1,16 @@
-import { useCallback, useEffect, useMemo, useReducer } from "react";
+import { useCallback, useContext, useEffect, useMemo, useReducer, useRef } from "react";
+import { MermaidColorsContext } from "./colors-context";
 import {
+  cacheMermaidRenderReply,
   createMermaidRenderModel,
   getMermaidRenderRequest,
   reduceMermaidRenderModel,
+  resolveMermaidRenderInput,
   type DiagramColorScheme,
   type DiagramDimensions,
   type RenderedDiagram,
 } from "./render-model";
-import { containsUnsafeMermaidSource } from "./source-policy";
 import type { MarkdownPhase } from "./types";
-
-const renderCache = new Map<string, RenderedDiagram>();
-const RENDER_CACHE_LIMIT = 50;
-
-function cacheKey(source: string, colorScheme: DiagramColorScheme): string {
-  return `${colorScheme}\u0000${source}`;
-}
-
-function readCachedRender(source: string, colorScheme: DiagramColorScheme): RenderedDiagram | null {
-  return renderCache.get(cacheKey(source, colorScheme)) ?? null;
-}
-
-function cacheRender(rendered: RenderedDiagram): void {
-  if (renderCache.size >= RENDER_CACHE_LIMIT) {
-    const oldest = renderCache.keys().next().value;
-    if (oldest !== undefined) {
-      renderCache.delete(oldest);
-    }
-  }
-  renderCache.set(cacheKey(rendered.source, rendered.colorScheme), rendered);
-}
 
 export function useMermaidRenderModel({
   source,
@@ -40,21 +21,20 @@ export function useMermaidRenderModel({
   phase: MarkdownPhase;
   colorScheme: DiagramColorScheme;
 }) {
+  const options = useContext(MermaidColorsContext);
   const renderInput = useMemo(
-    () => ({
-      source,
-      phase,
-      colorScheme,
-      rejected: containsUnsafeMermaidSource(source),
-      cached: readCachedRender(source, colorScheme),
-    }),
-    [colorScheme, phase, source],
+    () => resolveMermaidRenderInput({ source, phase, colorScheme, options }),
+    [colorScheme, options, phase, source],
   );
   const [state, dispatch] = useReducer(
     reduceMermaidRenderModel,
     renderInput,
     createMermaidRenderModel,
   );
+  // The iframe re-subscribes its message listener whenever `rendered` changes, so the
+  // callback stays stable and reads the current model from here instead.
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   useEffect(() => {
     dispatch({ type: "inputChanged", input: renderInput });
@@ -72,7 +52,7 @@ export function useMermaidRenderModel({
         colorScheme: response.colorScheme,
         ...response.dimensions,
       };
-      cacheRender(cached);
+      cacheMermaidRenderReply(stateRef.current, cached, response.revision);
       dispatch({
         type: "rendered",
         revision: response.revision,

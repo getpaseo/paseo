@@ -31,11 +31,12 @@ function waitForRuntimeMessage(
 
 async function mountRuntime(
   size?: { width: number; height: number },
-  options?: { allowSameOrigin?: boolean },
+  options?: { allowSameOrigin?: boolean } | boolean,
 ): Promise<HTMLIFrameElement> {
   const frame = document.createElement("iframe");
   frame.sandbox.add("allow-scripts");
-  if (options?.allowSameOrigin) {
+  const allowSameOrigin = typeof options === "boolean" ? options : options?.allowSameOrigin;
+  if (allowSameOrigin) {
     frame.sandbox.add("allow-same-origin");
   }
   if (size) {
@@ -59,7 +60,11 @@ function renderedSize(message: MermaidRuntimeMessage): { height: number; width: 
 
 function render(
   frame: HTMLIFrameElement,
-  input: { revision: number; source: string },
+  input: {
+    revision: number;
+    source: string;
+    style?: Record<string, unknown>;
+  },
 ): Promise<MermaidRuntimeMessage> {
   const response = waitForRuntimeMessage(
     frame,
@@ -68,16 +73,15 @@ function render(
       "revision" in message &&
       message.revision === input.revision,
   );
-  frame.contentWindow?.postMessage(
-    {
-      type: "render",
-      revision: input.revision,
-      source: input.source,
-      colorScheme: "dark",
-      interactive: false,
-    },
-    "*",
-  );
+  const message: Record<string, unknown> = {
+    type: "render",
+    revision: input.revision,
+    source: input.source,
+    colorScheme: "dark",
+    interactive: false,
+  };
+  if (input.style) message.style = input.style;
+  frame.contentWindow?.postMessage(message, "*");
   return response;
 }
 
@@ -100,6 +104,73 @@ describe("Mermaid sandbox runtime", () => {
     expect(first).toMatchObject({ type: "rendered", revision: 1, source: firstSource });
     expect(invalid).toEqual({ type: "renderError", revision: 2 });
     expect(second).toMatchObject({ type: "rendered", revision: 3, source: secondSource });
+  });
+
+  it("applies custom colours and restores the default on the next render", async () => {
+    const frame = await mountRuntime(undefined, true);
+    const source = "flowchart LR\nA[Start] --> B[Done]";
+    await render(frame, {
+      revision: 1,
+      source,
+      style: {
+        colors: {
+          primaryColor: "#123456",
+          primaryTextColor: "#fedcba",
+          primaryBorderColor: "#abcdef",
+          lineColor: "#987654",
+        },
+      },
+    });
+    const doc = frame.contentDocument!;
+    const node = doc.querySelector(".node rect")!;
+    const line = doc.querySelector(".flowchart-link")!;
+    expect(frame.contentWindow!.getComputedStyle(node).fill).toBe("rgb(18, 52, 86)");
+    expect(frame.contentWindow!.getComputedStyle(node).stroke).toBe("rgb(171, 205, 239)");
+    expect(frame.contentWindow!.getComputedStyle(line).stroke).toBe("rgb(152, 118, 84)");
+    expect(frame.contentWindow!.getComputedStyle(doc.querySelector(".nodeLabel")!).fill).toBe(
+      "rgb(254, 220, 186)",
+    );
+    await render(frame, { revision: 2, source });
+    expect(frame.contentWindow!.getComputedStyle(doc.querySelector(".node rect")!).fill).not.toBe(
+      "rgb(18, 52, 86)",
+    );
+  });
+
+  it("rewrites plain rectangles to the default shape and reports the original source", async () => {
+    const frame = await mountRuntime(undefined, true);
+    const source = "flowchart LR\nA[Start] --> B[Done]";
+    const rendered = await render(frame, {
+      revision: 1,
+      source,
+      style: { defaultShape: "diamond" },
+    });
+    expect(rendered).toMatchObject({ type: "rendered", source });
+    const doc = frame.contentDocument!;
+    expect(doc.querySelectorAll(".node polygon")).toHaveLength(2);
+    expect(doc.querySelector(".node rect.basic")).toBeNull();
+  });
+
+  it("applies flowchart radius and restores it on the next render", async () => {
+    const frame = await mountRuntime(undefined, true);
+    const source = "flowchart LR\nA(Start) --> B(Done)";
+    await render(frame, { revision: 1, source, style: { radius: 12 } });
+    const doc = frame.contentDocument!;
+    expect(doc.querySelector(".node rect.basic")?.getAttribute("rx")).toBe("12");
+    await render(frame, { revision: 2, source });
+    expect(doc.querySelector(".node rect.basic")?.getAttribute("rx")).not.toBe("12");
+  });
+
+  it("applies a cluster background", async () => {
+    const frame = await mountRuntime(undefined, true);
+    const source = "flowchart LR\nsubgraph group\nA[Start]\nend";
+    await render(frame, {
+      revision: 1,
+      source,
+      style: { colors: { clusterBkg: "#112233", primaryColor: "#abcdef" } },
+    });
+    const cluster = frame.contentDocument!.querySelector(".cluster rect");
+    expect(cluster).not.toBeNull();
+    expect(frame.contentWindow!.getComputedStyle(cluster!).fill).toBe("rgb(17, 34, 51)");
   });
 
   /**

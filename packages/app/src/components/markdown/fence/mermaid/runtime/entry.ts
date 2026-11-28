@@ -1,4 +1,5 @@
 import mermaid from "mermaid";
+import { applyDefaultNodeShape } from "../node-shape";
 import {
   parseMermaidRuntimeRenderMessage,
   type MermaidRuntimeMessage,
@@ -21,12 +22,59 @@ function sendToHost(message: MermaidRuntimeMessage): void {
   }
 }
 
-function initializeMermaid(colorScheme: "light" | "dark"): void {
+function hasThemeColor(style: MermaidRuntimeRenderMessage["style"]): boolean {
+  const colors = style?.colors;
+  return !!colors && Object.values(colors).some((color) => color !== undefined);
+}
+
+function assignDefined(target: Record<string, unknown>, key: string, value: unknown): void {
+  if (value !== undefined) target[key] = value;
+}
+
+function themeVariablesFor(
+  colorScheme: "light" | "dark",
+  style: MermaidRuntimeRenderMessage["style"],
+): Record<string, unknown> {
+  const themeVariables: Record<string, unknown> = {};
+  const colors = style?.colors;
+  if (hasThemeColor(style) && colors) {
+    themeVariables.darkMode = colorScheme === "dark";
+    for (const [key, value] of Object.entries(colors)) {
+      assignDefined(themeVariables, key, value);
+    }
+  }
+  assignDefined(themeVariables, "radius", style?.radius);
+  assignDefined(themeVariables, "strokeWidth", style?.strokeWidth);
+  if (style?.fontFamily) themeVariables.fontFamily = style.fontFamily;
+  if (style?.fontSize !== undefined) themeVariables.fontSize = `${style.fontSize}px`;
+  return themeVariables;
+}
+
+function flowchartConfig(style: MermaidRuntimeRenderMessage["style"]): Record<string, unknown> {
+  const flowchart: Record<string, unknown> = { htmlLabels: false };
+  assignDefined(flowchart, "curve", style?.curve);
+  assignDefined(flowchart, "nodeSpacing", style?.nodeSpacing);
+  assignDefined(flowchart, "rankSpacing", style?.rankSpacing);
+  assignDefined(flowchart, "padding", style?.padding);
+  assignDefined(flowchart, "diagramPadding", style?.diagramPadding);
+  return flowchart;
+}
+
+function initializeMermaid(
+  colorScheme: "light" | "dark",
+  style: MermaidRuntimeRenderMessage["style"],
+): void {
+  const defaultTheme = colorScheme === "dark" ? "dark" : "default";
+  const themeVariables = themeVariablesFor(colorScheme, style);
+  // Always pass theme. Mermaid rebuilds site config from its defaults, then
+  // applies themeVariables, so a later render without style restores them.
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: "strict",
     suppressErrorRendering: true,
-    theme: colorScheme === "dark" ? "dark" : "default",
+    theme: hasThemeColor(style) ? "base" : defaultTheme,
+    ...(Object.keys(themeVariables).length > 0 ? { themeVariables } : {}),
+    ...(style?.look ? { look: style.look } : {}),
     secure: [
       "secure",
       "securityLevel",
@@ -38,7 +86,7 @@ function initializeMermaid(colorScheme: "light" | "dark"): void {
       "themeVariables",
       "themeCSS",
     ],
-    flowchart: { htmlLabels: false },
+    flowchart: flowchartConfig(style),
     class: { htmlLabels: false },
     // A gantt chart takes the width of the element it renders in, which is the oversized staging
     // container. Keep it as wide as this frame, which on native is the message column.
@@ -99,16 +147,13 @@ function measureDiagram(host: HTMLElement, svg: SVGSVGElement | null): DiagramSi
 
 async function render(message: MermaidRuntimeRenderMessage): Promise<void> {
   try {
-    initializeMermaid(message.colorScheme);
+    initializeMermaid(message.colorScheme, message.style);
     const staging = document.getElementById("staging");
     if (!staging) {
       throw new Error("Missing Mermaid staging container");
     }
-    const { svg } = await mermaid.render(
-      `paseo-mermaid-${message.revision}`,
-      message.source,
-      staging,
-    );
+    const source = applyDefaultNodeShape(message.source, message.style?.defaultShape);
+    const { svg } = await mermaid.render(`paseo-mermaid-${message.revision}`, source, staging);
     if (message.revision !== latestRevision) {
       return;
     }

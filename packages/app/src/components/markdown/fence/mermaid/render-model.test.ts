@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  cacheMermaidRender,
+  cacheMermaidRenderReply,
   createMermaidRenderModel,
   getMermaidRenderRequest,
+  getMermaidStyleKey,
+  readCachedMermaidRender,
   reduceMermaidRenderModel,
+  resolveMermaidRenderInput,
   type MermaidRenderInput,
   type MermaidRenderModel,
 } from "./render-model";
@@ -159,5 +164,165 @@ describe("Mermaid render model", () => {
 
     expect(rejected.status).toBe("rejected");
     expect(rejected.visible).toBeNull();
+  });
+
+  it("only reuses cached dimensions for the same palette and requests a new revision on palette change", () => {
+    const source = "flowchart LR\nUniqueCacheTest --> Done";
+    const palette = { colors: { primaryColor: "#123456" } };
+    const otherPalette = { colors: { primaryColor: "#abcdef" } };
+
+    const firstInput = resolveMermaidRenderInput({
+      source,
+      phase: "complete",
+      colorScheme: "light",
+      options: palette,
+    });
+    const first = createMermaidRenderModel(firstInput);
+    expect(first.visible).toBeNull();
+
+    cacheMermaidRender(
+      { source, colorScheme: "light", height: 120, width: 180 },
+      getMermaidStyleKey(palette),
+    );
+    const rendered = reduceMermaidRenderModel(first, {
+      type: "rendered",
+      revision: first.revision,
+      source,
+      colorScheme: "light",
+      dimensions: { height: 120, width: 180 },
+    });
+
+    const same = createMermaidRenderModel(
+      resolveMermaidRenderInput({
+        source,
+        phase: "complete",
+        colorScheme: "light",
+        options: palette,
+      }),
+    );
+    expect(same.visible?.width).toBe(180);
+
+    const differentInput = resolveMermaidRenderInput({
+      source,
+      phase: "complete",
+      colorScheme: "light",
+      options: otherPalette,
+    });
+    const different = createMermaidRenderModel(differentInput);
+    expect(different.visible).toBeNull();
+
+    const updatedInPlace = reduceMermaidRenderModel(rendered, {
+      type: "inputChanged",
+      input: differentInput,
+    });
+    expect(updatedInPlace.status).toBe("pending");
+    expect(updatedInPlace.revision).toBe(rendered.revision + 1);
+    expect(updatedInPlace.visible?.width).toBe(180);
+    expect(getMermaidRenderRequest(updatedInPlace)).toEqual({
+      revision: rendered.revision + 1,
+      source,
+      colorScheme: "light",
+    });
+  });
+
+  it("does not reuse cached dimensions for a different default shape", () => {
+    const source = "flowchart LR\nShapeCache --> Done";
+    const rounded = {
+      colors: { primaryColor: "#123456" },
+      defaultShape: "rounded" as const,
+    };
+    const diamond = {
+      colors: { primaryColor: "#123456" },
+      defaultShape: "diamond" as const,
+    };
+
+    cacheMermaidRender(
+      { source, colorScheme: "light", height: 90, width: 200 },
+      getMermaidStyleKey(rounded),
+    );
+
+    const diamondModel = createMermaidRenderModel(
+      resolveMermaidRenderInput({
+        source,
+        phase: "complete",
+        colorScheme: "light",
+        options: diamond,
+      }),
+    );
+    expect(diamondModel.visible).toBeNull();
+
+    const again = createMermaidRenderModel(
+      resolveMermaidRenderInput({
+        source,
+        phase: "complete",
+        colorScheme: "light",
+        options: rounded,
+      }),
+    );
+    expect(again.visible?.width).toBe(200);
+  });
+
+  it("rejects an invalid runtime style before it becomes a request", () => {
+    const invalid = resolveMermaidRenderInput({
+      source: "flowchart LR\nA --> B",
+      phase: "complete",
+      colorScheme: "dark",
+      options: { fontSize: 14.5 },
+    });
+    const rejected = createMermaidRenderModel(invalid);
+    expect(rejected.status).toBe("rejected");
+    expect(getMermaidRenderRequest(rejected)).toBeNull();
+
+    const valid = resolveMermaidRenderInput({
+      source: "flowchart LR\nA --> B",
+      phase: "complete",
+      colorScheme: "dark",
+      options: { fontSize: 14 },
+    });
+    expect(valid.rejected).toBe(false);
+    expect(getMermaidRenderRequest(createMermaidRenderModel(valid))).not.toBeNull();
+  });
+
+  it("only caches a render result whose style still matches the request", () => {
+    const source = "flowchart LR\nStaleStyleCache --> Done";
+    const rounded = { defaultShape: "rounded" as const };
+    const diamond = { defaultShape: "diamond" as const };
+    const roundedModel = createMermaidRenderModel(
+      resolveMermaidRenderInput({
+        source,
+        phase: "complete",
+        colorScheme: "light",
+        options: rounded,
+      }),
+    );
+    const diamondModel = reduceMermaidRenderModel(roundedModel, {
+      type: "inputChanged",
+      input: resolveMermaidRenderInput({
+        source,
+        phase: "complete",
+        colorScheme: "light",
+        options: diamond,
+      }),
+    });
+
+    cacheMermaidRenderReply(
+      diamondModel,
+      { source, colorScheme: "light", height: 40, width: 60 },
+      roundedModel.revision,
+    );
+    expect(readCachedMermaidRender(source, "light", getMermaidStyleKey(diamond))).toBeNull();
+    expect(readCachedMermaidRender(source, "light", getMermaidStyleKey(rounded))).toBeNull();
+
+    cacheMermaidRenderReply(
+      diamondModel,
+      { source, colorScheme: "light", height: 90, width: 200 },
+      diamondModel.revision,
+    );
+    expect(readCachedMermaidRender(source, "light", getMermaidStyleKey(diamond))).toEqual({
+      source,
+      colorScheme: "light",
+      height: 90,
+      width: 200,
+    });
   });
 });
