@@ -71,13 +71,13 @@ console.log(result.status, result.lastMessage);
 await client.close();
 ```
 
-| 选项                      | 取值                                                                              |
-| ------------------------- | --------------------------------------------------------------------------------- |
-| `approval_policy`         | `untrusted`、`on-request`、`never` 或 `{ granular: { … } }`                       |
-| `sandbox_mode`            | `read-only`、`workspace-write`、`danger-full-access`                              |
-| `sandbox_workspace_write` | `writable_roots`、`network_access`、`exclude_slash_tmp`、`exclude_tmpdir_env_var` |
-| `web_search`              | `disabled`、`cached`、`indexed`、`live`                                           |
-| `features`                | `multi_agent_v2`、`network_proxy`（布尔值，或代理/域名策略对象）                  |
+| 选项                      | 取值                                                                                              |
+| ------------------------- | ------------------------------------------------------------------------------------------------- |
+| `approval_policy`         | `untrusted`、`on-request`、`never` 或 `{ granular: { … } }`                                       |
+| `sandbox_mode`            | `read-only`、`workspace-write`、`danger-full-access`                                              |
+| `sandbox_workspace_write` | `writable_roots`、`network_access`、`exclude_slash_tmp`、`exclude_tmpdir_env_var`                 |
+| `web_search`              | `disabled`、`cached`、`indexed`、`live`                                                           |
+| `features`                | `multi_agent_v2`、`shell_tool`、`apps`、`plugins`、`network_proxy`（布尔值，或代理/域名策略对象） |
 
 `approval_policy: "never"` 只是去掉了提示。Agent 被允许接触什么由 `sandbox_mode` 决定。设置 `never` 而不设置沙箱模式，会让无人值守的 Agent 拥有完全访问权限。
 
