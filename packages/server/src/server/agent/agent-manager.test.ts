@@ -5,7 +5,7 @@ import {
   formatAgentMessage,
   formatSystemNotificationPrompt,
 } from "./agent-messages/index.js";
-import { expect, test, vi, onTestFinished } from "vitest";
+import { describe, expect, test, vi, onTestFinished } from "vitest";
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -76,6 +76,7 @@ import { mergeProviderOptions } from "./provider-options.js";
 
 import { OpenCodeV2AgentClient } from "./providers/opencode/v2/agent.js";
 import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
+import { ACPAgentSession } from "./providers/acp-agent.js";
 import { fileURLToPath } from "node:url";
 import { V2Harness } from "./providers/opencode/test-utils/v2-harness.js";
 
@@ -8377,6 +8378,43 @@ test("replaceAgentRun stays running when a stale old terminal arrives before the
   await firstRunDrain;
   await secondRunDrain;
   unsubscribe();
+});
+
+test("tracks Grok background wake events through the ACP session", async () => {
+  const workdir = process.cwd();
+  let session!: ACPAgentSession;
+  class GrokWakeClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new ACPAgentSession(config, {
+        provider: "codex",
+        grokAutonomousTurns: true,
+        logger,
+        defaultCommand: ["grok", "agent", "stdio"],
+        defaultModes: [],
+        capabilities: TEST_CAPABILITIES,
+      });
+      (session as unknown as { sessionId: string }).sessionId = "session-1";
+      return session;
+    }
+  }
+  const manager = new AgentManager({ clients: { codex: new GrokWakeClient() }, logger });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const emit = (update: Record<string, unknown>) =>
+    session.extNotification("_x.ai/session/update", { sessionId: "session-1", update });
+  await emit({
+    sessionUpdate: "hook_execution",
+    event_name: "user_prompt_submit",
+    prompt_id: "task-completed-example",
+  });
+  await vi.waitFor(() => expect(manager.getAgent(agent.id)?.lifecycle).toBe("running"));
+  await emit({
+    sessionUpdate: "turn_completed",
+    prompt_id: "task-completed-example",
+    stop_reason: "end_turn",
+  });
+  await vi.waitFor(() => expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle"));
 });
 
 test("applies live autonomous events and preserves usage omitted from completion", async () => {

@@ -3530,6 +3530,99 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 
 describe("ACPAgentSession", () => {
+  test("tracks a Grok background wake until its matching completion", async () => {
+    const session = createSessionWithConfig({ provider: "grok" });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const sendUpdate = (update: Record<string, unknown>) =>
+      session.extNotification("_x.ai/session/update", { sessionId: "session-1", update });
+    await sendUpdate({
+      sessionUpdate: "hook_execution",
+      event_name: "user_prompt_submit",
+      prompt_id: "task-completed-task-1",
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "turn_started", turnId: "task-completed-task-1" }),
+    );
+    expect(await session.canStopRuntime()).toBe(false);
+    await sendUpdate({
+      sessionUpdate: "turn_completed",
+      prompt_id: "task-completed-other",
+      stop_reason: "end_turn",
+    });
+    expect(terminalEvents(events)).toEqual([]);
+    await sendUpdate({
+      sessionUpdate: "turn_completed",
+      prompt_id: "task-completed-task-1",
+      stop_reason: "end_turn",
+    });
+    expect(terminalEvents(events)).toEqual([
+      expect.objectContaining({ type: "turn_completed", turnId: "task-completed-task-1" }),
+    ]);
+    expect(await session.canStopRuntime()).toBe(true);
+  });
+
+  test("cancels a Grok wake and ignores unrelated sessions and foreground hooks", async () => {
+    const session = createSessionWithConfig({ provider: "grok" });
+    const internal = asInternals<ACPSessionInternals>(session);
+    internal.sessionId = "session-1";
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    internal.connection = {
+      ...openPromptConnection(() => new Promise(() => {})),
+      cancel,
+    } as typeof internal.connection;
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const sendUpdate = (sessionId: string, update: Record<string, unknown>) =>
+      session.extNotification("_x.ai/session/update", { sessionId, update });
+    const start = {
+      sessionUpdate: "hook_execution",
+      event_name: "user_prompt_submit",
+      prompt_id: "subagent-completed-child",
+    };
+    await sendUpdate("other-session", start);
+    expect(events.filter((event) => event.type === "turn_started")).toEqual([]);
+    internal.activeForegroundTurnId = "foreground";
+    await sendUpdate("session-1", start);
+    expect(events.filter((event) => event.type === "turn_started")).toEqual([]);
+    internal.activeForegroundTurnId = null;
+    await sendUpdate("session-1", start);
+    await session.interrupt();
+    expect(cancel).toHaveBeenCalledWith({ sessionId: "session-1" });
+    await sendUpdate("session-1", {
+      sessionUpdate: "turn_completed",
+      prompt_id: "subagent-completed-child",
+      stop_reason: "cancelled",
+    });
+    expect(terminalEvents(events)).toEqual([
+      expect.objectContaining({ type: "turn_canceled", turnId: "subagent-completed-child" }),
+    ]);
+    expect(await session.canStopRuntime()).toBe(true);
+  });
+  test("fails an autonomous Grok turn when its connection closes", async () => {
+    const session = createSessionWithConfig({ provider: "grok" });
+    const internal = asInternals<ACPSessionInternals>(session);
+    internal.sessionId = "session-1";
+    const controller = new AbortController();
+    internal.connection = { prompt: vi.fn(), signal: controller.signal };
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await session.extNotification("_x.ai/session/update", {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "hook_execution",
+        event_name: "user_prompt_submit",
+        prompt_id: "notifications-1",
+      },
+    });
+    controller.abort();
+    expect(terminalEvents(events)).toEqual([
+      expect.objectContaining({ type: "turn_failed", turnId: "notifications-1" }),
+    ]);
+    expect(await session.canStopRuntime()).toBe(true);
+  });
+
   test("drops MCP servers from ACP requests when the provider does not support MCP", () => {
     const session = new ACPAgentSession(
       {

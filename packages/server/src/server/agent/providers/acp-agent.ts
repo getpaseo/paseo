@@ -488,6 +488,7 @@ export type ACPCatalogModelResolver = (
 
 interface ACPAgentClientOptions {
   provider: string;
+  grokAutonomousTurns?: boolean;
   // Provider id usage sources match a session against; ACP sessions without one report no usage.
   usageProvider?: string;
   logger: Logger;
@@ -522,6 +523,7 @@ interface ACPAgentClientOptions {
 
 interface ACPAgentSessionOptions {
   provider: string;
+  grokAutonomousTurns?: boolean;
   usageProvider?: string;
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
@@ -1102,6 +1104,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly grokAutonomousTurns: boolean;
   private readonly importPromptCache = new Map<string, ACPImportPromptCacheEntry>();
   private readonly now: () => number;
   protected readonly terminateProcess: ProcessTerminator;
@@ -1133,6 +1136,7 @@ export class ACPAgentClient implements AgentClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.grokAutonomousTurns = options.grokAutonomousTurns ?? false;
     this.now = options.now ?? Date.now;
   }
 
@@ -1147,6 +1151,7 @@ export class ACPAgentClient implements AgentClient {
       { ...config, provider: this.provider },
       {
         provider: this.provider,
+        grokAutonomousTurns: this.grokAutonomousTurns,
         usageProvider: this.usageProvider,
         logger: this.logger,
         runtimeSettings: this.runtimeSettings,
@@ -1206,6 +1211,7 @@ export class ACPAgentClient implements AgentClient {
     const providerOptions = ACPProviderOptionsSchema.parse(mergedConfig.providerOptions ?? {});
     const session = new ACPAgentSession(mergedConfig, {
       provider: this.provider,
+      grokAutonomousTurns: this.grokAutonomousTurns,
       usageProvider: this.usageProvider,
       logger: this.logger,
       runtimeSettings: this.runtimeSettings,
@@ -2072,6 +2078,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
+  private activeGrokTurnId: string | null = null;
+  private grokDisconnectListener: (() => void) | null = null;
+  private readonly grokAutonomousTurns: boolean;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private historyPending = false;
@@ -2119,6 +2128,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.grokAutonomousTurns = options.grokAutonomousTurns ?? options.provider === "grok";
   }
 
   get id(): string | null {
@@ -2294,7 +2304,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       }
       throw new Error(disconnect);
     }
-    if (this.activeForegroundTurnId) {
+    if (this.activeForegroundTurnId || this.activeGrokTurnId) {
       throw new Error("A foreground turn is already active");
     }
 
@@ -2965,7 +2975,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     this.cancelPendingPermissions();
 
-    if (this.activeForegroundTurnId) {
+    if (this.activeForegroundTurnId || this.activeGrokTurnId) {
       await this.connection.cancel({ sessionId: this.sessionId });
     }
   }
@@ -2973,6 +2983,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   async canStopRuntime(): Promise<boolean> {
     return (
       this.activeForegroundTurnId === null &&
+      this.activeGrokTurnId === null &&
       this.pendingPermissions.size === 0 &&
       this.pendingUserMessage === null &&
       !Array.from(this.terminalEntries.values()).some((terminal) => terminal.running)
@@ -2992,7 +3003,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     if (this.connection && this.sessionId) {
       try {
-        if (this.activeForegroundTurnId) {
+        if (this.activeForegroundTurnId || this.activeGrokTurnId) {
           await withTimeout(
             this.connection.cancel({ sessionId: this.sessionId }),
             ACP_CLOSE_REQUEST_TIMEOUT_MS,
@@ -3030,6 +3041,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     this.subscribers.clear();
+    this.clearGrokTurn();
     this.connection = null;
     this.child = null;
     this.activeForegroundTurnId = null;
@@ -3067,7 +3079,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         options: params.options,
         resolve,
         reject,
-        turnId: this.activeForegroundTurnId,
+        turnId: this.activeForegroundTurnId ?? this.activeGrokTurnId,
         toolCallId: params.toolCall.toolCallId,
       });
     });
@@ -3076,7 +3088,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       type: "permission_requested",
       provider: this.provider,
       request,
-      turnId: this.activeForegroundTurnId ?? undefined,
+      turnId: this.activeForegroundTurnId ?? this.activeGrokTurnId ?? undefined,
     });
     return promise;
   }
@@ -3141,12 +3153,77 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       "provider.acp.extension_notification",
     );
 
+    this.handleGrokNotification(method, params);
     const parsedCommands = this.extensionCommandsParser?.(method, params);
     if (parsedCommands) {
       this.applyResolvedCommands(parsedCommands, {
         sessionId: typeof params.sessionId === "string" ? params.sessionId : undefined,
       });
     }
+  }
+
+  private handleGrokNotification(method: string, params: Record<string, unknown>): void {
+    if (
+      this.grokAutonomousTurns &&
+      !this.replayingHistory &&
+      method === "_x.ai/session/update" &&
+      params.sessionId === this.sessionId &&
+      params.update &&
+      typeof params.update === "object"
+    ) {
+      const update = params.update as Record<string, unknown>;
+      const promptId = update.prompt_id;
+      if (
+        update.sessionUpdate === "hook_execution" &&
+        update.event_name === "user_prompt_submit" &&
+        typeof promptId === "string" &&
+        /^(task-completed-|subagent-completed-|notifications-)/.test(promptId) &&
+        !this.activeForegroundTurnId &&
+        !this.activeGrokTurnId
+      ) {
+        this.activeGrokTurnId = promptId;
+        this.grokDisconnectListener = () => {
+          if (this.activeGrokTurnId !== promptId || this.closed) return;
+          this.synthesizeCanceledToolCalls();
+          this.cancelPendingPermissions();
+          this.clearGrokTurn();
+          this.pushEvent({
+            type: "turn_failed",
+            provider: this.provider,
+            turnId: promptId,
+            error: describeACPDisconnect(this.child),
+          });
+        };
+        this.connection?.signal.addEventListener("abort", this.grokDisconnectListener, {
+          once: true,
+        });
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId: promptId });
+      }
+      if (
+        update.sessionUpdate === "turn_completed" &&
+        promptId === this.activeGrokTurnId &&
+        typeof promptId === "string"
+      ) {
+        this.clearGrokTurn();
+        this.pushEvent(
+          update.stop_reason === "cancelled"
+            ? {
+                type: "turn_canceled",
+                provider: this.provider,
+                turnId: promptId,
+                reason: "Interrupted",
+              }
+            : { type: "turn_completed", provider: this.provider, turnId: promptId },
+        );
+      }
+    }
+  }
+
+  private clearGrokTurn(): void {
+    if (this.grokDisconnectListener)
+      this.connection?.signal.removeEventListener("abort", this.grokDisconnectListener);
+    this.grokDisconnectListener = null;
+    this.activeGrokTurnId = null;
   }
 
   // Cache an asynchronously-delivered slash-command batch from a provider that
@@ -3821,7 +3898,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       type: "timeline",
       provider: this.provider,
       item,
-      turnId: this.activeForegroundTurnId ?? undefined,
+      turnId: this.activeForegroundTurnId ?? this.activeGrokTurnId ?? undefined,
     };
   }
 
