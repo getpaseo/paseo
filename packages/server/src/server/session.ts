@@ -461,6 +461,12 @@ type WorkspaceUpdatePayload = Extract<
   SessionOutboundMessage,
   { type: "workspace_update" }
 >["payload"];
+interface PendingWorkspaceFlush {
+  optionsByWorkspaceId: Map<string, WorkspaceUpdateOptions | undefined>;
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+}
 interface WorkspaceUpdatesSubscriptionState {
   subscriptionId: string;
   owner: OwnedSubscription;
@@ -470,6 +476,10 @@ interface WorkspaceUpdatesSubscriptionState {
   pendingUpdatesByWorkspaceId: Map<string, WorkspaceUpdatePayload>;
   lastEmittedByWorkspaceId: Map<string, WorkspaceUpdatePayload>;
   visibleEmptyProjectIds?: Set<string>;
+  activeFlush: Promise<void> | null;
+  queuedFlush: PendingWorkspaceFlush | null;
+  outboundPacedByWorkspaceId: Map<string, WorkspaceUpdatePayload>;
+  outboundPump: Promise<void> | null;
 }
 
 class SessionRequestError extends Error {
@@ -894,7 +904,6 @@ export class Session {
     string,
     { owner: OwnedSubscription; events: Set<SessionEventSubscription>; notifications: boolean }
   >();
-  private readonly workspaceUpdateTails = new Map<string, Promise<void>>();
   private readonly terminalManager: TerminalManager | null;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly serviceProxy: ServiceProxySubsystem | null;
@@ -6581,12 +6590,10 @@ export class Session {
     }
   }
 
-  private bufferOrEmitWorkspaceUpdate(
+  private recordWorkspaceUpdateVisibility(
     subscription: WorkspaceUpdatesSubscriptionState,
     payload: WorkspaceUpdatePayload,
   ): void {
-    if (this.workspaceUpdatesSubscriptions.get(subscription.subscriptionId) !== subscription)
-      return;
     if (payload.kind === "upsert") {
       subscription.visibleEmptyProjectIds?.delete(payload.workspace.projectId);
     } else {
@@ -6597,14 +6604,86 @@ export class Session {
         subscription.visibleEmptyProjectIds?.delete(payload.removedProjectId);
       }
     }
-    if (subscription.isBootstrapping) {
-      const workspaceId = payload.kind === "upsert" ? payload.workspace.id : payload.id;
-      subscription.pendingUpdatesByWorkspaceId.set(workspaceId, payload);
+  }
+
+  private enqueueOutboundWorkspacePayloads(
+    subscription: WorkspaceUpdatesSubscriptionState,
+    payloads: readonly WorkspaceUpdatePayload[],
+  ): void {
+    if (
+      payloads.length === 0 ||
+      this.workspaceUpdatesSubscriptions.get(subscription.subscriptionId) !== subscription
+    ) {
       return;
     }
-    const workspaceId = payload.kind === "upsert" ? payload.workspace.id : payload.id;
-    subscription.lastEmittedByWorkspaceId.set(workspaceId, payload);
-    subscription.owner.emit({ type: "workspace_update", payload });
+    if (payloads.length === 1) {
+      const payload = payloads[0];
+      const workspaceId = payload.kind === "upsert" ? payload.workspace.id : payload.id;
+      // Supersede any older unsent burst frame for this workspace before emitting immediately
+      // so interactive RPC handlers (create/open/detach) never wait behind or get overwritten
+      // by a draining multi-workspace burst.
+      subscription.outboundPacedByWorkspaceId.delete(workspaceId);
+      this.recordWorkspaceUpdateVisibility(subscription, payload);
+      subscription.lastEmittedByWorkspaceId.set(workspaceId, payload);
+      subscription.owner.emit({ type: "workspace_update", payload });
+      return;
+    }
+    // Queue multi-workspace bursts for paced one-at-a-time draining without holding
+    // `activeFlush` or blocking unrelated interactive RPC replies. Latest-wins per
+    // workspace ID prevents stale queued frames from overwriting newer state.
+    for (const payload of payloads) {
+      const workspaceId = payload.kind === "upsert" ? payload.workspace.id : payload.id;
+      this.recordWorkspaceUpdateVisibility(subscription, payload);
+      subscription.lastEmittedByWorkspaceId.set(workspaceId, payload);
+      subscription.outboundPacedByWorkspaceId.set(workspaceId, payload);
+    }
+    if (!subscription.outboundPump) {
+      this.pumpOutboundWorkspaceUpdates(subscription);
+    }
+  }
+
+  private pumpOutboundWorkspaceUpdates(subscription: WorkspaceUpdatesSubscriptionState): void {
+    const pump = (async () => {
+      while (subscription.outboundPacedByWorkspaceId.size > 0) {
+        if (
+          this.workspaceUpdatesSubscriptions.get(subscription.subscriptionId) !== subscription ||
+          subscription.owner.signal.aborted
+        ) {
+          subscription.outboundPacedByWorkspaceId.clear();
+          return;
+        }
+        const nextEntry = subscription.outboundPacedByWorkspaceId.entries().next().value;
+        if (!nextEntry) {
+          return;
+        }
+        const [workspaceId, payload] = nextEntry;
+        subscription.outboundPacedByWorkspaceId.delete(workspaceId);
+        try {
+          await subscription.owner.emitAndWait({ type: "workspace_update", payload });
+        } catch (error) {
+          subscription.outboundPacedByWorkspaceId.clear();
+          if (!subscription.owner.signal.aborted) {
+            this.sessionLogger.debug(
+              { err: error, subscriptionId: subscription.subscriptionId },
+              "Stopping workspace_update burst after send failure",
+            );
+          }
+          return;
+        }
+      }
+    })().finally(() => {
+      if (subscription.outboundPump === pump) {
+        subscription.outboundPump = null;
+      }
+      if (
+        subscription.outboundPacedByWorkspaceId.size > 0 &&
+        this.workspaceUpdatesSubscriptions.get(subscription.subscriptionId) === subscription &&
+        !subscription.owner.signal.aborted
+      ) {
+        this.pumpOutboundWorkspaceUpdates(subscription);
+      }
+    });
+    subscription.outboundPump = pump;
   }
 
   private flushBootstrappedWorkspaceUpdates(
@@ -6627,6 +6706,7 @@ export class Session {
     const pending = Array.from(subscription.pendingUpdatesByWorkspaceId.values());
     subscription.pendingUpdatesByWorkspaceId.clear();
 
+    const payloadsToEmit: WorkspaceUpdatePayload[] = [];
     for (const payload of pending) {
       if (payload.kind === "upsert") {
         const snapshot = options?.snapshotByWorkspaceId?.get(payload.workspace.id);
@@ -6651,10 +6731,9 @@ export class Session {
           continue;
         }
       }
-      const workspaceId = payload.kind === "upsert" ? payload.workspace.id : payload.id;
-      subscription.lastEmittedByWorkspaceId.set(workspaceId, payload);
-      subscription.owner.emit({ type: "workspace_update", payload });
+      payloadsToEmit.push(payload);
     }
+    this.enqueueOutboundWorkspacePayloads(subscription, payloadsToEmit);
   }
 
   private async buildProjectDescriptor(
@@ -6859,9 +6938,23 @@ export class Session {
       uniqueWorkspaceIds.add(workspaceId);
     }
     if (uniqueWorkspaceIds.size === 0) return;
-    for (const subscription of this.workspaceUpdatesSubscriptions.values()) {
-      await this.enqueueWorkspaceUpdates(uniqueWorkspaceIds, subscription, options);
-    }
+    await Promise.all(
+      [...this.workspaceUpdatesSubscriptions.values()].map((subscription) =>
+        this.enqueueWorkspaceUpdates(uniqueWorkspaceIds, subscription, options),
+      ),
+    );
+  }
+
+  private mergeWorkspaceUpdateOptions(
+    existing: WorkspaceUpdateOptions | undefined,
+    incoming: WorkspaceUpdateOptions | undefined,
+  ): WorkspaceUpdateOptions | undefined {
+    if (!existing) return incoming;
+    if (!incoming) return existing;
+    return {
+      optimisticStatus: incoming.optimisticStatus ?? existing.optimisticStatus,
+      removedProjectId: incoming.removedProjectId ?? existing.removedProjectId,
+    };
   }
 
   private enqueueWorkspaceUpdates(
@@ -6869,44 +6962,95 @@ export class Session {
     subscription: WorkspaceUpdatesSubscriptionState,
     options: WorkspaceUpdateOptions | undefined,
   ): Promise<void> {
-    const previous = Array.from(workspaceIds, (workspaceId) =>
-      (this.workspaceUpdateTails.get(workspaceId) ?? Promise.resolve()).catch(() => undefined),
-    );
-    const next = Promise.all(previous).then(() =>
-      this.delivery.forSource(subscription.owner.source, () =>
-        this.emitWorkspaceUpdateBatch(workspaceIds, subscription, options),
-      ),
-    );
-    for (const workspaceId of workspaceIds) {
-      this.workspaceUpdateTails.set(workspaceId, next);
+    if (this.workspaceUpdatesSubscriptions.get(subscription.subscriptionId) !== subscription) {
+      return Promise.resolve();
     }
+    if (!subscription.queuedFlush) {
+      let resolveFlush!: () => void;
+      let rejectFlush!: (error: unknown) => void;
+      const promise = new Promise<void>((res, rej) => {
+        resolveFlush = res;
+        rejectFlush = rej;
+      });
+      subscription.queuedFlush = {
+        optionsByWorkspaceId: new Map(),
+        promise,
+        resolve: resolveFlush,
+        reject: rejectFlush,
+      };
+    }
+    for (const workspaceId of workspaceIds) {
+      const previousOptions = subscription.queuedFlush.optionsByWorkspaceId.get(workspaceId);
+      subscription.queuedFlush.optionsByWorkspaceId.set(
+        workspaceId,
+        this.mergeWorkspaceUpdateOptions(previousOptions, options),
+      );
+    }
+    const waiter = subscription.queuedFlush.promise;
+    if (!subscription.activeFlush) {
+      this.drainWorkspaceUpdateQueue(subscription);
+    }
+    return waiter;
+  }
 
-    const clearTail = () => {
-      for (const workspaceId of workspaceIds) {
-        if (this.workspaceUpdateTails.get(workspaceId) === next) {
-          this.workspaceUpdateTails.delete(workspaceId);
+  private drainWorkspaceUpdateQueue(subscription: WorkspaceUpdatesSubscriptionState): void {
+    const run = (async () => {
+      while (subscription.queuedFlush) {
+        const batch = subscription.queuedFlush;
+        subscription.queuedFlush = null;
+        if (this.workspaceUpdatesSubscriptions.get(subscription.subscriptionId) !== subscription) {
+          batch.resolve();
+          return;
+        }
+        try {
+          await this.delivery.forSource(subscription.owner.source, () =>
+            this.emitWorkspaceUpdateBatch(batch.optionsByWorkspaceId, subscription),
+          );
+          batch.resolve();
+        } catch (error) {
+          batch.reject(error);
         }
       }
-    };
-    void next.then(clearTail, clearTail);
-    return next;
+    })().finally(() => {
+      if (subscription.activeFlush === run) {
+        subscription.activeFlush = null;
+      }
+      if (subscription.queuedFlush) {
+        this.drainWorkspaceUpdateQueue(subscription);
+      }
+    });
+    subscription.activeFlush = run;
+  }
+
+  private collectWorkspaceUpdatePayload(
+    subscription: WorkspaceUpdatesSubscriptionState,
+    workspaceId: string,
+    payload: WorkspaceUpdatePayload,
+    payloadsToEmit: WorkspaceUpdatePayload[],
+  ): void {
+    if (subscription.isBootstrapping) {
+      this.recordWorkspaceUpdateVisibility(subscription, payload);
+      subscription.pendingUpdatesByWorkspaceId.set(workspaceId, payload);
+      return;
+    }
+    payloadsToEmit.push(payload);
   }
 
   private async emitWorkspaceUpdateBatch(
-    workspaceIds: ReadonlySet<string>,
+    optionsByWorkspaceId: ReadonlyMap<string, WorkspaceUpdateOptions | undefined>,
     subscription: WorkspaceUpdatesSubscriptionState,
-    options: WorkspaceUpdateOptions | undefined,
   ): Promise<void> {
     if (this.workspaceUpdatesSubscriptions.get(subscription.subscriptionId) !== subscription) {
       return;
     }
 
     const descriptorsByWorkspaceId = await this.buildWorkspaceDescriptorMap({
-      workspaceIds,
+      workspaceIds: optionsByWorkspaceId.keys(),
       includeGitData: true,
     });
 
-    for (const workspaceId of workspaceIds) {
+    const payloadsToEmit: WorkspaceUpdatePayload[] = [];
+    for (const [workspaceId, options] of optionsByWorkspaceId) {
       if (this.workspaceUpdatesSubscriptions.get(subscription.subscriptionId) !== subscription) {
         return;
       }
@@ -6933,15 +7077,18 @@ export class Session {
           workspaceId,
           options?.removedProjectId,
         );
-        this.bufferOrEmitWorkspaceUpdate(
+        const sequencedRemove = this.directorySync.sequenceWorkspaceUpdate(
+          removePayload,
+          workspace ?? null,
+          workspaceId,
+          subscription.syncEnabled === true,
+          subscription.filter?.includeBackground,
+        );
+        this.collectWorkspaceUpdatePayload(
           subscription,
-          this.directorySync.sequenceWorkspaceUpdate(
-            removePayload,
-            workspace ?? null,
-            workspaceId,
-            subscription.syncEnabled === true,
-            subscription.filter?.includeBackground,
-          ),
+          workspaceId,
+          sequencedRemove,
+          payloadsToEmit,
         );
         continue;
       }
@@ -6962,8 +7109,10 @@ export class Session {
         continue;
       }
 
-      this.bufferOrEmitWorkspaceUpdate(subscription, nextPayload);
+      this.collectWorkspaceUpdatePayload(subscription, workspaceId, nextPayload, payloadsToEmit);
     }
+
+    this.enqueueOutboundWorkspacePayloads(subscription, payloadsToEmit);
   }
 
   private applyOptimisticWorkspaceStatus(
@@ -7199,6 +7348,7 @@ export class Session {
   ): Promise<void> {
     const owner = request.subscribe
       ? this.delivery.begin("workspaces", request.subscribe.subscriptionId, async (id) => {
+          this.workspaceUpdatesSubscriptions.get(id)?.outboundPacedByWorkspaceId.clear();
           this.workspaceUpdatesSubscriptions.delete(id);
           this.refreshObservationProducers();
           await this.reconcileWorkspaceGitObservers();
@@ -7218,6 +7368,10 @@ export class Session {
           pendingUpdatesByWorkspaceId: new Map(),
           lastEmittedByWorkspaceId: new Map(),
           visibleEmptyProjectIds: new Set(),
+          activeFlush: null,
+          queuedFlush: null,
+          outboundPacedByWorkspaceId: new Map(),
+          outboundPump: null,
         }
       : null;
     if (subscription) {
@@ -7235,9 +7389,12 @@ export class Session {
         },
         "fetch_workspaces_request_received",
       );
-      const payload = request.sync
+      const { payload, clientWorkspaces } = request.sync
         ? await this.readWorkspaceDirectorySync(request)
-        : await this.listFetchWorkspacesEntries(request);
+        : await this.listFetchWorkspacesEntries(request).then((page) => ({
+            payload: page,
+            clientWorkspaces: page.entries,
+          }));
 
       this.sessionLogger.debug(
         {
@@ -7248,11 +7405,11 @@ export class Session {
         },
         "fetch_workspaces_response_ready",
       );
-      const snapshot = this.buildBootstrapSnapshot(payload.entries);
+      const snapshot = this.buildBootstrapSnapshot(clientWorkspaces);
       if (subscription) {
         this.seedWorkspaceSubscriptionSnapshot(
           subscription,
-          payload.entries,
+          clientWorkspaces,
           payload.emptyProjects,
         );
       }
@@ -7529,6 +7686,10 @@ export class Session {
     };
   }
 
+  // A sequenced read returns entries tagged with `syncSeq` (and in changes mode only the entries
+  // after the client's cursor), while the client holds every visible descriptor after applying it.
+  // Return that full, untagged, visibility-filtered set so the subscription seeds from what the
+  // client actually holds instead of re-emitting unchanged workspaces on the next Git snapshot.
   private async readWorkspaceDirectorySync(
     request: Extract<SessionInboundMessage, { type: "fetch_workspaces_request" }>,
   ) {
@@ -7537,16 +7698,20 @@ export class Session {
         "invalid_request",
         "Sequenced workspace directory reads do not support filters.",
       );
+    const allWorkspaces = await this.workspaceDirectory.listDescriptors();
     const result = this.directorySync.synchronizeWorkspaces(
-      await this.workspaceDirectory.listDescriptors(),
+      allWorkspaces,
       request.sync ?? {},
       request.includeBackground,
     );
+    const matchesVisibility = (workspace: WorkspaceDescriptorPayload) =>
+      request.includeBackground || !workspace.background;
     return {
-      ...result,
-      entries: result.entries.filter(
-        (workspace) => request.includeBackground || !workspace.background,
-      ),
+      payload: {
+        ...result,
+        entries: result.entries.filter(matchesVisibility),
+      },
+      clientWorkspaces: allWorkspaces.filter(matchesVisibility),
     };
   }
 

@@ -570,6 +570,7 @@ function createSessionForWorkspaceTests(
   options: {
     appVersion?: string | null;
     onMessage?: (message: SessionOutboundMessage) => void;
+    onMessageToSource?: SessionOptions["onMessageToSource"];
     onWorkspaceRecovered?: SessionOptions["onWorkspaceRecovered"];
     workspaceRuntimeStore?: WorkspaceRuntimeStore;
     workspaceGitService?: ReturnType<typeof createNoopWorkspaceGitService>;
@@ -663,6 +664,7 @@ function createSessionForWorkspaceTests(
       permissions: OWNER_PERMISSIONS,
       appVersion: options.appVersion ?? null,
       onMessage: options.onMessage ?? vi.fn(),
+      onMessageToSource: options.onMessageToSource,
       onWorkspaceRecovered: options.onWorkspaceRecovered,
       logger: asSessionLogger(logger),
       downloadTokenStore: asDownloadTokenStore(),
@@ -10373,5 +10375,694 @@ test("path archive of an archived exact child leaves its active parent untouched
     expect(existsSync(root)).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  { name: "snapshot mode", useCursor: false, includeBackground: false },
+  { name: "changes mode", useCursor: true, includeBackground: false },
+  { name: "changes mode with background workspaces", useCursor: true, includeBackground: true },
+])(
+  "sequenced workspace subscriptions do not re-send unchanged workspaces after $name",
+  async ({ useCursor, includeBackground }) => {
+    const emitted: SessionOutboundMessage[] = [];
+    const cwd = path.join(tmpdir(), "paseo-sequenced-workspace-baseline");
+    const foreground = createPersistedWorkspaceRecord({
+      workspaceId: "ws-sequenced-fg",
+      projectId: "proj-sequenced",
+      cwd,
+      kind: "local_checkout",
+      displayName: "main",
+      createdAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    });
+    const background = createPersistedWorkspaceRecord({
+      workspaceId: "ws-sequenced-bg",
+      projectId: "proj-sequenced",
+      cwd,
+      kind: "local_checkout",
+      displayName: "bg-worker",
+      background: true,
+      createdAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    });
+    const records = [foreground, background];
+    const gitListeners: Array<(snapshot: WorkspaceGitRuntimeSnapshot) => void> = [];
+    const workspaceGitService = createNoopWorkspaceGitService();
+    workspaceGitService.registerWorkspace = (_params, listener) => {
+      gitListeners.push(listener);
+      return { unsubscribe: () => {} };
+    };
+    const workspaceRuntimeStore = createWorkspaceRuntimeStore();
+    const initialSnapshot = createWorkspaceRuntimeSnapshot(cwd, { git: { currentBranch: "main" } });
+    workspaceRuntimeStore.set(initialSnapshot);
+
+    const session = createSessionForWorkspaceTests({
+      onMessage: (message) => emitted.push(message),
+      workspaceGitService,
+      workspaceRuntimeStore,
+      workspaceRegistry: {
+        initialize: async () => {},
+        existsOnDisk: async () => true,
+        listAll: async () => records,
+        listActive: async () => records.filter((record) => !record.archivedAt),
+        get: async (id) => records.find((record) => record.workspaceId === id) ?? null,
+        upsert: async () => {},
+        update: async () => null,
+        remove: async () => {},
+        archive: async () => {},
+      },
+    });
+
+    try {
+      await session.handleMessage({
+        type: "fetch_workspaces_request",
+        requestId: "initial",
+        includeBackground,
+        sync: {},
+      });
+      const initial = findByType(emitted, "fetch_workspaces_response")?.payload;
+      const expectedIds = includeBackground
+        ? ["ws-sequenced-fg", "ws-sequenced-bg"]
+        : ["ws-sequenced-fg"];
+      expect(initial?.entries.map((entry) => entry.id)).toEqual(expectedIds);
+
+      await session.handleMessage({
+        type: "fetch_workspaces_request",
+        requestId: "subscribed",
+        includeBackground,
+        sync: useCursor
+          ? { generation: initial?.sync?.generation, afterSeq: initial?.sync?.headSeq }
+          : {},
+        subscribe: { subscriptionId: "sub-sequenced" },
+      });
+      const subscribed = filterByType(emitted, "fetch_workspaces_response").at(-1)?.payload;
+      expect(subscribed?.entries).toHaveLength(useCursor ? 0 : expectedIds.length);
+      expect(subscribed?.sync?.mode).toBe(useCursor ? "changes" : "snapshot");
+      // Even in changes mode, git observers must be registered for the client's visible workspaces.
+      expect(gitListeners).toHaveLength(1);
+
+      // An unchanged git snapshot arriving on the observed checkout must emit zero workspace_updates.
+      gitListeners[0]?.(initialSnapshot);
+      await flushWorkspaceUpdateBackgroundWork();
+      expect(filterByType(emitted, "workspace_update")).toEqual([]);
+
+      // When the background workspace is archived, a foreground-only subscription must not
+      // receive a spurious remove; an includeBackground subscription must receive it.
+      records[1] = { ...background, archivedAt: "2026-03-02T12:00:00.000Z" };
+      await session.emitWorkspaceUpdatesForExternalWorkspaceIds([background.workspaceId]);
+      const bgUpdates = filterByType(emitted, "workspace_update");
+      if (includeBackground) {
+        expect(bgUpdates).toHaveLength(1);
+        expect(bgUpdates[0]?.payload).toMatchObject({ kind: "remove", id: background.workspaceId });
+      } else {
+        expect(bgUpdates).toEqual([]);
+      }
+
+      // A genuine git branch change must still emit an update for the visible workspace.
+      const changedSnapshot = createWorkspaceRuntimeSnapshot(cwd, {
+        git: { currentBranch: "feature/real-change" },
+      });
+      workspaceRuntimeStore.set(changedSnapshot);
+      gitListeners[0]?.(changedSnapshot);
+      await vi.waitFor(() => {
+        const upserts = filterByType(emitted, "workspace_update").filter(
+          (msg) => msg.payload.kind === "upsert",
+        );
+        expect(upserts).toHaveLength(1);
+      });
+      expect(
+        filterByType(emitted, "workspace_update").find((msg) => msg.payload.kind === "upsert")
+          ?.payload,
+      ).toMatchObject({
+        kind: "upsert",
+        workspace: {
+          id: foreground.workspaceId,
+          gitRuntime: { currentBranch: "feature/real-change" },
+        },
+      });
+    } finally {
+      await session.cleanup();
+    }
+  },
+);
+
+test("interactive RPC reply is not head-of-line blocked by a 200-workspace update burst", async () => {
+  const { ChunkedTransport } = await import("@getpaseo/protocol/chunked-transport");
+  const cwd = path.join(tmpdir(), "paseo-200-ws-burst");
+  const records = Array.from({ length: 200 }, (_, index) =>
+    createPersistedWorkspaceRecord({
+      workspaceId: `ws-burst-${index}`,
+      projectId: "proj-burst",
+      cwd,
+      kind: "local_checkout",
+      displayName: `ws-${index}`,
+      createdAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    }),
+  );
+  const workspaceRuntimeStore = createWorkspaceRuntimeStore();
+  workspaceRuntimeStore.set(
+    createWorkspaceRuntimeSnapshot(cwd, { git: { currentBranch: "main" } }),
+  );
+
+  const deliveredTypes: string[] = [];
+  let holdFirstBurstFrame = false;
+  let releaseFirstBurstFrame: (() => void) | null = null;
+  let notifyFirstBurstFrameStarted: (() => void) | null = null;
+  const firstBurstFrameStarted = new Promise<void>((resolve) => {
+    notifyFirstBurstFrameStarted = resolve;
+  });
+  const transport = new ChunkedTransport({
+    frameBytes: 1024 * 1024,
+    send: async (frame) => {
+      const parsed = JSON.parse(String(frame)) as SessionOutboundMessage;
+      if (holdFirstBurstFrame && parsed.type === "workspace_update") {
+        holdFirstBurstFrame = false;
+        notifyFirstBurstFrameStarted?.();
+        await new Promise<void>((resolve) => {
+          releaseFirstBurstFrame = resolve;
+        });
+      }
+      deliveredTypes.push(parsed.type);
+    },
+    deliver: () => {},
+  });
+  const socket = {};
+  const session = createSessionForWorkspaceTests({
+    onMessage: () => {},
+    onMessageToSource: async (_source, message) => {
+      await transport.send(JSON.stringify(message), { waitForDrain: true });
+    },
+    workspaceRuntimeStore,
+    workspaceRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      listAll: async () => records,
+      listActive: async () => records,
+      get: async (id) => records.find((record) => record.workspaceId === id) ?? null,
+      upsert: async () => {},
+      update: async () => null,
+      remove: async () => {},
+      archive: async () => {},
+    },
+  });
+
+  try {
+    session.delivery.attach(socket, true);
+    await session.handleMessage(
+      {
+        type: "fetch_workspaces_request",
+        requestId: "sub-burst",
+        sync: {},
+        subscribe: {},
+      },
+      socket,
+    );
+    deliveredTypes.length = 0;
+
+    // Trigger a genuine 200-workspace update burst (e.g. branch change on a shared checkout).
+    workspaceRuntimeStore.set(
+      createWorkspaceRuntimeSnapshot(cwd, { git: { currentBranch: "feature/burst" } }),
+    );
+    holdFirstBurstFrame = true;
+    const burstDone = session.emitWorkspaceUpdatesForExternalWorkspaceIds(
+      records.map((record) => record.workspaceId),
+    );
+
+    // While the first burst frame is draining on the transport, send an interactive RPC
+    // on the same socket. Then release the transport drain and let everything finish.
+    await firstBurstFrameStarted;
+    const interactiveRpc = session.handleMessage(
+      {
+        type: "fetch_agents_request",
+        requestId: "interactive-rpc",
+        scope: "active",
+      },
+      socket,
+    );
+    await interactiveRpc;
+    releaseFirstBurstFrame?.();
+    await burstDone;
+    await vi.waitFor(() => {
+      expect(deliveredTypes.length).toBe(201);
+    });
+
+    const replyIndex = deliveredTypes.indexOf("fetch_agents_response");
+    const updateCount = deliveredTypes.filter((type) => type === "workspace_update").length;
+    expect(updateCount).toBe(200);
+    expect(replyIndex).toBeGreaterThanOrEqual(0);
+    // The interactive RPC reply must interleave near the front of the burst rather than
+    // waiting behind all 200 workspace_update frames.
+    expect(replyIndex).toBeLessThan(20);
+  } finally {
+    releaseFirstBurstFrame?.();
+    await session.cleanup();
+  }
+});
+
+test("overlapping rapid workspace updates coalesce instead of rebuilding descriptors for every trigger", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const cwd = path.join(tmpdir(), "paseo-coalesced-burst");
+  const records = Array.from({ length: 20 }, (_, index) =>
+    createPersistedWorkspaceRecord({
+      workspaceId: `ws-coal-${index}`,
+      projectId: "proj-coal",
+      cwd,
+      kind: "local_checkout",
+      displayName: `ws-${index}`,
+      createdAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    }),
+  );
+  const workspaceRuntimeStore = createWorkspaceRuntimeStore();
+  workspaceRuntimeStore.set(createWorkspaceRuntimeSnapshot(cwd, { git: { currentBranch: "v0" } }));
+
+  let projectListCalls = 0;
+  let releaseFirstBuild: (() => void) | null = null;
+  let holdFirstBuild = false;
+  let firstBuildStartedResolve: (() => void) | null = null;
+  const firstBuildStarted = new Promise<void>((resolve) => {
+    firstBuildStartedResolve = resolve;
+  });
+
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    workspaceRuntimeStore,
+    projectRegistry: {
+      initialize: async () => {},
+      list: async () => {
+        projectListCalls += 1;
+        if (holdFirstBuild) {
+          holdFirstBuild = false;
+          firstBuildStartedResolve?.();
+          await new Promise<void>((resolve) => {
+            releaseFirstBuild = resolve;
+          });
+        }
+        return [];
+      },
+      get: async () => null,
+      upsert: async () => {},
+      update: async () => null,
+      remove: async () => {},
+      archive: async () => {},
+    },
+    workspaceRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      listAll: async () => records,
+      listActive: async () => records,
+      get: async (id) => records.find((record) => record.workspaceId === id) ?? null,
+      upsert: async () => {},
+      update: async () => null,
+      remove: async () => {},
+      archive: async () => {},
+    },
+  });
+
+  try {
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "sub-coal",
+      sync: {},
+      subscribe: { subscriptionId: "sub-coal" },
+    });
+    emitted.length = 0;
+    projectListCalls = 0;
+    const ids = records.map((record) => record.workspaceId);
+
+    // Hold the first in-flight build while 5 overlapping update bursts arrive.
+    holdFirstBuild = true;
+    workspaceRuntimeStore.set(
+      createWorkspaceRuntimeSnapshot(cwd, { git: { currentBranch: "v1" } }),
+    );
+    const trigger1 = session.emitWorkspaceUpdatesForExternalWorkspaceIds(ids);
+    await firstBuildStarted;
+
+    workspaceRuntimeStore.set(
+      createWorkspaceRuntimeSnapshot(cwd, { git: { currentBranch: "v2" } }),
+    );
+    const trigger2 = session.emitWorkspaceUpdatesForExternalWorkspaceIds(ids);
+    workspaceRuntimeStore.set(
+      createWorkspaceRuntimeSnapshot(cwd, { git: { currentBranch: "v3" } }),
+    );
+    const trigger3 = session.emitWorkspaceUpdatesForExternalWorkspaceIds(ids);
+    workspaceRuntimeStore.set(
+      createWorkspaceRuntimeSnapshot(cwd, { git: { currentBranch: "v4" } }),
+    );
+    const trigger4 = session.emitWorkspaceUpdatesForExternalWorkspaceIds(ids);
+    workspaceRuntimeStore.set(
+      createWorkspaceRuntimeSnapshot(cwd, { git: { currentBranch: "v5" } }),
+    );
+    const trigger5 = session.emitWorkspaceUpdatesForExternalWorkspaceIds(ids);
+
+    releaseFirstBuild?.();
+    await Promise.all([trigger1, trigger2, trigger3, trigger4, trigger5]);
+
+    // 1 in-flight build + 1 coalesced follow-up build = 2 (not 5).
+    expect(projectListCalls).toBe(2);
+    await vi.waitFor(() => {
+      const updates = filterByType(emitted, "workspace_update");
+      const lastForWs0 = updates.findLast(
+        (msg) => msg.payload.kind === "upsert" && msg.payload.workspace.id === "ws-coal-0",
+      );
+      expect(lastForWs0?.payload).toMatchObject({
+        kind: "upsert",
+        workspace: { id: "ws-coal-0", gitRuntime: { currentBranch: "v5" } },
+      });
+    });
+  } finally {
+    releaseFirstBuild?.();
+    await session.cleanup();
+  }
+});
+
+test("single-workspace emit and open_project_request do not wait behind a held 200-workspace burst", async () => {
+  const { ChunkedTransport } = await import("@getpaseo/protocol/chunked-transport");
+  const burstCwd = path.join(tmpdir(), "paseo-200-ws-burst-p2");
+  const otherCwd = path.join(tmpdir(), "paseo-other-ws-p2");
+  const burstRecords = Array.from({ length: 200 }, (_, index) =>
+    createPersistedWorkspaceRecord({
+      workspaceId: `ws-burst-p2-${index}`,
+      projectId: "proj-burst-p2",
+      cwd: burstCwd,
+      kind: "local_checkout",
+      displayName: `ws-${index}`,
+      createdAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    }),
+  );
+  const otherRecord = createPersistedWorkspaceRecord({
+    workspaceId: "ws-other-p2",
+    projectId: "proj-other-p2",
+    cwd: otherCwd,
+    kind: "local_checkout",
+    displayName: "other",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const records = [...burstRecords, otherRecord];
+  const workspaceRuntimeStore = createWorkspaceRuntimeStore();
+  workspaceRuntimeStore.set(
+    createWorkspaceRuntimeSnapshot(burstCwd, { git: { currentBranch: "main" } }),
+  );
+  workspaceRuntimeStore.set(
+    createWorkspaceRuntimeSnapshot(otherCwd, { git: { currentBranch: "main" } }),
+  );
+
+  const delivered: SessionOutboundMessage[] = [];
+  let holdFirstBurstFrame = false;
+  let releaseFirstBurstFrame: (() => void) | null = null;
+  let notifyFirstBurstFrameStarted: (() => void) | null = null;
+  const firstBurstFrameStarted = new Promise<void>((resolve) => {
+    notifyFirstBurstFrameStarted = resolve;
+  });
+  const transport = new ChunkedTransport({
+    frameBytes: 1024 * 1024,
+    send: async (frame) => {
+      const parsed = JSON.parse(String(frame)) as SessionOutboundMessage;
+      if (holdFirstBurstFrame && parsed.type === "workspace_update") {
+        holdFirstBurstFrame = false;
+        notifyFirstBurstFrameStarted?.();
+        await new Promise<void>((resolve) => {
+          releaseFirstBurstFrame = resolve;
+        });
+      }
+      delivered.push(parsed);
+    },
+    deliver: () => {},
+  });
+  const socket = {};
+  const session = createSessionForWorkspaceTests({
+    onMessage: () => {},
+    onMessageToSource: async (_source, message) => {
+      await transport.send(JSON.stringify(message), { waitForDrain: true });
+    },
+    workspaceRuntimeStore,
+    workspaceRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      listAll: async () => records,
+      listActive: async () => records,
+      get: async (id) => records.find((record) => record.workspaceId === id) ?? null,
+      upsert: async () => {},
+      update: async () => null,
+      remove: async () => {},
+      archive: async () => {},
+    },
+  });
+
+  try {
+    session.delivery.attach(socket, true);
+    await session.handleMessage(
+      {
+        type: "fetch_workspaces_request",
+        requestId: "sub-burst-p2",
+        sync: {},
+        subscribe: {},
+      },
+      socket,
+    );
+    delivered.length = 0;
+
+    // Trigger a 200-workspace burst and hold frame 0 on the transport.
+    workspaceRuntimeStore.set(
+      createWorkspaceRuntimeSnapshot(burstCwd, { git: { currentBranch: "feature/burst-p2" } }),
+    );
+    holdFirstBurstFrame = true;
+    void session.emitWorkspaceUpdatesForExternalWorkspaceIds(
+      burstRecords.map((record) => record.workspaceId),
+    );
+    await firstBurstFrameStarted;
+
+    // While frame 0 of the 200-workspace burst is STILL held on the transport,
+    // an unrelated single-workspace update (as awaited by create_workspace / open_project /
+    // agent.detach) must resolve immediately without waiting for the burst to drain.
+    workspaceRuntimeStore.set(
+      createWorkspaceRuntimeSnapshot(otherCwd, { git: { currentBranch: "feature/other" } }),
+    );
+    const otherEmitResult = await Promise.race([
+      session.emitWorkspaceUpdateForWorkspaceId(otherRecord.workspaceId).then(() => "resolved"),
+      new Promise<string>((resolve) => setTimeout(() => resolve("blocked"), 150)),
+    ]);
+    expect(otherEmitResult).toBe("resolved");
+
+    // Release the held transport frame and verify ws-other's update arrives ahead of
+    // the remaining 199 burst frames.
+    releaseFirstBurstFrame?.();
+    await vi.waitFor(() => {
+      expect(delivered.length).toBe(201);
+    });
+
+    const otherIndex = delivered.findIndex(
+      (msg) =>
+        msg.type === "workspace_update" &&
+        msg.payload.kind === "upsert" &&
+        msg.payload.workspace.id === otherRecord.workspaceId,
+    );
+    expect(otherIndex).toBeGreaterThanOrEqual(0);
+    expect(otherIndex).toBeLessThan(5);
+  } finally {
+    releaseFirstBurstFrame?.();
+    await session.cleanup();
+  }
+});
+
+test("newer workspace update supersedes an older pending update during multi-workspace bootstrap flush", async () => {
+  const { ChunkedTransport } = await import("@getpaseo/protocol/chunked-transport");
+  const cwdA = path.join(tmpdir(), "paseo-bootstrap-p3-a");
+  const cwdB = path.join(tmpdir(), "paseo-bootstrap-p3-b");
+  const recordA = createPersistedWorkspaceRecord({
+    workspaceId: "ws-boot-a",
+    projectId: "proj-boot-p3",
+    cwd: cwdA,
+    kind: "local_checkout",
+    displayName: "boot-a",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const recordB = createPersistedWorkspaceRecord({
+    workspaceId: "ws-boot-b",
+    projectId: "proj-boot-p3",
+    cwd: cwdB,
+    kind: "local_checkout",
+    displayName: "boot-b",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const records = [recordA, recordB];
+  const workspaceRuntimeStore = createWorkspaceRuntimeStore();
+  workspaceRuntimeStore.set(createWorkspaceRuntimeSnapshot(cwdA, { git: { currentBranch: "v0" } }));
+  workspaceRuntimeStore.set(createWorkspaceRuntimeSnapshot(cwdB, { git: { currentBranch: "v0" } }));
+
+  const delivered: SessionOutboundMessage[] = [];
+  let holdFirstBootstrapUpdate = false;
+  let releaseFirstBootstrapUpdate: (() => void) | null = null;
+  let notifyFirstBootstrapUpdateStarted: (() => void) | null = null;
+  const firstBootstrapUpdateStarted = new Promise<void>((resolve) => {
+    notifyFirstBootstrapUpdateStarted = resolve;
+  });
+  let holdBootstrapRead = true;
+  let releaseBootstrapRead: (() => void) | null = null;
+  let notifyBootstrapReadStarted: (() => void) | null = null;
+  const bootstrapReadStarted = new Promise<void>((resolve) => {
+    notifyBootstrapReadStarted = resolve;
+  });
+
+  const transport = new ChunkedTransport({
+    frameBytes: 1024 * 1024,
+    send: async (frame) => {
+      const parsed = JSON.parse(String(frame)) as SessionOutboundMessage;
+      if (holdFirstBootstrapUpdate && parsed.type === "workspace_update") {
+        holdFirstBootstrapUpdate = false;
+        notifyFirstBootstrapUpdateStarted?.();
+        await new Promise<void>((resolve) => {
+          releaseFirstBootstrapUpdate = resolve;
+        });
+      }
+      delivered.push(parsed);
+    },
+    deliver: () => {},
+  });
+  const socket = {};
+  let listAgentsCalls = 0;
+  const session = createSessionForWorkspaceTests({
+    onMessage: () => {},
+    onMessageToSource: async (_source, message) => {
+      await transport.send(JSON.stringify(message), { waitForDrain: true });
+    },
+    workspaceRuntimeStore,
+    agentManager: {
+      listAgents: () => {
+        listAgentsCalls += 1;
+        const lifecycle = listAgentsCalls === 1 ? "idle" : "running";
+        const updatedAt =
+          listAgentsCalls === 1 ? "2026-03-01T12:00:00.000Z" : "2026-03-01T12:05:00.000Z";
+        return [
+          makeManagedAgent({
+            id: "agent-boot-a",
+            cwd: cwdA,
+            workspaceId: recordA.workspaceId,
+            lifecycle,
+            updatedAt,
+          }),
+          makeManagedAgent({
+            id: "agent-boot-b",
+            cwd: cwdB,
+            workspaceId: recordB.workspaceId,
+            lifecycle,
+            updatedAt,
+          }),
+        ];
+      },
+    },
+    projectRegistry: {
+      initialize: async () => {},
+      list: async () => {
+        if (holdBootstrapRead) {
+          holdBootstrapRead = false;
+          notifyBootstrapReadStarted?.();
+          await new Promise<void>((resolve) => {
+            releaseBootstrapRead = resolve;
+          });
+        }
+        return [];
+      },
+      get: async () => null,
+      upsert: async () => {},
+      update: async () => null,
+      remove: async () => {},
+      archive: async () => {},
+    },
+    workspaceRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      listAll: async () => records,
+      listActive: async () => records,
+      get: async (id) => records.find((record) => record.workspaceId === id) ?? null,
+      upsert: async () => {},
+      update: async () => null,
+      remove: async () => {},
+      archive: async () => {},
+    },
+  });
+
+  try {
+    session.delivery.attach(socket, true);
+    const bootstrapPromise = session.handleMessage(
+      {
+        type: "fetch_workspaces_request",
+        requestId: "sub-boot-p3",
+        sync: {},
+        subscribe: {},
+      },
+      socket,
+    );
+    await bootstrapReadStarted;
+
+    // While fetch_workspaces_request is bootstrapping, both A and B receive newer state
+    // (newer activityAt ensures shouldEmitPendingBootstrapUpdate keeps both pending).
+    workspaceRuntimeStore.set(
+      createWorkspaceRuntimeSnapshot(cwdA, { git: { currentBranch: "v1-a" } }),
+    );
+    workspaceRuntimeStore.set(
+      createWorkspaceRuntimeSnapshot(cwdB, { git: { currentBranch: "v1-b" } }),
+    );
+    records[0] = { ...recordA, updatedAt: "2026-03-01T12:05:00.000Z" };
+    records[1] = { ...recordB, updatedAt: "2026-03-01T12:05:00.000Z" };
+    await session.emitWorkspaceUpdatesForExternalWorkspaceIds([
+      recordA.workspaceId,
+      recordB.workspaceId,
+    ]);
+
+    // Release bootstrap while holding the first flushed workspace_update frame on the transport.
+    holdFirstBootstrapUpdate = true;
+    releaseBootstrapRead?.();
+    await firstBootstrapUpdateStarted;
+
+    // While the first bootstrap update (A) is draining, B changes again to v2-b.
+    workspaceRuntimeStore.set(
+      createWorkspaceRuntimeSnapshot(cwdB, { git: { currentBranch: "v2-b" } }),
+    );
+    records[1] = { ...recordB, updatedAt: "2026-03-01T12:10:00.000Z" };
+    await session.emitWorkspaceUpdateForWorkspaceId(recordB.workspaceId);
+
+    // Release the held frame and let everything drain.
+    releaseFirstBootstrapUpdate?.();
+    await bootstrapPromise;
+    await vi.waitFor(() => {
+      const updates = filterByType(delivered, "workspace_update");
+      expect(
+        updates.some(
+          (msg) =>
+            msg.payload.kind === "upsert" &&
+            msg.payload.workspace.id === recordB.workspaceId &&
+            msg.payload.workspace.gitRuntime?.currentBranch === "v2-b",
+        ),
+      ).toBe(true);
+      expect(
+        updates.some(
+          (msg) =>
+            msg.payload.kind === "upsert" && msg.payload.workspace.id === recordA.workspaceId,
+        ),
+      ).toBe(true);
+    });
+
+    const bBranches = filterByType(delivered, "workspace_update")
+      .filter(
+        (msg) => msg.payload.kind === "upsert" && msg.payload.workspace.id === recordB.workspaceId,
+      )
+      .map((msg) =>
+        msg.payload.kind === "upsert" ? msg.payload.workspace.gitRuntime?.currentBranch : null,
+      );
+
+    // The stale v1-b bootstrap payload must NEVER arrive after v2-b.
+    expect(bBranches.at(-1)).toBe("v2-b");
+    expect(bBranches).not.toContain("v1-b");
+  } finally {
+    releaseBootstrapRead?.();
+    releaseFirstBootstrapUpdate?.();
+    await session.cleanup();
   }
 });
