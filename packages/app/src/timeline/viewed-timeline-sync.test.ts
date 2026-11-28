@@ -1349,6 +1349,33 @@ test("membership retry cannot run while disconnected", async () => {
   expect(restored.agentIds).toEqual(["agent-a"]);
 });
 
+test("reopening a cached chat while its previous subscription is pending rechecks freshness", async () => {
+  const world = new TimelineWorld(undefined, true);
+  const agentId = "agent-a";
+  world.cursors.set(agentId, { epoch: "cached", endSeq: 9 });
+  world.show("workspace", [agentId]);
+  world.sync.setConnected(true);
+
+  try {
+    const previous = await world.nextMembership();
+    world.show("workspace", []);
+    world.sync.replaceOpenTabAgentIds([]);
+    world.show("workspace", [agentId]);
+    previous.succeed({ [agentId]: "current" });
+
+    const reopened = await world.nextMembership();
+    expect(reopened.agentIds).toEqual([agentId]);
+    expect(reopened.cursors).toEqual({ [agentId]: { epoch: "cached", seq: 9 } });
+    reopened.succeed({ [agentId]: "current" });
+
+    await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus(agentId)).toBe("ready"));
+    expect(world.appliedCurrent).toEqual([agentId]);
+    world.expectNoPendingFetch();
+  } finally {
+    world.sync.dispose();
+  }
+});
+
 test("returning to an open hidden agent stays live after inactivity", async () => {
   const world = new TimelineWorld();
   world.sync.setConnected(true);

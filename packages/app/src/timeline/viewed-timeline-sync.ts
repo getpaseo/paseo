@@ -726,7 +726,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   let connected = false;
   let observation: {
     handle: ReturnType<ViewedTimelineSyncPorts["observe"]>;
-    agentIds: string[];
+    generation: number;
   } | null = null;
   let disposed = false;
   let desired: string[] = [];
@@ -997,10 +997,12 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     }
   };
 
-  const membershipIsSettled = (requested: string[]) =>
+  // A request from an earlier generation can have the same IDs after a tab
+  // closes and reopens. Its answer will be ignored, so it cannot satisfy this one.
+  const membershipIsCovered = (generation: number, requested: string[]) =>
     !membershipNeedsRetry &&
     !freshnessCheckOwed &&
-    sameAgentIds(requested, observation?.agentIds ?? acknowledged);
+    (observation ? observation.generation === generation : requested.length === 0);
 
   // A chat with no fetch running and a cursor to compare; the daemon can answer without a fetch.
   const collectFreshnessCursors = (requested: string[]) => {
@@ -1052,13 +1054,13 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     if (disposed || !connected) return;
     const generation = membershipGeneration;
     const requested = desired;
-    if (membershipIsSettled(requested)) return;
+    if (membershipIsCovered(generation, requested)) return;
     const canCheck = ports.canCheckFreshness();
     if (canCheck) {
       // The cursor sent to the daemon must include whatever the cache restores.
       await Promise.all(requested.map((agentId) => cacheLoads.get(agentId)));
       if (isReconcileSuperseded(generation)) return;
-      if (membershipIsSettled(requested)) return;
+      if (membershipIsCovered(generation, requested)) return;
     }
     membershipNeedsRetry = false;
     freshnessCheckOwed = false;
@@ -1070,7 +1072,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     try {
       const previous = observation;
       const handle = ports.observe(requested, cursors);
-      observation = { handle, agentIds: requested };
+      observation = { handle, generation };
       // A subscription routes events only once the daemon accepts it, so the old one delivers until then.
       const answer = await handle.ready.finally(() => {
         void previous?.handle.release().catch(ports.reportError);
