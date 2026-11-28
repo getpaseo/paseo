@@ -33,6 +33,7 @@ const capabilities = [
   "session.persistence",
   "permission",
   "session.list",
+  "session.subsession",
 ] as const;
 
 export interface MuseProviderOptions {
