@@ -10,6 +10,7 @@ import {
   DESKTOP_IDLE_POLL_INTERVAL_MS,
   HEARTBEAT_INTERVAL_MS,
 } from "./client-activity-tracker";
+import { subscribeNativeUserActivity } from "./native-user-activity";
 
 interface ClientActivityOptions {
   client: DaemonClient;
@@ -54,6 +55,15 @@ export function useClientActivity({
       tracker.sendHeartbeat();
     });
     return () => subscription.remove();
+  }, [tracker]);
+
+  // Track touches and typing on native, where the DOM listeners below don't exist.
+  useEffect(() => {
+    if (!isNative) return;
+    return subscribeNativeUserActivity(() => {
+      tracker.recordUserActivity();
+      tracker.maybeSendImmediateHeartbeat();
+    });
   }, [tracker]);
 
   // Track user activity and visibility on web.
