@@ -2,6 +2,7 @@ import { QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import type { ModalComponent, ModalContentProps, ModalProps } from "@getpaseo/plugin/client/ui";
 import { usePluginRuntimeContextBridge } from "@getpaseo/plugin/client/host";
 import { createContext, useCallback, useContext, useMemo, useRef, type ReactNode } from "react";
+import type { ViewStyle } from "react-native";
 import { ToastApiProvider, useToast as useAppToast } from "@/contexts/toast-api-context";
 
 interface ModalContextValue {
@@ -14,6 +15,14 @@ interface ModalContextValue {
 }
 
 const ModalContext = createContext<ModalContextValue | null>(null);
+const footerStyle: ViewStyle = {
+  paddingHorizontal: 0,
+  paddingVertical: 0,
+  borderTopWidth: 0,
+  flexDirection: "column",
+  alignItems: "stretch",
+  gap: 0,
+};
 
 function ModalRoot({ title, icon, open, onOpenChange, children }: ModalProps) {
   const onOpenChangeRef = useRef(onOpenChange);
@@ -35,6 +44,7 @@ function ModalContent({
   style,
   contentContainerStyle,
   scrollable = true,
+  footer,
 }: ModalContentProps) {
   const modal = useModalContext();
   const queryClient = useQueryClient();
@@ -60,6 +70,9 @@ function ModalContent({
       bodyStyle={style}
       contentStyle={contentContainerStyle}
       scrollable={scrollable}
+      footer={footer}
+      footerContainerStyle={footerStyle}
+      stableFooterViewport
       desktopHeight={scrollable ? undefined : "85%"}
     >
       {children}
@@ -67,4 +80,7 @@ function ModalContent({
   );
 }
 
-export const Modal: ModalComponent = Object.assign(ModalRoot, { Content: ModalContent });
+export const Modal: ModalComponent = Object.assign(ModalRoot, {
+  Content: ModalContent,
+  supportsFooter: true,
+});

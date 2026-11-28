@@ -37,10 +37,14 @@ export interface ModalContentProps {
   contentContainerStyle?: StyleProp<ViewStyle>;
   /** Default true. Set false for a bounded body with your own ScrollView or FlatList. */
   scrollable?: boolean;
+  /** A fixed action bar outside the body viewport. */
+  footer?: ReactNode;
 }
 
 export interface ModalComponent extends FunctionComponent<ModalProps> {
   Content: ComponentType<ModalContentProps>;
+  /** This host supports the Content footer slot. */
+  supportsFooter?: boolean;
 }
 
 export type ToastVariant = "default" | "info" | "success" | "warning" | "error";

@@ -29,6 +29,16 @@ export function getBottomSheetEffectiveKeyboardHeight(
   return keyboardHeight;
 }
 
+export function getMotionFrameLayout(
+  visibleHeight: number,
+  expandedHeight: number,
+  moving: boolean,
+) {
+  "worklet";
+  const bodyHeight = moving ? Math.max(visibleHeight, expandedHeight) : visibleHeight;
+  return { bodyHeight, footerOffset: visibleHeight - bodyHeight };
+}
+
 export function getBottomSheetVisibleContentHeight({
   containerHeight,
   contentPosition,
