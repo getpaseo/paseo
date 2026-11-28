@@ -1187,4 +1187,71 @@ describe("agent MCP protocol negotiation", () => {
       await daemon.stop();
     }
   }, 30_000);
+
+  test("agent tools resolve 7-char shortId returned by list_agents over HTTP MCP (#8556)", async () => {
+    const daemon = await startOfflineMcpDaemon();
+    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-mcp-shortid-"));
+    try {
+      const created = await daemon.client.callTool({
+        name: "create_agent",
+        args: {
+          cwd: agentCwd,
+          title: "ShortId E2E worker",
+          provider: "claude/claude-test-model",
+          settings: { modeId: "bypassPermissions" },
+          initialPrompt: "hello short id",
+        },
+      });
+      expect(created.isError).not.toBe(true);
+      const createdPayload = getStructuredContent(created);
+      const fullId = String(createdPayload?.agentId ?? "");
+      expect(fullId.length).toBeGreaterThan(7);
+
+      const listed = await daemon.client.callTool({
+        name: "list_agents",
+        args: { cwd: agentCwd },
+      });
+      expect(listed.isError).not.toBe(true);
+      const listedPayload = getStructuredContent(listed);
+      const agents = listedPayload?.agents as Array<{ id: string; shortId: string }>;
+      const listedAgent = agents.find((agent) => agent.id === fullId);
+      expect(listedAgent?.shortId).toBe(fullId.slice(0, 7));
+
+      const shortId = listedAgent!.shortId;
+      const status = await daemon.client.callTool({
+        name: "get_agent_status",
+        args: { agentId: shortId },
+      });
+      expect(status.isError).not.toBe(true);
+      expect(getStructuredContent(status)?.snapshot).toMatchObject({
+        id: fullId,
+        title: "ShortId E2E worker",
+      });
+
+      const prompted = await daemon.client.callTool({
+        name: "send_agent_prompt",
+        args: { agentId: shortId, prompt: "follow-up via shortId" },
+      });
+      expect(prompted.isError).not.toBe(true);
+
+      const activity = await daemon.client.callTool({
+        name: "get_agent_activity",
+        args: { agentId: shortId },
+      });
+      expect(activity.isError).not.toBe(true);
+      expect(getStructuredContent(activity)).toMatchObject({
+        agentId: fullId,
+      });
+
+      const archived = await daemon.client.callTool({
+        name: "archive_agent",
+        args: { agentId: shortId },
+      });
+      expect(archived.isError).not.toBe(true);
+      expect(getStructuredContent(archived)).toEqual({ success: true });
+    } finally {
+      await daemon.stop();
+      await rm(agentCwd, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

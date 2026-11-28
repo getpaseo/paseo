@@ -42,9 +42,12 @@ function isAmbiguousPromptFailure(error: unknown): boolean {
   if (error instanceof DaemonConnectionError) return true;
   return error instanceof Error && error.message.startsWith("Timeout waiting for message");
 }
+export interface HostOperationContext extends PaseoToolExecutionContext {
+  beforeRemotePromptSend?: (resolvedAgentId: string) => Promise<void>;
+}
 export type HostOperation = (
   input: Record<string, unknown>,
-  context: PaseoToolExecutionContext,
+  context: HostOperationContext,
 ) => Promise<PaseoToolResult>;
 export interface HostOperations {
   createAgent: HostOperation;
@@ -269,21 +272,25 @@ export function createHostResolver(input: {
               availableModes: snapshot.availableModes,
             });
           },
-          async sendPrompt(args) {
-            const agentId = args.agentId as string;
-            // Human sends retain the established mode RPC on older connected hosts.
-            // Agent sends apply their requested mode when the recipient dispatches the batch.
-            if (!input.callerAgentId && args.sessionMode !== undefined) {
-              await client.setAgentMode(agentId, args.sessionMode as string);
-            }
+          async sendPrompt(args, context) {
+            const requestedId = args.agentId as string;
             const agent = (
-              await client.fetchAgent(agentId).catch((error) => {
+              await client.fetchAgent(requestedId).catch((error) => {
                 // Snapshot preflight precedes sendMessage, so failure is definitely unsent.
                 throw new HostOperationRejectedError(error);
               })
             )?.agent;
             if (!agent)
-              throw new HostOperationRejectedError(new Error(`Agent ${agentId} not found`));
+              throw new HostOperationRejectedError(new Error(`Agent ${requestedId} not found`));
+            const agentId = agent.id;
+            // Human sends retain the established mode RPC on older connected hosts.
+            // Agent sends apply their requested mode when the recipient dispatches the batch.
+            if (!input.callerAgentId && args.sessionMode !== undefined) {
+              await client.setAgentMode(agentId, args.sessionMode as string);
+            }
+            await context.beforeRemotePromptSend?.(agentId).catch((error) => {
+              throw new HostOperationRejectedError(error);
+            });
             const receipt = await client
               .sendMessage(agentId, args.prompt as string, {
                 sessionMode: input.callerAgentId
@@ -317,16 +324,16 @@ export function createHostResolver(input: {
             return result({ status: agent.status, snapshot: agent });
           },
           async getActivity(args) {
-            const agentId = args.agentId as string;
+            const requestedId = args.agentId as string;
             const limit = args.limit as number | undefined;
-            const timeline = await client.fetchAgentTimeline(agentId, {
+            const agent = (await client.fetchAgent(requestedId))?.agent;
+            if (!agent) throw new Error(`Agent ${requestedId} not found`);
+            const timeline = await client.fetchAgentTimeline(agent.id, {
               direction: "tail",
               limit: limit ?? 0,
             });
-            const agent = (await client.fetchAgent(agentId))?.agent;
-            if (!agent) throw new Error(`Agent ${agentId} not found`);
             return result({
-              agentId,
+              agentId: agent.id,
               ...summarizeAgentActivity(
                 timeline.entries.map((entry) => entry.item),
                 limit,

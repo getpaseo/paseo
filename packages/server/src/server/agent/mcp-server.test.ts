@@ -24,6 +24,7 @@ import { z } from "zod";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer as createAgentMcpServerWithDependencies } from "./mcp-server.js";
+import { PaseoToolInputError } from "./tools/types.js";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { ensureAgentLoaded } from "./agent-loading.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
@@ -8444,6 +8445,205 @@ describe("modern MCP protocol (2026-07-28)", () => {
     } finally {
       await handler.close();
       await server.close();
+    }
+  });
+});
+
+describe("agent tool shortId prefix resolution (#8556)", () => {
+  const logger = createTestLogger();
+  const existingCwd = process.cwd();
+
+  it("resolves unique shortId prefixes across live and stored agent tools", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-short-id-live-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const childClient = new HeldTurnAgentClient("codex", true);
+    const manager = new AgentManager({
+      clients: { claude: parentClient, codex: childClient },
+      registry: storage,
+      logger,
+    });
+    const parentId = "11111111-aaaa-4bbb-8ccc-000000000001";
+    const childId = "a6d6857c-1111-4222-8333-444444444444";
+    const storedOnlyId = "c8f8079e-1111-4222-8333-444444444444";
+    const childShortId = childId.slice(0, 7);
+    const storedShortId = storedOnlyId.slice(0, 7);
+    let mcp: Client | undefined;
+
+    try {
+      await manager.createAgent({ provider: "claude", cwd: existingCwd }, parentId, {
+        workspaceId: "wks_short_id",
+      });
+      await manager.createAgent({ provider: "codex", cwd: existingCwd }, childId, {
+        workspaceId: "wks_short_id",
+      });
+      await storage.upsert(
+        createStoredRecord({
+          id: storedOnlyId,
+          provider: "claude",
+          cwd: existingCwd,
+          workspaceId: "wks_short_id",
+          title: "Stored worker",
+        }),
+      );
+
+      const server = await createAgentMcpServer({
+        agentManager: manager,
+        agentStorage: storage,
+        callerAgentId: parentId,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      mcp = await connectInMemoryMcpClient(server);
+
+      const statusLower = await registeredTool(server, "get_agent_status").handler({
+        agentId: childShortId,
+      });
+      expect(statusLower.structuredContent.snapshot).toMatchObject({ id: childId });
+
+      const statusUpper = await registeredTool(server, "get_agent_status").handler({
+        agentId: childShortId.toUpperCase(),
+      });
+      expect(statusUpper.structuredContent.snapshot).toMatchObject({ id: childId });
+
+      const storedStatus = await registeredTool(server, "get_agent_status").handler({
+        agentId: storedShortId,
+      });
+      expect(storedStatus.structuredContent.snapshot).toMatchObject({
+        id: storedOnlyId,
+        title: "Stored worker",
+      });
+
+      const sendResult = await mcp.callTool({
+        name: "send_agent_prompt",
+        arguments: { agentId: childShortId, prompt: "Short ID work" },
+      });
+      expect(sendResult.isError).not.toBe(true);
+      await serverDeliveries.get(server)!.waitForDispatch(childId, new AbortController().signal);
+
+      childClient.sessions[0]!.requestPermission("perm-short");
+      const respondResult = await mcp.callTool({
+        name: "respond_to_permission",
+        arguments: {
+          agentId: childShortId,
+          requestId: "perm-short",
+          response: { behavior: "allow" },
+        },
+      });
+      expect(respondResult.isError).not.toBe(true);
+
+      const activity = await registeredTool(server, "get_agent_activity").handler({
+        agentId: childShortId,
+      });
+      expect(activity.structuredContent).toMatchObject({ agentId: childId });
+
+      const updateResult = await registeredTool(server, "update_agent").handler({
+        agentId: childShortId,
+        name: "Renamed via shortId",
+      });
+      expect(updateResult.structuredContent).toEqual({ success: true });
+      expect((await storage.get(childId))?.title).toBe("Renamed via shortId");
+
+      const modeResult = await registeredTool(server, "set_agent_mode").handler({
+        agentId: childShortId,
+        modeId: "full-access",
+      });
+      expect(modeResult.structuredContent).toEqual({ success: true, newMode: "full-access" });
+
+      function readParentNotificationText(): string {
+        return parentClient.sessions[0]!.prompts.flatMap(
+          (prompt) => parseAgentMessages(prompt) ?? [],
+        )
+          .map((message) => message.text)
+          .join("\n");
+      }
+
+      childClient.sessions[0]!.finishTurn("Done via shortId");
+      await vi.waitFor(() => {
+        expect(readParentNotificationText()).toContain("Done via shortId");
+      });
+
+      const cancelResult = await registeredTool(server, "cancel_agent").handler({
+        agentId: childShortId,
+      });
+      expect(cancelResult.structuredContent).toEqual({ success: false });
+
+      const archiveResult = await registeredTool(server, "archive_agent").handler({
+        agentId: childShortId,
+      });
+      expect(archiveResult.structuredContent).toEqual({ success: true });
+      expect((await storage.get(childId))?.archivedAt).toBeTruthy();
+
+      const killResult = await registeredTool(server, "kill_agent").handler({
+        agentId: parentId.slice(0, 7),
+      });
+      expect(killResult.structuredContent).toEqual({ success: true });
+      expect(manager.getAgent(parentId)).toBeNull();
+    } finally {
+      await mcp?.close();
+      await removeAgentStateDir(manager, storage, workdir);
+    }
+  });
+
+  it("rejects ambiguous prefixes, empty IDs, internal prefixes, and unknown activity IDs with PaseoToolInputError", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-short-id-errors-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new HeldTurnAgentClient("codex", false);
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+    });
+    const firstId = "deadbee1-1111-4222-8333-444444444444";
+    const secondId = "deadbee2-1111-4222-8333-444444444444";
+    const internalId = "f9a9180f-1111-4222-8333-444444444444";
+
+    try {
+      await manager.createAgent({ provider: "codex", cwd: existingCwd }, firstId, {
+        workspaceId: "wks_short_id",
+      });
+      await manager.createAgent({ provider: "codex", cwd: existingCwd }, secondId, {
+        workspaceId: "wks_short_id",
+      });
+      await storage.upsert(
+        createStoredRecord({
+          id: internalId,
+          provider: "codex",
+          cwd: existingCwd,
+          workspaceId: "wks_short_id",
+          internal: true,
+        }),
+      );
+
+      const server = await createAgentMcpServer({
+        agentManager: manager,
+        agentStorage: storage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+
+      const statusTool = registeredTool(server, "get_agent_status");
+      const killTool = registeredTool(server, "kill_agent");
+      const activityTool = registeredTool(server, "get_agent_activity");
+
+      await expect(statusTool.handler({ agentId: "deadbee" })).rejects.toThrow(PaseoToolInputError);
+      await expect(statusTool.handler({ agentId: "deadbee" })).rejects.toThrow(
+        new RegExp(`ambiguous.*${firstId}.*${secondId}|ambiguous.*${secondId}.*${firstId}`, "i"),
+      );
+
+      await expect(killTool.handler({ agentId: "deadbee" })).rejects.toThrow(PaseoToolInputError);
+      expect(manager.getAgent(firstId)).not.toBeNull();
+      expect(manager.getAgent(secondId)).not.toBeNull();
+
+      await expect(statusTool.handler({ agentId: "   " })).rejects.toThrow(PaseoToolInputError);
+      await expect(statusTool.handler({ agentId: internalId.slice(0, 7) })).rejects.toThrow(
+        PaseoToolInputError,
+      );
+      await expect(activityTool.handler({ agentId: "0000000" })).rejects.toThrow(
+        PaseoToolInputError,
+      );
+    } finally {
+      await removeAgentStateDir(manager, storage, workdir);
     }
   });
 });

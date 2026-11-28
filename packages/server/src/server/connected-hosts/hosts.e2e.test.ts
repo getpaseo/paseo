@@ -2727,3 +2727,79 @@ test.each([false, true])(
       .toEqual([]);
   },
 );
+
+test(
+  "remote agent tools accept unique 7-char shortId prefixes and deliver finish notifications (#8556)",
+  { timeout: 30000 },
+  async () => {
+    const parentPrompts: string[] = [];
+    const a = await daemon({
+      agentClients: createTestAgentClients({
+        onStartTurn: (prompt, config) => {
+          if (config.title === "ShortId remote parent") parentPrompts.push(JSON.stringify(prompt));
+        },
+      }),
+    });
+    const b = await daemon();
+    const { paseo } = await api(a);
+    await paseo.hosts.add({ connection: `127.0.0.1:${b.port}`, label: "ShortId B" });
+    const serverId = (await online(paseo)).hosts[0]!.serverId!;
+    const workspace = await paseo.workspaces.create({
+      source: { kind: "directory", path: a.staticDir },
+    });
+    const parent = await workspace.agents.create({
+      config: { provider: "claude/claude-test" },
+      title: "ShortId remote parent",
+    });
+    const destination = await api(b);
+    const remoteWorkspace = await destination.paseo.workspaces.create({
+      source: { kind: "directory", path: b.staticDir },
+    });
+    const child = await remoteWorkspace.agents.create({
+      config: { provider: "claude/claude-test", modeId: "full-access" },
+      title: "ShortId remote child",
+    });
+    const shortId = child.id.slice(0, 7);
+
+    const mcp = new Client({ name: "remote-shortid-caller", version: "1" });
+    cleanup.push(() => mcp.close());
+    await mcp.connect(
+      new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${a.port}/mcp/agents?callerAgentId=${parent.id}`),
+      ),
+    );
+
+    const status = await mcp.callTool({
+      name: "get_agent_status",
+      arguments: { serverId, agentId: shortId },
+    });
+    expect(status.isError, JSON.stringify(status)).not.toBe(true);
+    expect(status.structuredContent).toMatchObject({
+      serverId,
+      snapshot: { id: child.id, title: "ShortId remote child" },
+    });
+
+    const prompted = await mcp.callTool({
+      name: "send_agent_prompt",
+      arguments: { serverId, agentId: shortId, prompt: "REMOTE_SHORTID_MARKER" },
+    });
+    expect(prompted.isError, JSON.stringify(prompted)).not.toBe(true);
+    await destination.client.waitForFinish(child.id, 10000);
+
+    const activity = await mcp.callTool({
+      name: "get_agent_activity",
+      arguments: { serverId, agentId: shortId },
+    });
+    expect(activity.isError, JSON.stringify(activity)).not.toBe(true);
+    expect(activity.structuredContent).toMatchObject({
+      serverId,
+      agentId: child.id,
+      content: expect.stringContaining("REMOTE_SHORTID_MARKER"),
+    });
+
+    await expect
+      .poll(() => parentPrompts.join("\n"), { timeout: 10000 })
+      .toContain(`Agent ${child.id}`);
+    expect(parentPrompts.join("\n")).toContain(`Server: ${serverId}`);
+  },
+);

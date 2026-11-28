@@ -206,6 +206,19 @@ interface ProviderSummary {
   error?: string;
 }
 
+const FULL_AGENT_UUID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
+const AGENT_ID_INPUT_SCHEMA = z
+  .string()
+  .describe(
+    "Full agent UUID or a unique ID prefix (for example, shortId from list_agents or paseo ls).",
+  );
+
+function formatAmbiguousAgentMatches(ids: readonly string[]): string {
+  const preview = ids.slice(0, 5).join(", ");
+  return ids.length > 5 ? `${preview}, …` : preview;
+}
+
 const WorkspaceAutomationSummarySchema = z.object({
   parentWorkspaceId: z.string().optional(),
   workspaceId: z.string(),
@@ -717,9 +730,64 @@ function createToolCatalog(
     if (!options.finishSubscriptions) throw new Error("Finish subscriptions are not configured");
     return options.finishSubscriptions();
   }
+  async function resolveToolAgentId(requestedId: string): Promise<string> {
+    const trimmed = requestedId.trim();
+    if (!trimmed) {
+      throw new PaseoToolInputError("Agent ID cannot be empty");
+    }
+
+    const liveAgents = agentManager.listAgents();
+    const liveExact = liveAgents.find((agent) => !agent.internal && agent.id === trimmed);
+    if (liveExact) {
+      return liveExact.id;
+    }
+
+    const storedRecords = await agentStorage.listActive({ includeArchived: true });
+    const knownIds = new Set<string>();
+    for (const agent of liveAgents) {
+      if (!agent.internal) {
+        knownIds.add(agent.id);
+      }
+    }
+    for (const record of storedRecords) {
+      if (!record.internal) {
+        knownIds.add(record.id);
+      }
+    }
+
+    if (knownIds.has(trimmed)) {
+      return trimmed;
+    }
+
+    const normalized = trimmed.toLowerCase();
+    if (FULL_AGENT_UUID_PATTERN.test(trimmed)) {
+      for (const id of knownIds) {
+        if (id.toLowerCase() === normalized) {
+          return id;
+        }
+      }
+      return trimmed;
+    }
+
+    const prefixMatches = Array.from(knownIds).filter((id) =>
+      id.toLowerCase().startsWith(normalized),
+    );
+    if (prefixMatches.length === 1 && prefixMatches[0]) {
+      return prefixMatches[0];
+    }
+    if (prefixMatches.length > 1) {
+      throw new PaseoToolInputError(
+        `Agent ID prefix "${trimmed}" is ambiguous (${formatAmbiguousAgentMatches(prefixMatches)}). Pass a longer prefix or the full agent UUID.`,
+      );
+    }
+
+    return trimmed;
+  }
+
   async function prepareRemoteNotification(
     name: string,
     destination: string | undefined,
+    resolvedAgentId: string,
     input: Record<string, unknown>,
   ): Promise<FinishRegistration | undefined> {
     if (
@@ -730,7 +798,7 @@ function createToolCatalog(
     )
       return undefined;
     return finishSubscriptions().register(
-      { childAgentId: input.agentId as string, callerAgentId, serverId: destination },
+      { childAgentId: resolvedAgentId, callerAgentId, serverId: destination },
       true,
     );
   }
@@ -821,10 +889,24 @@ function createToolCatalog(
       };
       handler = async ({ serverId, ...input }, context) => {
         const destination = serverId ?? options.serverId;
-        const remoteNotification = await prepareRemoteNotification(name, destination, input);
+        let remoteNotification: FinishRegistration | undefined;
+        const operationContext =
+          name === "send_agent_prompt" && destination !== options.serverId
+            ? {
+                ...context,
+                beforeRemotePromptSend: async (resolvedAgentId: string) => {
+                  remoteNotification = await prepareRemoteNotification(
+                    name,
+                    destination,
+                    resolvedAgentId,
+                    input,
+                  );
+                },
+              }
+            : context;
         try {
           const response = await hostResolver.use(serverId, (host) =>
-            host[operation](input, context),
+            host[operation](input, operationContext),
           );
           if (response.isError) await remoteNotification?.reject();
           else remoteNotification?.accept();
@@ -1356,7 +1438,7 @@ function createToolCatalog(
     .object(legacyTopLevelCreateAgentInputSchema)
     .strict();
   const commonSendAgentPromptInputSchema = {
-    agentId: z.string(),
+    agentId: AGENT_ID_INPUT_SCHEMA,
     prompt: z.string(),
     sessionMode: z.string().optional().describe("Optional mode to set before running the prompt."),
   };
@@ -2075,12 +2157,13 @@ function createToolCatalog(
       },
     },
     async ({
-      agentId,
+      agentId: requestedAgentId,
       prompt,
       sessionMode,
       notifyOnFinish = Boolean(callerAgentId),
       activeTurnBehavior,
     }) => {
+      const agentId = await resolveToolAgentId(requestedAgentId);
       if (callerAgentId && !agentManager.getAgent(agentId) && !(await agentStorage.get(agentId))) {
         throw new PaseoToolInputError(`Agent ${agentId} not found`);
       }
@@ -2219,14 +2302,15 @@ function createToolCatalog(
       description:
         "Return the latest snapshot for an agent, including lifecycle state, capabilities, and pending permissions.",
       inputSchema: {
-        agentId: z.string(),
+        agentId: AGENT_ID_INPUT_SCHEMA,
       },
       outputSchema: {
         status: AgentStatusEnum,
         snapshot: AgentSnapshotPayloadSchema,
       },
     },
-    async ({ agentId }) => {
+    async ({ agentId: requestedAgentId }) => {
+      const agentId = await resolveToolAgentId(requestedAgentId);
       const snapshot = agentManager.getAgent(agentId);
       if (snapshot) {
         const structuredSnapshot = await projectLiveAgent(snapshot);
@@ -2320,13 +2404,14 @@ function createToolCatalog(
       title: "Cancel agent run",
       description: "Abort the agent's current run but keep the agent alive for future tasks.",
       inputSchema: {
-        agentId: z.string(),
+        agentId: AGENT_ID_INPUT_SCHEMA,
       },
       outputSchema: {
         success: z.boolean(),
       },
     },
-    async ({ agentId }) => {
+    async ({ agentId: requestedAgentId }) => {
+      const agentId = await resolveToolAgentId(requestedAgentId);
       const { cancelled } = await cancelAgentRunCommand(
         { agentManager, logger: childLogger },
         agentId,
@@ -2345,13 +2430,14 @@ function createToolCatalog(
       description:
         "Archive an agent (soft-delete). The agent is interrupted if running and removed from the active list.",
       inputSchema: {
-        agentId: z.string(),
+        agentId: AGENT_ID_INPUT_SCHEMA,
       },
       outputSchema: {
         success: z.boolean(),
       },
     },
-    async ({ agentId }) => {
+    async ({ agentId: requestedAgentId }) => {
+      const agentId = await resolveToolAgentId(requestedAgentId);
       await archiveAgentCommand(
         {
           agentManager,
@@ -2373,13 +2459,14 @@ function createToolCatalog(
       title: "Kill agent",
       description: "Terminate an agent session permanently.",
       inputSchema: {
-        agentId: z.string(),
+        agentId: AGENT_ID_INPUT_SCHEMA,
       },
       outputSchema: {
         success: z.boolean(),
       },
     },
-    async ({ agentId }) => {
+    async ({ agentId: requestedAgentId }) => {
+      const agentId = await resolveToolAgentId(requestedAgentId);
       await closeAgentCommand({ agentManager }, agentId);
       return {
         content: [],
@@ -2394,7 +2481,7 @@ function createToolCatalog(
       title: "Update agent",
       description: "Update an agent name, labels, and/or runtime settings.",
       inputSchema: {
-        agentId: z.string(),
+        agentId: AGENT_ID_INPUT_SCHEMA,
         name: z.string().optional(),
         labels: z.record(z.string(), z.string()).optional().describe("Labels to set on the agent"),
         settings: UpdateAgentSettingsInputSchema.optional().describe(
@@ -2405,7 +2492,8 @@ function createToolCatalog(
         success: z.boolean(),
       },
     },
-    async ({ agentId, name, labels, settings }) => {
+    async ({ agentId: requestedAgentId, name, labels, settings }) => {
+      const agentId = await resolveToolAgentId(requestedAgentId);
       if (settings?.modeId !== undefined) {
         await agentManager.setAgentMode(agentId, settings.modeId);
       }
@@ -3432,7 +3520,7 @@ function createToolCatalog(
       title: "Get agent activity",
       description: "Return recent agent timeline entries as a curated summary.",
       inputSchema: {
-        agentId: z.string(),
+        agentId: AGENT_ID_INPUT_SCHEMA,
         limit: z
           .number()
           .optional()
@@ -3445,11 +3533,17 @@ function createToolCatalog(
         content: z.string(),
       },
     },
-    async ({ agentId, limit }) => {
+    async ({ agentId: requestedAgentId, limit }) => {
+      const agentId = await resolveToolAgentId(requestedAgentId);
       await ensureAgentLoaded(agentId, {
         agentManager,
         agentStorage,
         logger: childLogger,
+      }).catch((error) => {
+        if (error instanceof AgentNotFoundError) {
+          throw new PaseoToolInputError(error.message);
+        }
+        throw error;
       });
       const timeline = agentManager.getTimeline(agentId);
       const snapshot = agentManager.getAgent(agentId);
@@ -3472,7 +3566,7 @@ function createToolCatalog(
       description:
         "Switch the agent's session mode (plan, bypassPermissions, read-only, auto, etc.).",
       inputSchema: {
-        agentId: z.string(),
+        agentId: AGENT_ID_INPUT_SCHEMA,
         modeId: z.string(),
       },
       outputSchema: {
@@ -3480,7 +3574,8 @@ function createToolCatalog(
         newMode: z.string(),
       },
     },
-    async ({ agentId, modeId }) => {
+    async ({ agentId: requestedAgentId, modeId }) => {
+      const agentId = await resolveToolAgentId(requestedAgentId);
       const result = await setAgentModeCommand({ agentManager }, { agentId, modeId });
       return {
         content: [],
@@ -3530,7 +3625,7 @@ function createToolCatalog(
       description:
         "Approve or deny a pending permission request with an AgentManager-compatible response payload.",
       inputSchema: {
-        agentId: z.string(),
+        agentId: AGENT_ID_INPUT_SCHEMA,
         requestId: z.string(),
         response: AgentPermissionResponseSchema,
       },
@@ -3538,7 +3633,8 @@ function createToolCatalog(
         success: z.boolean(),
       },
     },
-    async ({ agentId, requestId, response }) => {
+    async ({ agentId: requestedAgentId, requestId, response }) => {
+      const agentId = await resolveToolAgentId(requestedAgentId);
       await respondToAgentPermission({
         agentManager,
         agentId,
