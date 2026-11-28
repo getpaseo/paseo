@@ -87,7 +87,10 @@ describe("OpenCodeServerManager generations", () => {
 
     const acquisition = await manager.acquireCurrent();
 
-    expect(runtime.spawnCalls[0]?.options.baseEnv).toEqual(baseEnv);
+    expect(runtime.spawnCalls[0]?.options.baseEnv).toEqual({
+      ...baseEnv,
+      NO_PROXY: "127.0.0.1,localhost,::1",
+    });
     expect(acquisition.environment).toBe(runtime.spawnCalls[0]?.options.baseEnv);
     await acquisition.release();
   });
