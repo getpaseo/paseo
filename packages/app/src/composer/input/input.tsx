@@ -89,6 +89,8 @@ import { useComposerHeight } from "./height";
 import { ComposerInputPresentation } from "./presentation";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import { pasteLinkedClipboardText } from "@/composer/pasted-text";
+import { pasteCopiedFilePaths } from "@/composer/pasted-file-paths";
+import { getDesktopHost } from "@/desktop/host";
 import type { NativePastedFile } from "@/composer/native-pasted-image";
 import {
   EditingTextInput,
@@ -547,7 +549,13 @@ function usePasteEffect(args: PasteEffectArgs): void {
 
       const imageFiles = collectImageFilesFromClipboardData(event.clipboardData);
       if (imageFiles.length === 0) {
-        if (pasteLinkedClipboardText(textarea, event.clipboardData)) event.preventDefault();
+        if (pasteLinkedClipboardText(textarea, event.clipboardData)) {
+          event.preventDefault();
+          return;
+        }
+        if (pasteCopiedFilePaths(textarea, event.clipboardData, getDesktopHost(), () => disposed)) {
+          event.preventDefault();
+        }
         return;
       }
       if (!isConnected || !onAddImages) return;

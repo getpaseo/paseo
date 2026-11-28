@@ -8,6 +8,7 @@ log.transports.console.level = "info";
 log.initialize({ spyRendererConsole: true });
 
 import { inheritLoginShellEnv } from "./login-shell-env.js";
+import { readClipboardFilePaths } from "./features/clipboard-file-paths.js";
 
 import path from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -387,6 +388,9 @@ ipcMain.handle("paseo:get-pending-open-project", (event) => {
   });
   return result;
 });
+
+// Finder copies carry only item names as text; the composer asks for the full paths.
+ipcMain.handle("paseo:clipboard:read-file-paths", () => readClipboardFilePaths(clipboard));
 
 ipcMain.handle("paseo:agent-navigation:ready", (event) => {
   return agentNavigationInbox.windowReady(event.sender.id);

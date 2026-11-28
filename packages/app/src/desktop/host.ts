@@ -90,6 +90,11 @@ export interface DesktopWebUtilsBridge {
   getPathForFile?: (file: File) => string;
 }
 
+export interface DesktopClipboardBridge {
+  /** Absolute paths of files and folders copied in Finder; empty when the clipboard holds none. */
+  readFilePaths?: () => Promise<string[]>;
+}
+
 export interface DesktopMenuBridge {
   showContextMenu?: (input?: { kind?: "terminal"; hasSelection?: boolean }) => Promise<void>;
   setCapturingShortcut?: (capturing: boolean) => Promise<void>;
@@ -242,6 +247,7 @@ export interface DesktopHostBridge {
   opener?: DesktopOpenerBridge;
   editor?: DesktopEditorBridge;
   webUtils?: DesktopWebUtilsBridge;
+  clipboard?: DesktopClipboardBridge;
   menu?: DesktopMenuBridge;
   browser?: DesktopBrowserBridge;
 }
