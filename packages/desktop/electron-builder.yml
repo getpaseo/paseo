@@ -40,6 +40,9 @@ publish:
   owner: getpaseo
   repo: paseo
 mac:
+  extendInfo:
+    PaseoDesktopCapabilities:
+      - open-workspace-v1
   artifactName: "Paseo-${version}-${arch}.${ext}"
   minimumSystemVersion: "13.0.0"
   category: public.app-category.developer-tools

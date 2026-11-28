@@ -8,6 +8,7 @@ export interface ConfirmDialogInput {
   confirmLabel?: string;
   cancelLabel?: string;
   destructive?: boolean;
+  defaultToCancel?: boolean;
 }
 
 interface ConfirmButtonConfig {
@@ -63,6 +64,7 @@ function buildDesktopAskOptions(input: ConfirmDialogInput): DesktopDialogAskOpti
     title: input.title,
     okLabel: labels.confirmLabel,
     cancelLabel: labels.cancelLabel,
+    ...(input.defaultToCancel ? { defaultToCancel: true } : {}),
     kind: input.destructive ? "warning" : "info",
   };
 }

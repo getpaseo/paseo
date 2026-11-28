@@ -24,10 +24,13 @@ export function AddHostFlowHost() {
   return session ? <AddHostSessionView key={session.id} session={session} /> : null;
 }
 
-export function useAddHost({ method, onAdded }: AddHostOptions = {}) {
+export function useAddHost({ method, onAdded, onDismiss }: AddHostOptions = {}) {
   const flow = useContext(Context);
   if (!flow) throw new Error("useAddHost requires AddHostProvider");
-  return useCallback(() => flow.open({ method, onAdded }), [flow, method, onAdded]);
+  return useCallback(
+    () => flow.open({ method, onAdded, onDismiss }),
+    [flow, method, onAdded, onDismiss],
+  );
 }
 
 function AddHostSessionView({ session }: { session: AddHostSession }) {

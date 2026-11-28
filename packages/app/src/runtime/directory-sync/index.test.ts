@@ -1352,7 +1352,7 @@ describe("DirectorySync session readiness", () => {
     },
   );
 
-  it("keeps the accepted baseline when an old connection finishes its workspace request", async () => {
+  it("keeps the old baseline unavailable for link resolution until the new connection syncs", async () => {
     const serverId = "superseded-workspace-baseline";
     const { client, directory } = createDirectory(serverId);
     const store = useSessionStore.getState();
@@ -1363,16 +1363,28 @@ describe("DirectorySync session readiness", () => {
       version: "test",
       features: { workspaceMultiplicity: true, directorySync: true },
     });
-    directory.acceptWorkspaces([normalizeWorkspaceDescriptor(createWorkspaceEntry("retained"))]);
+    const session = () => useSessionStore.getState().sessions[serverId];
+    const initialRelease = client.holdWorkspaceFetch();
+    const initialRefresh = directory.refreshWorkspaces({ subscribe: true });
+    initialRelease({
+      requestId: "initial-snapshot",
+      entries: [createWorkspaceEntry("retained")],
+      emptyProjects: [],
+      pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+    });
+    await initialRefresh;
+    expect(session().hasLiveWorkspaceDirectory).toBe(true);
     const release = client.holdWorkspaceFetch();
-    const refresh = directory.refreshWorkspaces();
+    const refresh = directory.refreshWorkspaces({ subscribe: true });
     const rejected = expect(refresh).rejects.toBeInstanceOf(DirectoryRefreshSupersededError);
-    await expect.poll(() => client.fetchWorkspacesCalls).toBe(1);
+    await expect.poll(() => client.fetchWorkspacesCalls).toBe(2);
     directory.connectionChanged({
       client: client as unknown as DaemonClient,
       status: "online",
       source: { clientGeneration: 1, connectionEpoch: 2 },
     });
+    expect(session().hasHydratedWorkspaces).toBe(true);
+    expect(session().hasLiveWorkspaceDirectory).toBe(false);
     release({
       requestId: "old-empty-snapshot",
       entries: [],
@@ -1381,10 +1393,21 @@ describe("DirectorySync session readiness", () => {
       sync: { generation: "g", headSeq: 7, mode: "snapshot", removals: [] },
     });
     await rejected;
-    expect([...useSessionStore.getState().sessions[serverId].workspaces.keys()]).toEqual([
-      "retained",
-    ]);
+    expect([...session().workspaces.keys()]).toEqual(["retained"]);
+    expect(session().hasLiveWorkspaceDirectory).toBe(false);
+    const reconnectRelease = client.holdWorkspaceFetch();
+    const reconnectRefresh = directory.refreshWorkspaces({ subscribe: true });
+    reconnectRelease({
+      requestId: "reconnected-snapshot",
+      entries: [createWorkspaceEntry("created-while-offline")],
+      emptyProjects: [],
+      pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+    });
+    await reconnectRefresh;
+    expect([...session().workspaces.keys()]).toEqual(["created-while-offline"]);
+    expect(session().hasLiveWorkspaceDirectory).toBe(true);
     directory.dispose();
+    expect(session().hasLiveWorkspaceDirectory).toBe(false);
   });
 
   it("rejects a session wait on disconnect so the reconnect can refresh", async () => {

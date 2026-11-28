@@ -97,6 +97,23 @@ describe("confirmDialog", () => {
     expect(browserConfirm).toHaveBeenCalledWith("Restart host\n\nThis will restart the daemon.");
   });
 
+  it("can make Cancel the default for an externally triggered desktop dialog", async () => {
+    const askMock = vi.fn(async () => false);
+    desktopHostState.api = { dialog: { ask: askMock } };
+    const { confirmDialog } = await loadModuleForPlatform("web");
+    await expect(
+      confirmDialog({
+        title: "Add project from link?",
+        message: "Directory: /remote/worktree",
+        defaultToCancel: true,
+      }),
+    ).resolves.toBe(false);
+    expect(askMock).toHaveBeenCalledWith(
+      "Directory: /remote/worktree",
+      expect.objectContaining({ defaultToCancel: true }),
+    );
+  });
+
   it("throws on web when no confirm backend exists", async () => {
     const { confirmDialog } = await loadModuleForPlatform("web");
 

@@ -53,6 +53,9 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
         agentId: string;
       } | null>,
   },
+  workspaceNavigation: {
+    ready: () => ipcRenderer.invoke("paseo:workspace-navigation:ready") as Promise<void>,
+  },
   events: {
     on: (event: string, handler: EventHandler): Promise<() => void> => {
       const listener = (_ipcEvent: Electron.IpcRendererEvent, payload: unknown) => {
