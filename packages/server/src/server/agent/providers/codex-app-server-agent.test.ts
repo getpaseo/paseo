@@ -826,6 +826,10 @@ async function runCustomCodexProviderTurn(
 const fs = require("node:fs");
 
 const capturePath = process.env.PASEO_FAKE_CODEX_CAPTURE;
+if (process.argv.includes("--version")) {
+  console.log("codex-cli 0.128.0");
+  process.exit(0);
+}
 let buffer = "";
 
 fs.appendFileSync(capturePath, JSON.stringify({
@@ -930,6 +934,10 @@ async function withCustomCodexProviderHome<T>(
 const fs = require("node:fs");
 
 const capturePath = process.env.PASEO_FAKE_CODEX_CAPTURE;
+if (process.argv.includes("--version")) {
+  console.log("codex-cli 0.128.0");
+  process.exit(0);
+}
 let buffer = "";
 
 fs.appendFileSync(capturePath, JSON.stringify({ kind: "env", CODEX_HOME: process.env.CODEX_HOME }) + "\\n");
@@ -1049,6 +1057,10 @@ async function listCommandsFromFakeCodex(
   writeFileSync(
     fakeCodexPath,
     `
+if (process.argv.includes("--version")) {
+  console.log("codex-cli 0.120.0");
+  process.exit(0);
+}
 let buffer = "";
 
 function resultFor(method, params) {
@@ -1107,6 +1119,25 @@ process.stdin.on("data", (chunk) => {
 }
 
 describe("Codex app-server provider", () => {
+  test.each([
+    ["0.114.0", "auto"],
+    ["0.128.0", "auto-review"],
+  ])("reads the wrapped Codex version %s to select the default mode", async (version, mode) => {
+    const client = new CodexAppServerAgentClient(createTestLogger(), {
+      command: {
+        mode: "replace",
+        argv: [
+          process.execPath,
+          "-e",
+          "if (process.argv[1] === '--version') console.log(process.env.WRAPPED_CODEX_VERSION)",
+          "--",
+        ],
+      },
+      env: { WRAPPED_CODEX_VERSION: "codex-cli " + version },
+    });
+    await expect(client.resolveDefaultModeId({ config: createConfig({}) })).resolves.toBe(mode);
+  });
+
   test("getAvailableModes includes auto-review when the Codex version supports it", async () => {
     const session = createSession({}, { autoReviewEnabled: true });
 
@@ -3966,6 +3997,8 @@ describe("Codex app-server provider", () => {
       },
     ]);
 
+    // This wrapped CLI predates support for goals.
+    expect(commands.map((command) => command.name)).not.toContain("goal");
     expect(commands).toContainEqual({
       name: "project-skill-discovery-regression",
       description: "A skill discovered from this project.",

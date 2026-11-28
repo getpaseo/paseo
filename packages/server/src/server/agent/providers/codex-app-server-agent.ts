@@ -126,7 +126,6 @@ import {
   buildBinaryDiagnosticRows,
   buildCommandResolutionDiagnosticRows,
   readCommandVersionOutput,
-  resolveBinaryVersion,
 } from "./diagnostic-utils.js";
 import {
   compareWithLatestRelease,
@@ -8238,16 +8237,23 @@ export class CodexAppServerAgentClient implements AgentClient {
   private async readInstalledCodex(signal: AbortSignal): Promise<InstalledCodex> {
     const installed = await this.resolveInstalledCommand();
     if (!installed) return { status: "not_installed" };
-    const output = await readCommandVersionOutput({
-      command: installed.command,
-      args: [...installed.args, "--version"],
-      env: this.runtimeSettings?.env,
-      signal,
-    });
+    const output = await this.readLaunchVersion(installed, signal);
     return {
       status: "installed",
       version: readCodexVersionLabel(output),
     };
+  }
+
+  private readLaunchVersion(
+    launch: CodexAppServerLaunchPrefix,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    return readCommandVersionOutput({
+      command: launch.command,
+      args: [...launch.args, "--version"],
+      env: this.runtimeSettings?.env,
+      signal,
+    });
   }
 
   /** The command a session would launch, or null when Codex is not installed. */
@@ -8294,7 +8300,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       this.goalsEnabledPromise = (async () => {
         try {
           const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
-          const versionOutput = await resolveBinaryVersion(launchPrefix.command);
+          const versionOutput = await this.readLaunchVersion(launchPrefix);
           const enabled = codexVersionAtLeast(versionOutput, CODEX_GOALS_MIN_VERSION);
           this.logger.trace(
             {
@@ -8326,7 +8332,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     try {
       const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
       signal?.throwIfAborted();
-      const versionOutput = await resolveBinaryVersion(launchPrefix.command, signal);
+      const versionOutput = await this.readLaunchVersion(launchPrefix, signal);
       signal?.throwIfAborted();
       const enabled = codexVersionAtLeast(versionOutput, CODEX_AUTO_REVIEW_MIN_VERSION);
       this.logger.trace(
