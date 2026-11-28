@@ -6,6 +6,13 @@ import type { HostProfile } from "@/types/host-connection";
 import { buildDaemonWebSocketUrl } from "@/utils/daemon-endpoints";
 import { isWeb } from "@/constants/platform";
 import { i18n } from "@/i18n/i18next";
+import {
+  copyFolder,
+  type CopyFolderProgress,
+  type LocalFileContents,
+  type LocalFolder,
+  type RemoteFolderEntry,
+} from "@/file-explorer/copy-folder";
 
 interface DownloadProgress {
   percent: number;
@@ -33,8 +40,26 @@ export interface Download {
   status: "downloading" | "complete" | "error";
   message?: string;
   progress?: DownloadProgress;
+  /** Set for a folder copy once its files are listed. */
+  files?: CopyFolderProgress;
+  /** Present while a folder copy can be cancelled. */
+  cancel?: () => void;
   startedAt: number;
 }
+
+type RequestFileDownloadToken = (path: string) => Promise<{
+  token: string | null;
+  fileName: string | null;
+  mimeType: string | null;
+  size: number | null;
+  error: string | null;
+}>;
+
+/** Reads the whole file over the session socket; used when no direct HTTP endpoint is active. */
+type ReadSessionFile = (
+  path: string,
+  maxBytes: number,
+) => Promise<{ bytes: Uint8Array; size: number }>;
 
 interface DownloadState {
   downloads: Map<string, Download>;
@@ -48,20 +73,30 @@ interface DownloadState {
     daemonProfile: HostProfile | undefined;
     /** Connection the host runtime is using right now; `null` while disconnected. */
     activeConnectionId: string | null;
-    requestFileDownloadToken: (path: string) => Promise<{
-      token: string | null;
-      fileName: string | null;
-      mimeType: string | null;
-      size: number | null;
-      error: string | null;
-    }>;
-    /** Reads the whole file over the session socket; used when no direct HTTP endpoint is active. */
-    readFile: (path: string, maxBytes: number) => Promise<{ bytes: Uint8Array; size: number }>;
+    requestFileDownloadToken: RequestFileDownloadToken;
+    readFile: ReadSessionFile;
     saveFile?: typeof saveDownloadedBytes;
     fetchFile?: typeof fetch;
   }) => Promise<void>;
 
+  /** Copies a workspace folder file by file into `destination`, under the folder's name. */
+  startFolderDownload: (params: {
+    serverId: string;
+    scopeId: string;
+    folderName: string;
+    path: string;
+    destination: LocalFolder;
+    includeHidden: boolean;
+    daemonProfile: HostProfile | undefined;
+    activeConnectionId: string | null;
+    listDirectory: (path: string) => Promise<readonly RemoteFolderEntry[]>;
+    requestFileDownloadToken: RequestFileDownloadToken;
+    readFile: ReadSessionFile;
+    fetchFile?: typeof fetch;
+  }) => Promise<void>;
+
   updateProgress: (id: string, progress: DownloadProgress) => void;
+  updateFolderProgress: (id: string, files: CopyFolderProgress) => void;
   completeDownload: (id: string) => void;
   failDownload: (id: string, message: string) => void;
   dismissDownload: (id: string) => void;
@@ -114,22 +149,12 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
       if (!downloadTarget) {
         // Relay, SSH, socket and pipe hosts have no HTTP endpoint: read the file over the
         // session socket that is already connected (#543).
-        if (
-          typeof tokenResponse.size === "number" &&
-          tokenResponse.size > MAX_SESSION_DOWNLOAD_BYTES
-        ) {
-          throw new Error(
-            i18n.t("composer.errors.fileTooLarge", { fileName: resolvedFileName, size: "64 MB" }),
-          );
-        }
-        const { bytes, size } = await readFile(path, MAX_SESSION_DOWNLOAD_BYTES);
-        // A daemon without a binary channel answers `encoding: "none"` for a binary file: no
-        // content, real size. Never save that as a complete download.
-        if (bytes.byteLength !== size) {
-          throw new Error(
-            `File transfer incomplete: expected ${size} bytes, received ${bytes.byteLength}.`,
-          );
-        }
+        const bytes = await readFileOverSession({
+          readFile,
+          path,
+          fileName: resolvedFileName,
+          size: tokenResponse.size,
+        });
         const savedUri = await saveFile({
           bytes,
           fileName: resolvedFileName,
@@ -200,6 +225,111 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
     }
   },
 
+  startFolderDownload: async ({
+    serverId,
+    scopeId,
+    folderName,
+    path,
+    destination,
+    includeHidden,
+    daemonProfile,
+    activeConnectionId,
+    listDirectory,
+    requestFileDownloadToken,
+    readFile,
+    fetchFile = fetch,
+  }) => {
+    const id = generateDownloadId();
+    const controller = new AbortController();
+    set((state) => ({
+      downloads: new Map(state.downloads).set(id, {
+        id,
+        serverId,
+        scopeId,
+        fileName: folderName,
+        status: "downloading",
+        cancel: () => controller.abort(),
+        startedAt: Date.now(),
+      }),
+      activeDownloadId: id,
+    }));
+
+    // Same transport rule as a single file: HTTP on a direct connection, the session socket
+    // anywhere else. The listing already gives each file's size, so the session path skips the
+    // token request.
+    const downloadTarget = resolveDaemonDownloadTarget(daemonProfile, activeConnectionId);
+    if (downloadTarget && !downloadTarget.baseUrl) {
+      get().failDownload(id, i18n.t("downloads.hostUnavailable"));
+      return;
+    }
+    const httpBaseUrl = downloadTarget?.baseUrl ?? null;
+    const readFolderFile = async (
+      file: RemoteFolderEntry,
+      signal: AbortSignal,
+    ): Promise<LocalFileContents> => {
+      if (httpBaseUrl) {
+        const tokenResponse = await requestFileDownloadToken(file.path);
+        if (tokenResponse.error || !tokenResponse.token) {
+          throw new Error(tokenResponse.error ?? i18n.t("downloads.requestTokenFailed"));
+        }
+        const response = await fetchDownloadResponse(
+          fetchFile,
+          buildDownloadUrl(httpBaseUrl, tokenResponse.token),
+          signal,
+        );
+        return response.body ?? new Uint8Array(await response.arrayBuffer());
+      }
+      return readFileOverSession({
+        readFile,
+        path: file.path,
+        fileName: file.name,
+        size: file.size,
+      });
+    };
+
+    try {
+      const result = await copyFolder({
+        path,
+        destination: await destination.folder(folderName),
+        includeHidden,
+        listDirectory,
+        readFile: readFolderFile,
+        signal: controller.signal,
+        onProgress: (files) => get().updateFolderProgress(id, files),
+      });
+      if (result.failures.length > 0) {
+        console.warn("[downloads] Some folder entries could not be downloaded", result.failures);
+        get().failDownload(
+          id,
+          i18n.t("downloads.folderIncomplete", {
+            failed: result.failures.length,
+            count: result.total,
+          }),
+        );
+        return;
+      }
+      get().completeDownload(id);
+    } catch (error) {
+      if (controller.signal.aborted) {
+        get().failDownload(id, i18n.t("downloads.cancelled"));
+        return;
+      }
+      get().failDownload(id, error instanceof Error ? error.message : i18n.t("downloads.failed"));
+    }
+  },
+
+  updateFolderProgress: (id, files) => {
+    set((state) => {
+      const download = state.downloads.get(id);
+      if (!download || download.status !== "downloading") {
+        return state;
+      }
+      const updated = new Map(state.downloads);
+      updated.set(id, { ...download, files });
+      return { downloads: updated };
+    });
+  },
+
   updateProgress: (id, progress) => {
     set((state) => {
       const download = state.downloads.get(id);
@@ -219,7 +349,7 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
         return state;
       }
       const updated = new Map(state.downloads);
-      updated.set(id, { ...download, status: "complete" });
+      updated.set(id, { ...download, status: "complete", cancel: undefined });
       return { downloads: updated };
     });
   },
@@ -231,7 +361,7 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
         return state;
       }
       const updated = new Map(state.downloads);
-      updated.set(id, { ...download, status: "error", message });
+      updated.set(id, { ...download, status: "error", message, cancel: undefined });
       return { downloads: updated };
     });
   },
@@ -339,18 +469,7 @@ function buildDownloadUrl(baseUrl: string, token: string): string {
  * response that is not the file (a proxy's 401 page, a 404) replaces the app.
  */
 async function fetchDownload(fetchFile: typeof fetch, url: string): Promise<Blob> {
-  let response: Response;
-  try {
-    // Send the same cookies the host's WebSocket handshake sends, so a proxy in front of the
-    // host lets the download through. Refuse redirects: a proxy that redirects to a login page
-    // would otherwise be saved as the file.
-    response = await fetchFile(url, { credentials: "include", redirect: "error" });
-  } catch {
-    throw new Error(i18n.t("downloads.failed"));
-  }
-  if (!response.ok) {
-    throw new Error(i18n.t("downloads.httpFailed", { status: response.status }));
-  }
+  const response = await fetchDownloadResponse(fetchFile, url);
   try {
     // The body streams after the headers, so the connection can still drop here.
     return await response.blob();
@@ -393,6 +512,59 @@ async function shareSavedFile(
         : i18n.t("downloads.shareFile"),
     });
   }
+}
+
+/**
+ * Reads a whole file over the session socket, for hosts without a direct HTTP endpoint.
+ * Single-file and folder downloads both read through here, so lifting the size cap or streaming
+ * to disk changes both.
+ */
+async function readFileOverSession(input: {
+  readFile: ReadSessionFile;
+  path: string;
+  fileName: string;
+  /** The size the daemon reported before the read, when known. */
+  size: number | null;
+}): Promise<Uint8Array> {
+  if (input.size !== null && input.size > MAX_SESSION_DOWNLOAD_BYTES) {
+    throw new Error(
+      i18n.t("composer.errors.fileTooLarge", { fileName: input.fileName, size: "64 MB" }),
+    );
+  }
+  const { bytes, size } = await input.readFile(input.path, MAX_SESSION_DOWNLOAD_BYTES);
+  // A daemon without a binary channel answers `encoding: "none"` for a binary file: no
+  // content, real size. Never save that as a complete download.
+  if (bytes.byteLength !== size) {
+    throw new Error(
+      `File transfer incomplete: expected ${size} bytes, received ${bytes.byteLength}.`,
+    );
+  }
+  return bytes;
+}
+
+async function fetchDownloadResponse(
+  fetchFile: typeof fetch,
+  url: string,
+  signal?: AbortSignal,
+): Promise<Response> {
+  let response: Response;
+  try {
+    // Send the same cookies the host's WebSocket handshake sends, so a proxy in front of the
+    // host lets the download through. Refuse redirects: a proxy that redirects to a login page
+    // would otherwise be saved as the file.
+    response = await fetchFile(url, {
+      credentials: "include",
+      redirect: "error",
+      ...(signal ? { signal } : {}),
+    });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new Error(i18n.t("downloads.failed"), { cause: error });
+  }
+  if (!response.ok) {
+    throw new Error(i18n.t("downloads.httpFailed", { status: response.status }));
+  }
+  return response;
 }
 
 function saveBrowserFile(file: Blob, fileName: string) {

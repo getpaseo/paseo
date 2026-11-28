@@ -59,6 +59,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
 import { ContextMenu, ContextMenuTrigger, useContextMenu } from "@/components/ui/context-menu";
 import { useFileDownload } from "@/hooks/use-file-download";
+import { useFolderDownload } from "@/hooks/use-folder-download";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
@@ -125,6 +126,7 @@ interface TreeRowItemProps {
   onRevealEntry?: (entry: ExplorerEntry) => void;
   revealTargetName?: string;
   onDownloadEntry: (entry: ExplorerEntry) => void;
+  onDownloadDirectory?: (entry: ExplorerEntry) => void;
   onAddToChat?: (path: string) => void;
   onOpenFileToSide?: (path: string) => void;
   onNewEntry?: (parentPath: string, kind: "file" | "directory") => void;
@@ -251,6 +253,7 @@ function TreeRowItem({
   onRevealEntry,
   revealTargetName,
   onDownloadEntry,
+  onDownloadDirectory,
   onAddToChat,
   onOpenFileToSide,
   onNewEntry,
@@ -310,8 +313,12 @@ function TreeRowItem({
   }, [onRevealEntry, entry]);
 
   const handleDownload = useCallback(() => {
+    if (isDirectory) {
+      onDownloadDirectory?.(entry);
+      return;
+    }
     onDownloadEntry(entry);
-  }, [onDownloadEntry, entry]);
+  }, [entry, isDirectory, onDownloadDirectory, onDownloadEntry]);
 
   const handleAddToChat = useCallback(() => {
     onAddToChat?.(entry.path);
@@ -387,7 +394,7 @@ function TreeRowItem({
         onCopyRelativePath={handleCopyRelativePath}
         onReveal={onRevealEntry ? handleReveal : undefined}
         revealTargetName={revealTargetName}
-        onDownload={handleDownload}
+        onDownload={!isDirectory || onDownloadDirectory ? handleDownload : undefined}
         onAddToChat={onAddToChat ? handleAddToChat : undefined}
         onOpenToSide={!isDirectory && onOpenFileToSide ? handleOpenToSide : undefined}
         onNewFile={onNewEntry ? handleNewFile : undefined}
@@ -477,6 +484,11 @@ export function FileExplorerPane({
   );
   const [pendingEdit, setPendingEdit] = useState<ExplorerPendingEdit | null>(null);
   const downloadFile = useFileDownload({
+    serverId,
+    workspaceId,
+    workspaceRoot: normalizedWorkspaceRoot,
+  });
+  const downloadFolder = useFolderDownload({
     serverId,
     workspaceId,
     workspaceRoot: normalizedWorkspaceRoot,
@@ -639,6 +651,11 @@ export function FileExplorerPane({
   const handleOpenDirectoryInEditor = useCallback(
     (entry: ExplorerEntry) => openDirectoryInEditor?.open(entry.path),
     [openDirectoryInEditor],
+  );
+
+  const handleDownloadDirectory = useCallback(
+    (entry: ExplorerEntry) => downloadFolder?.({ name: entry.name, path: entry.path }),
+    [downloadFolder],
   );
 
   const handleDownloadEntry = useCallback(
@@ -999,6 +1016,7 @@ export function FileExplorerPane({
           onRevealEntry={fileManagerTarget ? handleRevealEntry : undefined}
           revealTargetName={fileManagerTarget?.label}
           onDownloadEntry={handleDownloadEntry}
+          onDownloadDirectory={downloadFolder ? handleDownloadDirectory : undefined}
           onAddToChat={onAddToChat}
           onOpenFileToSide={onOpenFileToSide}
           onNewEntry={fsEntryOpsEnabled ? handleNewEntry : undefined}
@@ -1010,6 +1028,7 @@ export function FileExplorerPane({
       );
     },
     [
+      downloadFolder,
       expandedPaths,
       fsEntryDuplicateEnabled,
       fsEntryOpsEnabled,
@@ -1018,6 +1037,7 @@ export function FileExplorerPane({
       handleCopyRelativePath,
       handleOpenDirectoryInEditor,
       handleDeleteEntry,
+      handleDownloadDirectory,
       handleDownloadEntry,
       handleDraftCommit,
       handleDuplicateEntry,
@@ -1471,6 +1491,7 @@ function TreeRowDispatcher({
   onRevealEntry,
   revealTargetName,
   onDownloadEntry,
+  onDownloadDirectory,
   onAddToChat,
   onOpenFileToSide,
   onNewEntry,
@@ -1495,6 +1516,7 @@ function TreeRowDispatcher({
   onRevealEntry?: (entry: ExplorerEntry) => void;
   revealTargetName?: string;
   onDownloadEntry: (entry: ExplorerEntry) => void;
+  onDownloadDirectory?: (entry: ExplorerEntry) => void;
   onAddToChat?: (path: string) => void;
   onOpenFileToSide?: (path: string) => void;
   onNewEntry?: (parentPath: string, kind: "file" | "directory") => void;
@@ -1528,6 +1550,7 @@ function TreeRowDispatcher({
       onRevealEntry={onRevealEntry}
       revealTargetName={revealTargetName}
       onDownloadEntry={onDownloadEntry}
+      onDownloadDirectory={onDownloadDirectory}
       onAddToChat={onAddToChat}
       onOpenFileToSide={onOpenFileToSide}
       onNewEntry={onNewEntry}

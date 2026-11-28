@@ -55,3 +55,57 @@ export async function downloadFileFromPreview(page: Page): Promise<Download> {
   await button.click();
   return downloaded;
 }
+
+export async function openExplorerContextMenu(page: Page, name: string): Promise<void> {
+  await fileExplorerEntry(page, name).click({ button: "right" });
+}
+
+/**
+ * Playwright cannot answer the File System Access folder picker, so this resolves it with the
+ * page's origin-private file system: a real directory handle the app writes through. Call before
+ * the page loads.
+ */
+export async function answerFolderPickerWithOriginStorage(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "showDirectoryPicker", {
+      configurable: true,
+      value: () => navigator.storage.getDirectory(),
+    });
+  });
+}
+
+/** Removes the folder picker, as in Firefox and Safari. Call before the page loads. */
+export async function removeFolderPicker(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    delete (Window.prototype as { showDirectoryPicker?: unknown }).showDirectoryPicker;
+    delete (window as { showDirectoryPicker?: unknown }).showDirectoryPicker;
+  });
+}
+
+/** Everything in the origin-private file system: folders end with `/`, files map to base64. */
+export async function readOriginStorage(page: Page): Promise<Record<string, string>> {
+  return page.evaluate(async () => {
+    interface Handle {
+      kind: "file" | "directory";
+      name: string;
+      getFile(): Promise<File>;
+      values(): AsyncIterable<Handle>;
+    }
+    const result: Record<string, string> = {};
+    const walk = async (directory: Handle, prefix: string) => {
+      for await (const handle of directory.values()) {
+        if (handle.kind === "directory") {
+          result[`${prefix}${handle.name}/`] = "";
+          await walk(handle, `${prefix}${handle.name}/`);
+          continue;
+        }
+        const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+        let binary = "";
+        for (const byte of bytes) binary += String.fromCharCode(byte);
+        result[`${prefix}${handle.name}`] = btoa(binary);
+      }
+    };
+    await walk((await navigator.storage.getDirectory()) as unknown as Handle, "");
+    return result;
+  });
+}

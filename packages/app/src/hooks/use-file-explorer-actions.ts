@@ -165,6 +165,20 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
     [client, normalizedWorkspaceRoot, t],
   );
 
+  // Lists without touching the tree's state, for folder downloads.
+  const readDirectoryEntries = useCallback(
+    async (path: string) => {
+      if (!normalizedWorkspaceRoot) {
+        throw new Error(t("workspace.fileExplorer.states.unavailable"));
+      }
+      if (!client) {
+        throw new Error(t("workspace.terminal.hostDisconnected"));
+      }
+      return (await client.listDirectory(normalizedWorkspaceRoot, path)).entries;
+    },
+    [client, normalizedWorkspaceRoot, t],
+  );
+
   const createEntry = useCallback(
     async (input: { parentPath: string; name: string; kind: "file" | "directory" }) => {
       if (!client || !normalizedWorkspaceRoot) {
@@ -262,6 +276,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
     invalidateDirectoryListings,
     requestFileDownloadToken,
     requestFileBytes,
+    readDirectoryEntries,
     createEntry,
     renameEntry,
     duplicateEntry,
