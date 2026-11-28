@@ -43,6 +43,8 @@ const ManagedPluginRecordSchema = z.union([
     kind: z.literal("git").default("git"),
     remote: z.string().min(1),
     registry: PluginRegistryIdentitySchema.optional(),
+    // Named ref the install tracks for updates; absent when it tracks the remote default branch.
+    ref: z.string().min(1).optional(),
   }),
   z.object({ kind: z.literal("npm"), registry: PluginRegistryIdentitySchema.optional() }),
 ]);
@@ -195,7 +197,12 @@ export class ManagedPluginSources {
         if (target?.kind === "git" && commit !== target.commit)
           throw new Error("Git target changed since review");
         await checkout(sourceRoot, commit);
-        record = { kind: "git", remote };
+        record = {
+          kind: "git",
+          remote,
+          // A named ref pins update checks to that ref's head; commit hashes keep tracking the default branch.
+          ...(input.ref && !isGitCommitHash(input.ref) ? { ref: input.ref } : {}),
+        };
       }
       const directory = path.resolve(sourceRoot, pluginPath);
       assertPluginPath(sourceRoot, directory);
@@ -264,14 +271,7 @@ export class ManagedPluginSources {
     } else {
       const record = this.records[pluginId];
       if (record?.kind !== "git") throw new Error("Git source is no longer configured");
-      target = {
-        kind: "git",
-        commit: await resolveRemoteCommit(
-          record.remote,
-          this.root,
-          selection?.kind === "git" ? selection.ref : undefined,
-        ),
-      };
+      target = await this.resolveGitUpdateTarget(record, selection);
       outcome = target.commit === current.currentRevision ? "current" : "update";
     }
     const links = reviewLinks(current, target);
@@ -294,6 +294,19 @@ export class ManagedPluginSources {
             },
           }
         : {}),
+    };
+  }
+
+  private async resolveGitUpdateTarget(
+    record: Extract<ManagedPluginRecord, { kind: "git" }>,
+    selection?: PluginUpdateSelection,
+  ): Promise<Extract<PluginUpdateTarget, { kind: "git" }>> {
+    // An explicit selection re-resolves the pin for one review; otherwise follow the installed ref.
+    const ref = selection?.kind === "git" ? selection.ref : record.ref;
+    return {
+      kind: "git",
+      commit: await resolveRemoteCommit(record.remote, this.root, ref),
+      ...(ref && !isGitCommitHash(ref) ? { ref } : {}),
     };
   }
 
@@ -329,7 +342,8 @@ export class ManagedPluginSources {
       return this.prepareInstall(
         {
           source: `git:${record.remote}`,
-          ref: proposal.target.commit,
+          // Carry the pin forward: resolve the reviewed commit through its ref so the install keeps tracking it.
+          ref: proposal.target.ref ?? record.ref ?? proposal.target.commit,
           pluginPath: identity.pluginPath,
         },
         proposal.target,
@@ -625,6 +639,10 @@ async function resolveRemoteCommit(remote: string, cwd: string, ref?: string): P
   } catch (error) {
     throw redactRemoteError(error, remote);
   }
+}
+
+function isGitCommitHash(ref: string): boolean {
+  return /^[0-9a-f]{7,64}$/.test(ref);
 }
 
 async function refExists(cwd: string, ref: string): Promise<boolean> {
