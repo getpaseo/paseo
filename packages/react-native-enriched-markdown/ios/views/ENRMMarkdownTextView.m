@@ -1,4 +1,5 @@
 #import "ENRMMarkdownTextView.h"
+#import "ENRMImageAttachment.h"
 #import "ENRMLinkPillAttachment.h"
 #import "ENRMLinkPillText.h"
 #import "ENRMTextHitTest.h"
@@ -6,6 +7,27 @@
 #import "PasteboardUtils.h"
 
 #if !TARGET_OS_OSX
+/// Whether `text` has an image inside a link, as in `[![](icon) label](url)` or a README badge.
+/// UIKit's text drag collects such an image and its link as two overlapping ranges, deletes both
+/// from one copy of the dragged text, and the second delete throws an out-of-bounds exception
+/// (`-[_UITextStorageDraggableGeometry draggableObjectsForTextRange:]`), which quits the app on a
+/// long press of the link.
+static BOOL ENRMTextHasImageInsideLink(NSAttributedString *text)
+{
+  __block BOOL found = NO;
+  [text enumerateAttribute:NSAttachmentAttributeName
+                   inRange:NSMakeRange(0, text.length)
+                   options:0
+                usingBlock:^(id value, NSRange range, BOOL *stop) {
+                  if ([value isKindOfClass:ENRMImageAttachment.class] &&
+                      [text attribute:NSLinkAttributeName atIndex:range.location effectiveRange:NULL] != nil) {
+                    found = YES;
+                    *stop = YES;
+                  }
+                }];
+  return found;
+}
+
 @interface ENRMMarkdownTextView () <UIContextMenuInteractionDelegate>
 @end
 
@@ -15,6 +37,7 @@
   // stands in for it: it would show through that image.
   ENRMLinkPillAttachment *_liftedPill;
   NSUInteger _pillMenuIndex;
+  BOOL _textDragUnsafe;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame textContainer:(NSTextContainer *)textContainer
@@ -33,6 +56,21 @@
 {
   [_pillLift end];
   [super setAttributedText:attributedText];
+  _textDragUnsafe = ENRMTextHasImageInsideLink(attributedText);
+  [self updateTextDragEnabled];
+}
+
+- (void)setSelectable:(BOOL)selectable
+{
+  [super setSelectable:selectable];
+  [self updateTextDragEnabled];
+}
+
+/// Text with an image inside a link cannot be dragged (see `ENRMTextHasImageInsideLink`); taps,
+/// selection and menus are unaffected.
+- (void)updateTextDragEnabled
+{
+  self.textDragInteraction.enabled = !_textDragUnsafe;
 }
 
 /// The selection with pills expanded, or nil when `range` is not the selection or holds no pill.
