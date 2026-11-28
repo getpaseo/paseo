@@ -5,6 +5,7 @@ import android.content.res.Configuration
 import android.hardware.input.InputManager
 import android.os.Handler
 import android.os.Looper
+import android.text.Spannable
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.Window
@@ -118,7 +119,7 @@ internal object HardwareKeyboard {
 private class KeyboardWindowCallback(private val window: Window, val previous: Window.Callback) : Window.Callback by previous {
   override fun dispatchKeyEvent(event: KeyEvent): Boolean {
     val focus = window.currentFocus
-    val editable = (focus as? EditText)?.text
+    val editable = (focus as? EditText)?.text ?: (focus?.tag as? Spannable)
     val composing = editable != null && BaseInputConnection.getComposingSpanStart(editable) >= 0
     val terminalFocused = focus?.getTag(R.id.view_tag_native_id) == TERMINAL_INPUT_NATIVE_ID
     return HardwareKeyboard.dispatcher.dispatch(

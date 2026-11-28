@@ -2,12 +2,16 @@ package sh.paseo.keyboard
 
 import android.app.Activity
 import android.content.Intent
+import android.text.SpannableStringBuilder
 import android.view.KeyEvent
+import android.view.View
+import android.view.inputmethod.BaseInputConnection
 import android.widget.EditText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -54,6 +58,40 @@ class TerminalArrowTest {
       host.window.callback.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_X))
       host.window.callback.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_X))
       assertEquals("abxc", input.text.toString())
+    }
+  }
+
+  @Test fun customTerminalViewExposesComposingStateToHardwareArrows() {
+    val host = instrumentation.startActivitySync(
+      Intent(instrumentation.targetContext, Activity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    )
+    activity = host
+    val editable = SpannableStringBuilder("한")
+    lateinit var view: View
+    instrumentation.runOnMainSync {
+      view = object : View(host) {
+        init {
+          isFocusable = true
+          isFocusableInTouchMode = true
+          tag = editable
+          setTag(com.facebook.react.R.id.view_tag_native_id, "paseo-terminal-input")
+        }
+      }
+      host.setContentView(view)
+      view.requestFocus()
+      HardwareKeyboard.observe(host.window)
+    }
+    instrumentation.waitForIdleSync()
+    instrumentation.runOnMainSync {
+      assertSame(view, host.window.currentFocus)
+      // When not composing, hardware arrows are claimed for the terminal.
+      assertTrue(host.window.callback.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT)))
+      assertTrue(host.window.callback.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_LEFT)))
+
+      // While composing, hardware arrows must NOT be claimed so IME candidate navigation still works.
+      BaseInputConnection.setComposingSpans(editable)
+      assertFalse(host.window.callback.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT)))
+      assertFalse(host.window.callback.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_LEFT)))
     }
   }
 
