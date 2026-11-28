@@ -97,7 +97,7 @@ export interface TerminalManager {
     options: TerminalReplayOptions | undefined,
     sink: TerminalReplaySink,
   ): Promise<TerminalReplayMetadata | null>;
-  setTerminalTitle(id: string, title: string): boolean;
+  setTerminalTitle(id: string, title: string): boolean | Promise<boolean>;
   setTerminalActivity(id: string, state: TerminalActivityState): Promise<boolean>;
   clearTerminalAttention(id: string): Promise<boolean>;
   killTerminal(id: string): void;

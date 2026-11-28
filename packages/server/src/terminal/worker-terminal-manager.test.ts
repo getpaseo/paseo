@@ -181,6 +181,7 @@ function createTerminalState(): WorkerTerminalState {
 class FakeTerminalWorker extends EventEmitter {
   connected = true;
   readonly workerPid = 1;
+  readonly protocolVersion = TERMINAL_WORKER_PROTOCOL_VERSION;
   readonly sentMessages: TerminalWorkerRequest[] = [];
 
   send(message: TerminalWorkerRequest, callback: (error: Error | null) => void): boolean {
@@ -657,6 +658,162 @@ it("refreshes cached terminal title after worker title changes", async () => {
 
   expect(session.getTitle()).toBe("Build Output");
 });
+
+it("preserves a manually renamed terminal title after worker re-adoption", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-rename-adopt-"));
+  temporaryDirs.push(cwd);
+  manager = await startRealWorkerManager();
+  const session = trackTerminal(
+    await manager.createTerminal({
+      workspaceId: "ws-test",
+      cwd,
+      title: "Original",
+      ...nodeTerminalCommand("process.stdin.resume();"),
+    }),
+  );
+
+  expect(session.getTitle()).toBe("Original");
+  expect(await manager.setTerminalTitle(session.id, "User title")).toBe(true);
+  expect(session.getTitle()).toBe("User title");
+
+  expect(await manager.adoptTerminals()).toBe(1);
+  expect(manager.getTerminal(session.id)).toBe(session);
+  expect(session.getTitle()).toBe("User title");
+});
+
+it("acknowledges a terminal rename only after the worker confirms it", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({ worker });
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-rename",
+      name: "Shell",
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      title: "Original",
+      activity: null,
+    },
+    state: createTerminalState(),
+  });
+  const viewers = terminalViewers(manager, "terminal-rename");
+  const source = {};
+  viewers.delivery.attach(source, true);
+  const request = {
+    type: "terminal.rename.request" as const,
+    requestId: "rename-title",
+    terminalId: "terminal-rename",
+    title: "User title",
+  };
+  const rename = viewers.delivery.request(source, request, async () => {
+    await viewers.controller.dispatch(request, viewers.delivery);
+  });
+  try {
+    expect(viewers.messages).toEqual([]);
+    expect(manager.getTerminal(request.terminalId)?.getTitle()).toBe("Original");
+    const mutation = worker.sentMessages.find((message) => message.type === "setTitle");
+    if (!mutation) throw new Error("Worker title mutation was not sent");
+    worker.emitWorkerMessage({
+      type: "terminalTitleChange",
+      terminalId: request.terminalId,
+      title: request.title,
+    });
+    worker.emitWorkerMessage({
+      type: "response",
+      requestId: mutation.requestId,
+      ok: true,
+      result: true,
+    });
+    await rename;
+    expect(viewers.messages).toEqual([
+      {
+        source,
+        message: {
+          type: "terminal.rename.response",
+          payload: { requestId: request.requestId, success: true, error: null },
+        },
+      },
+    ]);
+    expect(manager.getTerminal(request.terminalId)?.getTitle()).toBe("User title");
+  } finally {
+    await manager.detach();
+    await rename;
+    await viewers.delivery.close();
+  }
+});
+
+it.each([
+  { outcome: "rejected", error: "Worker refused the title" },
+  { outcome: "missing", error: "Terminal not found" },
+  { outcome: "disconnected", error: "Terminal worker connection closed" },
+] as const)(
+  "reports $outcome terminal renames without publishing an unconfirmed title",
+  async ({ outcome, error }) => {
+    const worker = new FakeTerminalWorker();
+    manager = createWorkerTerminalManager({ worker });
+    worker.emitWorkerMessage({
+      type: "terminalCreated",
+      terminal: {
+        id: "terminal-rename-failure",
+        name: "Shell",
+        cwd: "/workspace",
+        workspaceId: "ws-test",
+        title: "Original",
+        activity: null,
+      },
+      state: createTerminalState(),
+    });
+    const viewers = terminalViewers(manager, "terminal-rename-failure");
+    const source = {};
+    viewers.delivery.attach(source, true);
+    const request = {
+      type: "terminal.rename.request" as const,
+      requestId: "failed-rename",
+      terminalId: "terminal-rename-failure",
+      title: "Unconfirmed title",
+    };
+    const rename = viewers.delivery.request(source, request, async () => {
+      await viewers.controller.dispatch(request, viewers.delivery);
+    });
+    try {
+      expect(viewers.messages).toEqual([]);
+      const mutation = worker.sentMessages.find((message) => message.type === "setTitle");
+      if (!mutation) throw new Error("Worker title mutation was not sent");
+      if (outcome === "rejected") {
+        worker.emitWorkerMessage({
+          type: "response",
+          requestId: mutation.requestId,
+          ok: false,
+          error,
+        });
+      } else if (outcome === "missing") {
+        worker.emitWorkerMessage({
+          type: "response",
+          requestId: mutation.requestId,
+          ok: true,
+          result: false,
+        });
+      } else {
+        worker.disconnect();
+      }
+      await rename;
+      expect(viewers.messages).toEqual([
+        {
+          source,
+          message: {
+            type: "terminal.rename.response",
+            payload: { requestId: request.requestId, success: false, error },
+          },
+        },
+      ]);
+      expect(manager.getTerminal(request.terminalId)?.getTitle()).toBe("Original");
+    } finally {
+      await manager.detach();
+      await rename;
+      await viewers.delivery.close();
+    }
+  },
+);
 
 it("refreshes cached terminal size after worker resize", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-resize-"));
@@ -1691,46 +1848,87 @@ async function leaveWorkerWithTerminal(
   };
 }
 
-it.each([1, 4])(
-  "hard cuts unreleased worker protocol %s, closing its terminals",
-  async (version) => {
-    const paseoHome = createTemporaryHome();
-    const old = await leaveWorkerWithTerminal(paseoHome, version);
-    const [record] = await workerRecords(paseoHome);
-    const program = record!.terminals.find((entry) => entry.id === old.terminalId)!;
-    const inspector = createTerminalWorkerProcessInspector();
+it("keeps protocol 6 terminals usable while declining unsupported persistent renames", async () => {
+  const paseoHome = createTemporaryHome();
+  const old = await leaveWorkerWithTerminal(paseoHome, 6);
+  manager = await startRealWorkerManager({ paseoHome });
+  const terminal = manager.getTerminal(old.terminalId);
+  if (!terminal) throw new Error("Previous worker terminal was not adopted");
+  const originalTitle = terminal.getTitle();
+  const rename = Promise.resolve().then(() => manager!.setTerminalTitle(terminal.id, "User title"));
+  await expect(rename).rejects.toThrow("Open a new terminal");
+  expect(terminal.getTitle()).toBe(originalTitle);
+  terminal.send({ type: "resize", rows: 6, cols: 40 });
+  expect(await readReplay(manager, terminal.id)).toMatchObject({ state: { rows: 6, cols: 40 } });
 
-    manager = await startRealWorkerManager({ paseoHome });
+  const current = trackTerminal(
+    await manager.createTerminal({
+      workspaceId: "ws-protocol",
+      cwd: old.cwd,
+      title: "Current",
+      ...nodeTerminalCommand("process.stdin.resume();"),
+    }),
+  );
+  expect(await manager.setTerminalTitle(current.id, "Current renamed")).toBe(true);
+  const workers = await workerRecords(paseoHome);
+  expect(workers).toHaveLength(2);
+  expect(
+    workers.map((record) => ({
+      protocolVersion: record.protocolVersion,
+      terminalIds: record.terminals.map((entry) => entry.id),
+    })),
+  ).toEqual(
+    expect.arrayContaining([
+      { protocolVersion: 6, terminalIds: [old.terminalId] },
+      { protocolVersion: 7, terminalIds: [current.id] },
+    ]),
+  );
+  await manager.killTerminalAndWait(old.terminalId);
+  await waitForCondition(
+    async () => (await workerRecords(paseoHome)).every((record) => record.pid !== old.workerPid),
+    10000,
+  );
+  expect(await manager.adoptTerminals()).toBe(1);
+  expect(manager.getTerminal(current.id)?.getTitle()).toBe("Current renamed");
+});
 
-    expect(await readUnconfirmedTerminalCleanup(paseoHome)).toEqual([]);
-    // Startup launches a replacement worker after cleanup. Either old PID may already
-    // belong to another process, so verify that the recorded birth identities are gone.
-    await waitForCondition(() => !isProcessAlive(record!.pid), 10000);
-    await expect
-      .poll(
-        async () =>
-          !isProcessAlive(program.pid) ||
-          classifyTerminalProgramProcess(program, await inspector.inspect(program.pid)).status ===
-            "unrelated",
-        { timeout: 10000 },
-      )
-      .toBe(true);
-    expect(manager.getTerminal(old.terminalId)).toBeUndefined();
-    const workers = await workerRecords(paseoHome);
-    expect(workers).toHaveLength(1);
-    expect(workers[0]!.protocolVersion).toBe(6);
-  },
-);
+it.each([1, 4, 5])("closes obsolete worker protocol %s and its terminals", async (version) => {
+  const paseoHome = createTemporaryHome();
+  const old = await leaveWorkerWithTerminal(paseoHome, version);
+  const [record] = await workerRecords(paseoHome);
+  const program = record!.terminals.find((entry) => entry.id === old.terminalId)!;
+  const inspector = createTerminalWorkerProcessInspector();
+
+  manager = await startRealWorkerManager({ paseoHome });
+
+  expect(await readUnconfirmedTerminalCleanup(paseoHome)).toEqual([]);
+  // Startup launches a replacement worker after cleanup. Either old PID may already
+  // belong to another process, so verify that the recorded birth identities are gone.
+  await waitForCondition(() => !isProcessAlive(record!.pid), 10000);
+  await expect
+    .poll(
+      async () =>
+        !isProcessAlive(program.pid) ||
+        classifyTerminalProgramProcess(program, await inspector.inspect(program.pid)).status ===
+          "unrelated",
+      { timeout: 10000 },
+    )
+    .toBe(true);
+  expect(manager.getTerminal(old.terminalId)).toBeUndefined();
+  const workers = await workerRecords(paseoHome);
+  expect(workers).toHaveLength(1);
+  expect(workers[0]!.protocolVersion).toBe(7);
+});
 
 it("leaves a worker from a newer Paseo running, reports it incompatible, and closes it on a kill stop", async () => {
   const paseoHome = createTemporaryHome();
-  const newer = await leaveWorkerWithTerminal(paseoHome, 7);
+  const newer = await leaveWorkerWithTerminal(paseoHome, 8);
 
   manager = await startRealWorkerManager({ paseoHome });
 
   const unavailable = manager.getUnavailableError?.();
   expect(unavailable).toBeInstanceOf(TerminalWorkerIncompatibleError);
-  expect(unavailable?.message).toContain("worker protocol 7");
+  expect(unavailable?.message).toContain("worker protocol 8");
   await expect(manager.getTerminals(newer.cwd)).rejects.toBeInstanceOf(
     TerminalWorkerIncompatibleError,
   );

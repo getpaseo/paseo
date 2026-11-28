@@ -703,8 +703,16 @@ export class TerminalSessionController {
       return;
     }
 
-    const renamed = this.terminalManager.setTerminalTitle(msg.terminalId, title);
-    respond(renamed, renamed ? null : "Terminal not found");
+    try {
+      const renamed = await this.terminalManager.setTerminalTitle(msg.terminalId, title);
+      respond(renamed, renamed ? null : "Terminal not found");
+    } catch (error) {
+      this.sessionLogger.warn(
+        { err: error, terminalId: msg.terminalId },
+        "Failed to rename terminal",
+      );
+      respond(false, error instanceof Error ? error.message : "Unable to rename terminal");
+    }
   }
 
   private async handleSubscribeTerminalRequest(

@@ -48,6 +48,8 @@ Never more than two workers run. A new worker launches only when none is current
 
 **The frozen envelope never changes across versions:** the frame format (4-byte length + `v8.serialize`), `hello`/`helloAck`, the `listTerminals` info fields and `shutdown`. That is what lets any daemon close any worker: a kill stop sends `shutdown` to a newer worker it cannot otherwise drive. Protocol 5 hard cuts unreleased protocols 1 through 4, including the acknowledgement-based replay contract: those workers are obsolete and close. For future versions, keep a previous-version adapter so the draining worker can still be driven, and drop the adapter for the version before that.
 
+Protocol 7 moves manual title changes into the worker and acknowledges them after it applies them. Protocol 6 workers keep serving their existing terminals, but renaming one returns an error asking you to open a new terminal: those workers have no title-mutation request. Protocol 5 workers are now two versions old and close during startup.
+
 Tests stand up other versions with `PASEO_TERMINAL_WORKER_PROTOCOL_OVERRIDE`, read by the worker. It is test-only.
 
 ## Display replay
