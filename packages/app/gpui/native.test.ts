@@ -155,6 +155,134 @@ test.skipIf(!endpoint || appearanceFixture)(
   30_000,
 );
 
+async function openWorkspaceAndWaitForComposer(workspaceRow: Node): Promise<Node> {
+  expect(await request("click", { tag: workspaceRow.tag })).toEqual({ clicked: true });
+  await expect
+    .poll(async () => (await nodes()).some((node) => node.testID === "workspace-header-title"), {
+      timeout: 15_000,
+    })
+    .toBe(true);
+  await expect
+    .poll(async () => (await nodes()).some((node) => node.component === "TextInput"), {
+      timeout: 15_000,
+    })
+    .toBe(true);
+  let settledTag: number | undefined;
+  await expect
+    .poll(
+      async () => {
+        const current = (await nodes()).find((node) => node.component === "TextInput")?.tag;
+        const stable = current !== undefined && current === settledTag;
+        settledTag = current;
+        return stable;
+      },
+      { timeout: 15_000, interval: 500 },
+    )
+    .toBe(true);
+  return (await nodes()).find((node) => node.component === "TextInput")!;
+}
+
+test.skipIf(!endpoint || appearanceFixture)(
+  "real Paseo submits the composer on Enter and inserts a newline on Shift+Enter",
+  async () => {
+    await expect
+      .poll(
+        async () => (await nodes()).some((n) => n.testID.startsWith("sidebar-workspace-row-")),
+        {
+          timeout: 15_000,
+        },
+      )
+      .toBe(true);
+    const workspace = (await nodes()).find((n) => n.testID.startsWith("sidebar-workspace-row-"))!;
+    const input = await openWorkspaceAndWaitForComposer(workspace);
+    await request("click", { tag: input.tag });
+    await request("press", { key: "secondary-a" });
+    await request("press", { key: "backspace" });
+
+    const marker = `GPUI Enter ${Date.now()}`;
+    await request("type", { tag: input.tag, text: marker });
+    await request("press", { key: "shift-enter" });
+    await request("type", { tag: input.tag, text: "line2" });
+    await expect
+      .poll(async () => (await request<{ text: string }>("getProps", { tag: input.tag })).text)
+      .toBe(`${marker}\nline2`);
+
+    await request("press", { key: "enter" });
+    await expect
+      .poll(
+        async () => {
+          const current = (await nodes()).find((node) => node.component === "TextInput");
+          if (!current) return null;
+          return (await request<{ text: string }>("getProps", { tag: current.tag })).text;
+        },
+        { timeout: 15_000 },
+      )
+      .toBe("");
+    await expect
+      .poll(async () => (await nodes()).some((node) => node.text.includes(marker)), {
+        timeout: 15_000,
+      })
+      .toBe(true);
+  },
+  45_000,
+);
+
+test.skipIf(!endpoint || appearanceFixture)(
+  "real Paseo keeps the first workspace mounted when switching between two workspaces",
+  async () => {
+    await expect
+      .poll(
+        async () =>
+          (await nodes()).filter((n) => n.testID.startsWith("sidebar-workspace-row-")).length >= 2,
+        { timeout: 15_000 },
+      )
+      .toBe(true);
+    const rows = (await nodes()).filter((n) => n.testID.startsWith("sidebar-workspace-row-"));
+    const firstInput = await openWorkspaceAndWaitForComposer(rows[0]!);
+    const firstTitle = (await nodes()).find((n) => n.testID === "workspace-header-title")?.text;
+
+    await request("click", { tag: firstInput.tag });
+    await request("press", { key: "secondary-a" });
+    await request("press", { key: "backspace" });
+    await request("type", { tag: firstInput.tag, text: "Kept across workspace switch" });
+    await expect
+      .poll(async () => (await request<{ text: string }>("getProps", { tag: firstInput.tag })).text)
+      .toBe("Kept across workspace switch");
+
+    try {
+      expect(await request("click", { tag: rows[1]!.tag })).toEqual({ clicked: true });
+      await expect
+        .poll(
+          async () => {
+            const title = (await nodes()).find((n) => n.testID === "workspace-header-title")?.text;
+            return title !== undefined && title !== firstTitle;
+          },
+          { timeout: 15_000 },
+        )
+        .toBe(true);
+
+      expect(await request("click", { tag: rows[0]!.tag })).toEqual({ clicked: true });
+      await expect
+        .poll(
+          async () => (await nodes()).find((n) => n.testID === "workspace-header-title")?.text,
+          { timeout: 15_000 },
+        )
+        .toBe(firstTitle);
+
+      // The exact Fabric node tag and draft text must survive because desktop retention keeps
+      // inactive workspaces mounted instead of unmounting on switch.
+      expect((await request<{ text: string }>("getProps", { tag: firstInput.tag })).text).toBe(
+        "Kept across workspace switch",
+      );
+    } finally {
+      await request("click", { tag: firstInput.tag });
+      await request("press", { key: "secondary-a" });
+      await request("press", { key: "backspace" });
+    }
+  },
+  45_000,
+);
+
 async function nodeWithId(testID: string) {
   await expect.poll(async () => (await nodes()).some((node) => node.testID === testID)).toBe(true);
   return (await nodes()).find((node) => node.testID === testID)!;
