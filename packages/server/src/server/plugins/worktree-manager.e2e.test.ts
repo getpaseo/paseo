@@ -365,7 +365,7 @@ export default function contribute(server) {
     await daemon.close();
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
-}, 60_000);
+}, 90_000);
 
 test("worktree manager supports decline fallback, rollback delegation, and disabled-plugin fallback on archive and restore", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-worktree-manager-fallback-"));
@@ -606,9 +606,7 @@ export default function contribute(server) {
     const pending = client.createWorkspace({
       source: { kind: "worktree", cwd: repository, branchName: "concurrent" },
     });
-    // Cleanup closes the client if the marker never arrives.
-    void pending.catch(() => undefined);
-    await expect
+    const managerStarted = expect
       .poll(
         () =>
           stat(path.join(root, "manager-started")).then(
@@ -618,6 +616,12 @@ export default function contribute(server) {
         { timeout: 10_000 },
       )
       .toBe(true);
+    await Promise.race([
+      managerStarted,
+      pending.then(({ error }) => {
+        throw new Error(`Worktree creation finished before the manager was released: ${error}`);
+      }),
+    ]);
     const concurrent = path.join(root, "concurrent-manual");
     git(repository, ["worktree", "add", "-b", "concurrent", concurrent, "main"]);
     await writeFile(path.join(concurrent, "local.txt"), "uncommitted work");
@@ -714,6 +718,8 @@ export default function contribute(server) {
   }
 }, 60_000);
 
+// Two daemon starts, four archives, and two restores. On Windows CI this takes 18 to 46 seconds
+// and went over 60 on a slow runner, so it gets the same budget as the worktrunk journey above.
 test("untrusted workspaces pass untrusted=true to worktree manager remove and restore, and worktrunk skips hooks", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-worktrunk-untrusted-"));
   const repository = await createRepo(path.join(root, "repo"));
@@ -863,7 +869,7 @@ test("untrusted workspaces pass untrusted=true to worktree manager remove and re
     await daemon.close();
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
-}, 60_000);
+}, 90_000);
 
 test("concurrent restores across two daemon clients wait for the in-flight manager restore and share its failure", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-worktree-restore-race-"));

@@ -72,6 +72,62 @@ export function stopPathContainmentMetrics(): number {
   return checks;
 }
 
+export interface PathContainmentOptions {
+  roots: Iterable<string>;
+  compareAsWindows: boolean;
+}
+
+export interface PathContainmentMatcher {
+  /** True when `candidate` is one of the compiled roots or lies beneath one. */
+  matches(candidate: string): boolean;
+  /** True only when `candidate` itself is one of the compiled roots (O(1) lookup). */
+  matchesExact(candidate: string): boolean;
+}
+
+function toComparableContainmentPath(value: string, compareAsWindows: boolean): string {
+  if (
+    !compareAsWindows &&
+    value.length > 1 &&
+    !value.endsWith("/") &&
+    !value.includes("/.") &&
+    !value.includes("//")
+  ) {
+    return value;
+  }
+  return normalizePathForComparison(value, compareAsWindows);
+}
+
+/** Compile lexical subtree membership without scanning unrelated roots per candidate. */
+export function createPathContainmentMatcher({
+  roots,
+  compareAsWindows,
+}: PathContainmentOptions): PathContainmentMatcher {
+  const pathApi = compareAsWindows ? nodePath.win32 : nodePath.posix;
+  const indexed = new Set(
+    Array.from(roots, (root) => normalizePathForComparison(root, compareAsWindows)),
+  );
+  if (indexed.size === 0) {
+    return {
+      matches: () => false,
+      matchesExact: () => false,
+    };
+  }
+  return {
+    matches(candidate) {
+      let current = toComparableContainmentPath(candidate, compareAsWindows);
+      for (;;) {
+        if (indexed.has(current)) return true;
+        const parent = pathApi.dirname(current);
+        if (parent === current) return false;
+        current = parent;
+      }
+    },
+    matchesExact(candidate) {
+      return indexed.has(toComparableContainmentPath(candidate, compareAsWindows));
+    },
+  };
+}
+
 export function isPathInsideRoot(root: string, candidate: string): boolean {
   if (pathContainmentChecks !== null) pathContainmentChecks += 1;
   return getRelativePathInsideRoot(root, candidate) !== null;
@@ -190,7 +246,7 @@ export function looksLikeDefiniteWindowsPath(value: string): boolean {
   );
 }
 
-function normalizePathForComparison(value: string, compareAsWindows: boolean): string {
+export function normalizePathForComparison(value: string, compareAsWindows: boolean): string {
   const normalized = normalizePathPreservingCase(value, compareAsWindows);
   return compareAsWindows ? normalized.toLowerCase() : normalized;
 }

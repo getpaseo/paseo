@@ -390,39 +390,41 @@ export class TerminalSessionController {
       return subscription.refresh;
     }
     const refresh = (async () => {
-      do {
-        subscription.pending = false;
-        const terminals =
-          subscription.cwd === undefined
-            ? (await this.getAllTerminalSessions()).filter(
-                (terminal) =>
-                  subscription.workspaceId === undefined ||
-                  terminal.workspaceId === subscription.workspaceId,
-              )
-            : await this.getTerminalsForWorkspaceRoot(subscription.cwd, subscription.workspaceId);
-        if (subscription.owner.signal.aborted) return;
-        subscription.owner.emit({
-          type: "terminals_changed",
-          payload: {
-            cwd: subscription.cwd,
-            workspaceId: subscription.workspaceId,
-            terminals: terminals.map((terminal) =>
-              Object.assign(
-                this.toTerminalInfo(terminal),
-                subscription.cwd === undefined ? { cwd: terminal.cwd } : {},
+      try {
+        do {
+          subscription.pending = false;
+          const terminals =
+            subscription.cwd === undefined
+              ? (await this.getAllTerminalSessions()).filter(
+                  (terminal) =>
+                    subscription.workspaceId === undefined ||
+                    terminal.workspaceId === subscription.workspaceId,
+                )
+              : await this.getTerminalsForWorkspaceRoot(subscription.cwd, subscription.workspaceId);
+          if (subscription.owner.signal.aborted) return;
+          subscription.owner.emit({
+            type: "terminals_changed",
+            payload: {
+              cwd: subscription.cwd,
+              workspaceId: subscription.workspaceId,
+              terminals: terminals.map((terminal) =>
+                Object.assign(
+                  this.toTerminalInfo(terminal),
+                  subscription.cwd === undefined ? { cwd: terminal.cwd } : {},
+                ),
               ),
-            ),
-            ...(requestId ? { requestId } : {}),
-          },
-        });
-        requestId = undefined;
-      } while (subscription.pending);
+              ...(requestId ? { requestId } : {}),
+            },
+          });
+          requestId = undefined;
+        } while (subscription.pending);
+      } finally {
+        // Clear in the same step as the last pending check. A change that lands after it then
+        // starts a new refresh instead of setting a pending flag that nothing reads again.
+        subscription.refresh = null;
+      }
     })();
     subscription.refresh = refresh;
-    const settled = () => {
-      subscription.refresh = null;
-    };
-    void refresh.then(settled, settled);
     return refresh;
   }
 

@@ -5,25 +5,146 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  buildBackgroundFetchEnvOverlay,
   diffWorkspaceGitRefs,
   diffWorkspaceGitRemoteRefs,
   fetchWorkspaceGitRemote,
+  isGitFetchAuthError,
   parseWorkspaceGitRefs,
 } from "./workspace-git-fetch.js";
 import { runGitCommand, type RunGitCommand } from "../utils/run-git-command.js";
+
+describe("buildBackgroundFetchEnvOverlay", () => {
+  test("disables terminal and GUI prompts while guarding Linux headless D-Bus autolaunch", async () => {
+    await expect(
+      buildBackgroundFetchEnvOverlay({
+        platform: "linux",
+        env: {},
+        uid: 0,
+        socketExists: () => false,
+      }),
+    ).resolves.toEqual({
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_ASKPASS: "",
+      GCM_INTERACTIVE: "0",
+      SSH_ASKPASS: "",
+      SSH_ASKPASS_REQUIRE: "never",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/dev/null",
+    });
+
+    await expect(
+      buildBackgroundFetchEnvOverlay({
+        platform: "linux",
+        env: { DBUS_SESSION_BUS_ADDRESS: "autolaunch:" },
+        uid: 1000,
+        socketExists: () => false,
+      }),
+    ).resolves.toEqual({
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_ASKPASS: "",
+      GCM_INTERACTIVE: "0",
+      SSH_ASKPASS: "",
+      SSH_ASKPASS_REQUIRE: "never",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/dev/null",
+    });
+  });
+
+  test("preserves explicit DBUS_SESSION_BUS_ADDRESS and resolves existing runtime bus sockets", async () => {
+    await expect(
+      buildBackgroundFetchEnvOverlay({
+        platform: "linux",
+        env: { DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus" },
+        uid: 1000,
+        socketExists: () => false,
+      }),
+    ).resolves.toEqual({
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_ASKPASS: "",
+      GCM_INTERACTIVE: "0",
+      SSH_ASKPASS: "",
+      SSH_ASKPASS_REQUIRE: "never",
+    });
+
+    await expect(
+      buildBackgroundFetchEnvOverlay({
+        platform: "linux",
+        env: { XDG_RUNTIME_DIR: "/run/user/1000" },
+        uid: 1000,
+        socketExists: (socketPath) => socketPath === "/run/user/1000/bus",
+      }),
+    ).resolves.toEqual({
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_ASKPASS: "",
+      GCM_INTERACTIVE: "0",
+      SSH_ASKPASS: "",
+      SSH_ASKPASS_REQUIRE: "never",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+    });
+
+    // Systemd service with unset XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS,
+    // but an active logind runtime socket at /run/user/<uid>/bus.
+    await expect(
+      buildBackgroundFetchEnvOverlay({
+        platform: "linux",
+        env: {},
+        uid: 1000,
+        socketExists: (socketPath) => socketPath === "/run/user/1000/bus",
+      }),
+    ).resolves.toEqual({
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_ASKPASS: "",
+      GCM_INTERACTIVE: "0",
+      SSH_ASKPASS: "",
+      SSH_ASKPASS_REQUIRE: "never",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+    });
+
+    await expect(
+      buildBackgroundFetchEnvOverlay({
+        platform: "linux",
+        env: { DBUS_SESSION_BUS_ADDRESS: "autolaunch:" },
+        uid: 1000,
+        socketExists: (socketPath) => socketPath === "/run/user/1000/bus",
+      }),
+    ).resolves.toEqual({
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_ASKPASS: "",
+      GCM_INTERACTIVE: "0",
+      SSH_ASKPASS: "",
+      SSH_ASKPASS_REQUIRE: "never",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+    });
+  });
+
+  test("omits DBUS_SESSION_BUS_ADDRESS on non-Linux platforms", async () => {
+    for (const platform of ["darwin", "win32"] as const) {
+      await expect(
+        buildBackgroundFetchEnvOverlay({
+          platform,
+          env: {},
+          uid: null,
+          socketExists: () => false,
+        }),
+      ).resolves.toEqual({
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_ASKPASS: "",
+        GCM_INTERACTIVE: "0",
+        SSH_ASKPASS: "",
+        SSH_ASKPASS_REQUIRE: "never",
+      });
+    }
+  });
+});
 
 describe("workspace Git remote refs", () => {
   test("runs the complete fetch through the supplied Git runner", async () => {
     const commands: string[][] = [];
     let refRead = 0;
+    const expectedOverlay = await buildBackgroundFetchEnvOverlay();
     const run: RunGitCommand = async (args, options) => {
       commands.push(args);
       if (args[0] === "fetch") {
-        expect(options.envOverlay).toEqual({
-          GIT_TERMINAL_PROMPT: "0",
-          GIT_ASKPASS: "",
-          GCM_INTERACTIVE: "0",
-        });
+        expect(options.envOverlay).toEqual(expectedOverlay);
       }
       const stdout =
         args[0] === "for-each-ref"
@@ -190,7 +311,7 @@ async function withAuthenticatedRemote(
       { cwd },
     );
     await run(["clone", "--bare", cwd, remote], { cwd: root });
-    await run(["update-server-info"], { cwd: remote });
+    await run(["--git-dir", remote, "update-server-info"], { cwd: root });
     await run(["config", "credential.helper", ""], { cwd });
     await run(["config", "core.askPass", askpassCommand], { cwd });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -247,3 +368,113 @@ test.skipIf(process.platform === "win32")(
     });
   },
 );
+
+test.skipIf(process.platform === "win32")(
+  "background fetches pass DBUS_SESSION_BUS_ADDRESS=unix:path=/dev/null to credential helpers on headless Linux",
+  async () => {
+    for (const initialDbus of [undefined, "autolaunch:", "unix:path=/tmp/live-session-bus"]) {
+      await withAuthenticatedRemote(async ({ cwd, run, root }) => {
+        const captureFile = join(root, "helper-env.txt");
+        const helperScript = join(root, "credential-helper.sh");
+        await writeFile(
+          helperScript,
+          [
+            "#!/bin/sh",
+            `printf 'DBUS=%s\\nSSH_ASKPASS=%s\\nSSH_ASKPASS_REQUIRE=%s\\nGIT_TERMINAL_PROMPT=%s\\nGIT_ASKPASS=%s\\nGCM_INTERACTIVE=%s\\n' \\`,
+            '  "${DBUS_SESSION_BUS_ADDRESS-<unset>}" \\',
+            '  "${SSH_ASKPASS-<unset>}" \\',
+            '  "${SSH_ASKPASS_REQUIRE-<unset>}" \\',
+            '  "${GIT_TERMINAL_PROMPT-<unset>}" \\',
+            '  "${GIT_ASKPASS-<unset>}" \\',
+            '  "${GCM_INTERACTIVE-<unset>}" \\',
+            `  > '${captureFile.replaceAll("'", "'\\''")}'`,
+            "exit 1",
+            "",
+          ].join("\n"),
+        );
+        await chmod(helperScript, 0o755);
+        await run(["config", "credential.helper", helperScript], { cwd });
+
+        const headlessEnv =
+          initialDbus === undefined ? {} : { DBUS_SESSION_BUS_ADDRESS: initialDbus };
+        const headlessRun: RunGitCommand = (args, options) =>
+          run(args, {
+            ...options,
+            env: {
+              ...options.env,
+              ...headlessEnv,
+            },
+          });
+
+        const result = await fetchWorkspaceGitRemote(cwd, { onRefSnapshot() {} }, headlessRun, {
+          platform: "linux",
+          env: headlessEnv,
+          uid: 999_999,
+          socketExists: () => false,
+        });
+
+        expect(String(result.error)).toContain("terminal prompts disabled");
+        const captured = await readFile(captureFile, "utf8");
+        const expectedDbus =
+          initialDbus === undefined || initialDbus === "autolaunch:"
+            ? "unix:path=/dev/null"
+            : initialDbus;
+        expect(captured).toBe(
+          [
+            `DBUS=${expectedDbus}`,
+            "SSH_ASKPASS=",
+            "SSH_ASKPASS_REQUIRE=never",
+            "GIT_TERMINAL_PROMPT=0",
+            "GIT_ASKPASS=",
+            "GCM_INTERACTIVE=0",
+            "",
+          ].join("\n"),
+        );
+      });
+    }
+  },
+);
+
+describe("isGitFetchAuthError", () => {
+  test.each([
+    new Error("fatal: could not read Username for 'https://github.com': terminal prompts disabled"),
+    new Error(
+      "fatal: could not read Password for 'https://example.com': terminal prompts disabled",
+    ),
+    new Error("fatal: Authentication failed for 'https://github.com/org/repo.git/'"),
+    new Error("remote: Invalid username or token. Password authentication is not supported"),
+    new Error(
+      "fatal: unable to access 'https://example.com/repo.git/': The requested URL returned error: 401",
+    ),
+    new Error(
+      "fatal: unable to access 'https://example.com/repo.git/': The requested URL returned error: 403",
+    ),
+    new Error("Logon failed, use ctrl+c to cancel basic credential prompt."),
+    new Error(
+      "git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.",
+    ),
+    new Error("Host key verification failed.\nfatal: Could not read from remote repository."),
+    new Error("Received disconnect from 1.2.3.4 port 22:2: Too many authentication failures"),
+  ])("classifies auth/credential failure as auth error: %s", (error) => {
+    expect(isGitFetchAuthError(error)).toBe(true);
+  });
+
+  test.each([
+    new Error("Git command timed out after 120000ms: git fetch origin --prune"),
+    new Error(
+      "ssh: Could not resolve hostname github.com: Temporary failure in name resolution\nfatal: Could not read from remote repository.",
+    ),
+    new Error(
+      "fatal: unable to access 'https://github.com/org/repo.git/': Failed to connect to github.com port 443: Connection timed out",
+    ),
+    new Error(
+      "fatal: unable to access 'https://github.com/org/repo.git/': The requested URL returned error: 503",
+    ),
+    new Error(
+      "fatal: unable to access 'https://github.com/org/repo.git/': The requested URL returned error: 429",
+    ),
+    new Error("error: RPC failed; curl 56 Recv failure: Connection reset by peer"),
+  ])("classifies network/timeout/server failure as transient: %s", (error) => {
+    expect(isGitFetchAuthError(error)).toBe(false);
+  });
+});

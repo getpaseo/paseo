@@ -95,9 +95,9 @@ A focused terminal excludes that binding. The source leaves terminal Escape alon
 terminal Escape/Ctrl forwarding is a separate feature.
 
 Terminal arrows never pass through the shortcut pipeline. The Android hardware
-module claims them while the terminal's hidden input (`nativeID`) owns the focus.
-`TextInput.onKeyPress` only sees IME keys, and an arrow that falls through moves
-the hidden caret and desyncs the next text change, so the pipeline cannot own them.
+module claims them while the terminal's native input (`nativeID`) owns the focus,
+so Android DPAD focus search cannot move focus away from the terminal view, while
+leaving active IME composition spans untouched for candidate navigation.
 
 ## Keys shared with text editing
 

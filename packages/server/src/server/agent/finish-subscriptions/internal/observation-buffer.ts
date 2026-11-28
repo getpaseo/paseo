@@ -2,6 +2,8 @@ import type { WaitForFinishResult } from "@getpaseo/client/internal/daemon-clien
 
 export type FinishObservationResult = WaitForFinishResult & {
   reason?: "was canceled" | "host unreachable" | "host removed";
+  /** The idle child's background work changed without a turn ending. */
+  workChanged?: true;
 };
 
 /** Coalesces duplicate checkpoints and retains one terminal result while delivery is pending. */
@@ -23,7 +25,7 @@ export function createObservationBuffer(signal: AbortSignal) {
     if (result.status === "permission") {
       for (const request of result.final?.pendingPermissions ?? [])
         if (!delivered.has(request.id)) permissions.set(request.id, result);
-    } else terminal = result;
+    } else if (!result.workChanged || !terminal || terminal.workChanged) terminal = result;
     wake?.();
   }
   return {

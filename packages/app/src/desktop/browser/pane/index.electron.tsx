@@ -10,7 +10,14 @@ import {
   createElement,
 } from "react";
 import { createPortal } from "react-dom";
-import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
+import {
+  Pressable,
+  Text,
+  View,
+  type PressableStateCallbackType,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 import {
   EditingTextInput as TextInput,
   type EditingTextInputHandle,
@@ -33,7 +40,9 @@ import {
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import * as Clipboard from "expo-clipboard";
+import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/contexts/toast-context";
@@ -51,7 +60,12 @@ import {
 import type { AttachmentMetadata, BrowserElementAttachment } from "@/attachments/types";
 import { persistAttachmentFromDataUrl } from "@/attachments/service";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
+import { defaultHostAppearance, resolveHostIcon } from "@/hosts/appearance";
+import { HostIconGlyph } from "@/hosts/host-icon-glyph";
 import { getOverlayRoot } from "@/lib/overlay-root";
+import { useHosts } from "@/runtime/host-runtime";
+import { useSessionStore } from "@/stores/session-store";
+import { STATUS_INDICATOR_FILLED_DOT_SIZE } from "@/utils/status-indicator-geometry";
 import {
   getDesktopHost,
   isElectronRuntime,
@@ -66,6 +80,7 @@ import {
 } from "@/desktop/browser/store";
 import {
   applyInactiveBrowserWebviewViewport,
+  getResidentBrowserWebviewPartition,
   prepareBrowserWebview,
   presentBrowserWebview,
   rememberBrowserWebviewSize,
@@ -73,6 +88,7 @@ import {
   removeResidentBrowserWebview,
   takeResidentBrowserWebview,
 } from "../resident-webviews";
+import { useHostBrowserProxy, type BrowserProxyPaneState } from "../proxy";
 import {
   createElementSelectorController,
   type BrowserElementSelection,
@@ -476,9 +492,210 @@ const ThemedSmartphone = withUnistyles(Smartphone);
 const ThemedTablet = withUnistyles(Tablet);
 const ThemedMonitor = withUnistyles(Monitor);
 const ThemedChevronDown = withUnistyles(ChevronDown);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const deviceMutedIconMapping = (theme: { colors: { foregroundMuted: string } }) => ({
   color: theme.colors.foregroundMuted,
 });
+
+function BrowserRoutingButton({
+  serverId,
+  state,
+  style,
+  onToggle,
+}: {
+  serverId: string;
+  state: BrowserProxyPaneState;
+  style: (state: { hovered?: boolean; pressed?: boolean }) => StyleProp<ViewStyle>;
+  onToggle: () => void;
+}) {
+  const { t } = useTranslation();
+  const hosts = useHosts();
+  const host = useMemo(
+    () => hosts.find((entry) => entry.serverId === serverId) ?? null,
+    [hosts, serverId],
+  );
+  const detectedMachineKind = useSessionStore(
+    (store) => store.sessions[serverId]?.serverInfo?.machineKind ?? null,
+  );
+  const hostIcon = useMemo(
+    () =>
+      resolveHostIcon({
+        appearance: host?.appearance ?? defaultHostAppearance(),
+        detectedMachineKind,
+      }),
+    [detectedMachineKind, host?.appearance],
+  );
+  const hostColor = host?.appearance.color ?? "none";
+
+  const isHostRouted = state.effectiveRoutingMode === "host";
+  const tooltipText = isHostRouted
+    ? t("workspace.browser.routing.tooltipHost", { hostName: state.hostLabel })
+    : t("workspace.browser.routing.tooltipLocal", { hostName: state.hostLabel });
+  const accessibilityLabel = isHostRouted
+    ? t("workspace.browser.routing.switchToLocal", { hostName: state.hostLabel })
+    : t("workspace.browser.routing.switchToHost", { hostName: state.hostLabel });
+  const accessibilityState = useMemo(() => ({ selected: isHostRouted }), [isHostRouted]);
+
+  let dotStyle = styles.routingDotPending;
+  if (state.kind === "ready" && state.proxyStatus === "ready") {
+    dotStyle = styles.routingDotReady;
+  } else if (
+    state.kind === "proxy_error" ||
+    (state.kind === "ready" && state.proxyStatus === "error")
+  ) {
+    dotStyle = styles.routingDotError;
+  }
+
+  return (
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger asChild>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={accessibilityLabel}
+          accessibilityState={accessibilityState}
+          onPress={onToggle}
+          style={style}
+          testID="browser-routing-pill"
+        >
+          {({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) =>
+            isHostRouted ? (
+              <View style={styles.routingIconFrame}>
+                <HostIconGlyph icon={hostIcon} color={hostColor} size={16} />
+                <View
+                  style={[
+                    styles.routingDotHalo,
+                    hovered || pressed ? styles.routingDotHaloHovered : styles.routingDotHaloRest,
+                  ]}
+                >
+                  <View style={[styles.routingDot, dotStyle]} />
+                </View>
+              </View>
+            ) : (
+              <ThemedMonitor size={16} uniProps={deviceMutedIconMapping} />
+            )
+          }
+        </Pressable>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="center" offset={8}>
+        <Text style={styles.toolbarTooltipText}>{tooltipText}</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function BrowserProxyStatusPanel({
+  state,
+  onBrowseLocally,
+}: {
+  state: Exclude<BrowserProxyPaneState, { kind: "ready" }>;
+  onBrowseLocally: () => void;
+}) {
+  const { t } = useTranslation();
+
+  if (state.kind === "connecting") {
+    const label = state.isReconnecting
+      ? t("workspace.browser.proxy.reconnecting", { hostName: state.hostLabel })
+      : t("workspace.browser.proxy.connecting", { hostName: state.hostLabel });
+    return (
+      <View style={styles.proxyStatusContainer} testID="browser-proxy-status">
+        <View style={styles.proxyConnectingCard}>
+          <View style={styles.proxyConnectingRow}>
+            <ThemedLoadingSpinner size={16} uniProps={deviceMutedIconMapping} />
+            <Text style={styles.proxyConnectingText}>{label}</Text>
+          </View>
+          <Button variant="outline" onPress={onBrowseLocally} testID="browser-proxy-browse-locally">
+            {t("workspace.browser.proxy.browseLocally")}
+          </Button>
+        </View>
+      </View>
+    );
+  }
+
+  if (state.kind === "daemon_update_required") {
+    return (
+      <View style={styles.proxyStatusContainer} testID="browser-proxy-status">
+        <View style={styles.proxyAlertFrame}>
+          <Alert
+            variant="warning"
+            title={t("workspace.browser.proxy.updateTitle", { hostName: state.hostLabel })}
+            description={t("workspace.browser.proxy.updateDescription")}
+          >
+            <Button
+              variant="outline"
+              onPress={onBrowseLocally}
+              testID="browser-proxy-browse-locally"
+            >
+              {t("workspace.browser.proxy.browseLocally")}
+            </Button>
+          </Alert>
+        </View>
+      </View>
+    );
+  }
+
+  if (state.kind === "routed_unsupported") {
+    return (
+      <View style={styles.proxyStatusContainer} testID="browser-proxy-status">
+        <View style={styles.proxyAlertFrame}>
+          <Alert
+            variant="info"
+            title={t("workspace.browser.proxy.routedTitle")}
+            description={t("workspace.browser.proxy.routedDescription")}
+          >
+            <Button
+              variant="outline"
+              onPress={onBrowseLocally}
+              testID="browser-proxy-browse-locally"
+            >
+              {t("workspace.browser.proxy.browseLocally")}
+            </Button>
+          </Alert>
+        </View>
+      </View>
+    );
+  }
+
+  if (state.kind === "host_offline") {
+    return (
+      <View style={styles.proxyStatusContainer} testID="browser-proxy-status">
+        <View style={styles.proxyAlertFrame}>
+          <Alert
+            variant="warning"
+            title={t("workspace.browser.proxy.offlineTitle", { hostName: state.hostLabel })}
+            description={t("workspace.browser.proxy.offlineDescription")}
+          >
+            <Button
+              variant="outline"
+              onPress={onBrowseLocally}
+              testID="browser-proxy-browse-locally"
+            >
+              {t("workspace.browser.proxy.browseLocally")}
+            </Button>
+          </Alert>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.proxyStatusContainer} testID="browser-proxy-status">
+      <View style={styles.proxyAlertFrame}>
+        <Alert
+          variant="error"
+          title={t("workspace.browser.proxy.errorTitle")}
+          description={state.message}
+        >
+          <Button variant="secondary" onPress={state.retry} testID="browser-proxy-retry">
+            {t("common.actions.retry")}
+          </Button>
+          <Button variant="outline" onPress={onBrowseLocally} testID="browser-proxy-browse-locally">
+            {t("workspace.browser.proxy.browseLocally")}
+          </Button>
+        </Alert>
+      </View>
+    </View>
+  );
+}
 
 function resolveThemedDeviceIcon(icon: LucideIcon): typeof ThemedMaximize {
   if (icon === Smartphone) return ThemedSmartphone;
@@ -573,6 +790,32 @@ function deviceSizeIdForViewport(viewport: BrowserViewport): DeviceSizeId | null
   );
 }
 
+function acquirePartitionedWebview(input: {
+  browserId: string;
+  workspaceId: string;
+  partition: string;
+  initialUrl: string;
+}): ElectronWebview {
+  const existingResident = takeResidentBrowserWebview(input.browserId) as ElectronWebview | null;
+  if (
+    existingResident &&
+    getResidentBrowserWebviewPartition(existingResident) === input.partition
+  ) {
+    return existingResident;
+  }
+  if (existingResident) {
+    removeResidentBrowserWebview(input.browserId);
+  }
+  const webview = document.createElement("webview") as ElectronWebview;
+  prepareBrowserWebview(webview, {
+    browserId: input.browserId,
+    workspaceId: input.workspaceId,
+    initialUrl: input.initialUrl,
+    partition: input.partition,
+  });
+  return webview;
+}
+
 function rememberResolvedBrowserWebviewSize(browserId: string, webview: HTMLElement): void {
   const bounds = webview.getBoundingClientRect();
   rememberBrowserWebviewSize({ browserId, width: bounds.width, height: bounds.height });
@@ -599,6 +842,9 @@ export function BrowserPane({
   const browser = useBrowserStore((state) => state.browsersById[browserId] ?? null);
   const updateBrowser = useBrowserStore((state) => state.updateBrowser);
   const setBrowserViewport = useBrowserStore((state) => state.setBrowserViewport);
+  const setBrowserRoutingMode = useBrowserStore((state) => state.setBrowserRoutingMode);
+  const proxyState = useHostBrowserProxy({ serverId, routingMode: browser?.routingMode });
+  const activePartition = proxyState.kind === "ready" ? proxyState.partition : null;
   const browserViewport = browser?.viewport ?? RESPONSIVE_BROWSER_VIEWPORT;
   const browserViewportRef = useRef(browserViewport);
   browserViewportRef.current = browserViewport;
@@ -726,26 +972,32 @@ export function BrowserPane({
 
     const host = webviewHostRef.current;
     const clip = webviewClipRef.current;
+
+    if (!activePartition) {
+      host?.replaceChildren();
+      removeResidentBrowserWebview(browserId);
+      webviewRef.current = null;
+      return;
+    }
+
     if (!host || !clip) {
       return;
     }
 
     host.replaceChildren();
 
+    const currentUrl = browserRef.current?.url ?? initialUrlRef.current;
     const initialUnsafeNavigationMessage = getUnsafeNavigationMessage(
-      initialUrlRef.current,
+      currentUrl,
       browserErrorLabelsRef.current,
     );
-    const residentWebview = takeResidentBrowserWebview(browserId) as ElectronWebview | null;
-    const webview = residentWebview ?? (document.createElement("webview") as ElectronWebview);
+    const webview = acquirePartitionedWebview({
+      browserId,
+      workspaceId,
+      partition: activePartition,
+      initialUrl: initialUnsafeNavigationMessage ? "about:blank" : currentUrl,
+    });
     webviewRef.current = webview;
-    if (!residentWebview) {
-      prepareBrowserWebview(webview, {
-        browserId,
-        workspaceId,
-        initialUrl: initialUnsafeNavigationMessage ? "about:blank" : initialUrlRef.current,
-      });
-    }
     releaseResidentBrowserWebview(browserId, webview);
     if (isPresentedRef.current) {
       presentBrowserWebview(browserId, webview, host, clip, browserViewportRef.current);
@@ -907,7 +1159,7 @@ export function BrowserPane({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [browserId, onFocusPane]);
+  }, [activePartition, browserId, onFocusPane, workspaceId]);
 
   useEffect(() => {
     const webview = webviewRef.current;
@@ -1415,6 +1667,18 @@ export function BrowserPane({
     [isResponsiveDevice],
   );
 
+  const handleToggleRoutingMode = useCallback(() => {
+    if (!proxyState.isRemoteHost) {
+      return;
+    }
+    const nextMode = proxyState.effectiveRoutingMode === "host" ? "local" : "host";
+    setBrowserRoutingMode(browserId, nextMode);
+  }, [browserId, proxyState.effectiveRoutingMode, proxyState.isRemoteHost, setBrowserRoutingMode]);
+
+  const handleBrowseLocally = useCallback(() => {
+    setBrowserRoutingMode(browserId, "local");
+  }, [browserId, setBrowserRoutingMode]);
+
   const setWebviewHostNode = useCallback((node: HTMLDivElement | null) => {
     webviewHostRef.current = node;
   }, []);
@@ -1464,6 +1728,14 @@ export function BrowserPane({
             <RotateCw size={16} color={theme.colors.foregroundMuted} />
           </ToolbarButton>
         </View>
+        {proxyState.isRemoteHost ? (
+          <BrowserRoutingButton
+            serverId={serverId}
+            state={proxyState}
+            style={baseIconButtonStyle}
+            onToggle={handleToggleRoutingMode}
+          />
+        ) : null}
         <View style={styles.urlBarWrap}>
           <TextInput
             accessibilityLabel={t("workspace.browser.controls.browserUrl")}
@@ -1540,18 +1812,24 @@ export function BrowserPane({
         style={webviewWrapStyle}
         testID={`browser-webview-clip-${browserId}`}
       >
-        {createElement("div", {
-          ref: setWebviewHostNode,
-          style: webviewHostStyle,
-        })}
-        {pendingSelection ? (
-          <BrowserElementAnnotationCard
-            anchor={webviewClipRef.current}
-            selection={pendingSelection}
-            onSubmit={submitAnnotation}
-            onCancel={cancelAnnotation}
-          />
-        ) : null}
+        {proxyState.kind === "ready" ? (
+          <>
+            {createElement("div", {
+              ref: setWebviewHostNode,
+              style: webviewHostStyle,
+            })}
+            {pendingSelection ? (
+              <BrowserElementAnnotationCard
+                anchor={webviewClipRef.current}
+                selection={pendingSelection}
+                onSubmit={submitAnnotation}
+                onCancel={cancelAnnotation}
+              />
+            ) : null}
+          </>
+        ) : (
+          <BrowserProxyStatusPanel state={proxyState} onBrowseLocally={handleBrowseLocally} />
+        )}
       </View>
     </View>
   );
@@ -1852,5 +2130,66 @@ const styles = StyleSheet.create((theme) => ({
   },
   unavailableSubtitle: {
     fontSize: theme.fontSize.sm,
+  },
+  routingIconFrame: {
+    position: "relative",
+    width: 18,
+    height: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  routingDotHalo: {
+    position: "absolute",
+    right: -2,
+    bottom: -2,
+    width: STATUS_INDICATOR_FILLED_DOT_SIZE + 3,
+    height: STATUS_INDICATOR_FILLED_DOT_SIZE + 3,
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  routingDotHaloRest: {
+    backgroundColor: theme.colors.surface0,
+  },
+  routingDotHaloHovered: {
+    backgroundColor: theme.colors.surface2,
+  },
+  routingDot: {
+    width: STATUS_INDICATOR_FILLED_DOT_SIZE,
+    height: STATUS_INDICATOR_FILLED_DOT_SIZE,
+    borderRadius: theme.borderRadius.full,
+  },
+  routingDotReady: {
+    backgroundColor: theme.colors.statusDotSuccess,
+  },
+  routingDotPending: {
+    backgroundColor: theme.colors.statusDotWarning,
+  },
+  routingDotError: {
+    backgroundColor: theme.colors.statusDotDanger,
+  },
+  proxyStatusContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: theme.spacing[6],
+    backgroundColor: theme.colors.surface0,
+  },
+  proxyConnectingCard: {
+    alignItems: "center",
+    gap: theme.spacing[3],
+  },
+  proxyConnectingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  proxyConnectingText: {
+    fontSize: theme.fontSize.base,
+    color: theme.colors.foregroundMuted,
+  },
+  proxyAlertFrame: {
+    width: "100%",
+    maxWidth: 420,
   },
 }));

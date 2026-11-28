@@ -243,6 +243,14 @@ export async function openNewWorkspaceProjectPickerWithShortcut(
   await expect(searchInput).toBeFocused();
 }
 
+export async function chooseProjectWithKeyboard(page: Page, projectName: string): Promise<void> {
+  const searchInput = page.getByPlaceholder("Search projects");
+  await expect(searchInput).toBeFocused({ timeout: 30_000 });
+  await page.keyboard.type(projectName);
+  await page.keyboard.press("Enter");
+  await expect(searchInput).toBeHidden({ timeout: 10_000 });
+}
+
 export async function expectNewWorkspaceProjectSelected(
   page: Page,
   projectDisplayName: string,
@@ -730,6 +738,70 @@ export async function delayBrowserWorkspaceCreatedResponse(
       }
     },
     waitForCreateRequest: () => createRequestSeen,
+  };
+}
+
+export interface BranchSuggestionsControl {
+  release(): void;
+  waitForRequest(): Promise<void>;
+  waitForResponse(): Promise<void>;
+}
+
+/**
+ * Intercepts `branch_suggestions_request` / `branch_suggestions_response` frames over the daemon
+ * WebSocket. Pass `hold: true` to keep responses queued until `release()` is called, or `hold: false`
+ * to observe prefetched responses without delaying them.
+ */
+export async function watchBrowserBranchSuggestions(
+  page: Page,
+  options: { hold: boolean },
+): Promise<BranchSuggestionsControl> {
+  const frames = await loadSessionMessageReaders();
+  const daemonPortPattern = daemonWsRoutePattern();
+  const delayedForwards: Array<() => void> = [];
+  let releaseRequested = !options.hold;
+  let resolveRequest: (() => void) | null = null;
+  let resolveResponse: (() => void) | null = null;
+  const requestSeen = new Promise<void>((resolve) => {
+    resolveRequest = resolve;
+  });
+  const responseSeen = new Promise<void>((resolve) => {
+    resolveResponse = resolve;
+  });
+
+  await page.routeWebSocket(daemonPortPattern, (ws) => {
+    const server = ws.connectToServer();
+
+    ws.onMessage((message) => {
+      const sessionMessage = frames.client(message);
+      if (sessionMessage?.type === "branch_suggestions_request") {
+        resolveRequest?.();
+      }
+      server.send(message);
+    });
+
+    server.onMessage((message) => {
+      const sessionMessage = frames.server(message);
+      if (sessionMessage?.type === "branch_suggestions_response") {
+        resolveResponse?.();
+        if (!releaseRequested) {
+          delayedForwards.push(() => ws.send(message));
+          return;
+        }
+      }
+      ws.send(message);
+    });
+  });
+
+  return {
+    release() {
+      releaseRequested = true;
+      for (const forward of delayedForwards.splice(0)) {
+        forward();
+      }
+    },
+    waitForRequest: () => requestSeen,
+    waitForResponse: () => responseSeen,
   };
 }
 

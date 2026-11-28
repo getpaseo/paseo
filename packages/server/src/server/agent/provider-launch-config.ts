@@ -65,12 +65,16 @@ function normalizeLaunchDefault(
   return defaultBinary;
 }
 
-async function resolveLaunchPath(command: string, env?: ProcessEnvRecord): Promise<string | null> {
-  const found = await findExecutable(command, { env });
+async function resolveLaunchPath(
+  command: string,
+  env?: ProcessEnvRecord,
+  options?: { probe?: boolean },
+): Promise<string | null> {
+  const found = await findExecutable(command, { env, probe: options?.probe });
   if (found) {
     return found;
   }
-  if (isAbsolute(command)) {
+  if (options?.probe !== false && isAbsolute(command)) {
     return executableExists(command);
   }
   return null;
@@ -78,10 +82,11 @@ async function resolveLaunchPath(command: string, env?: ProcessEnvRecord): Promi
 
 async function resolveDefaultLaunchPath(
   defaultBinary: ProviderLaunchDefault,
+  options?: { probe?: boolean },
 ): Promise<string | null> {
   return defaultBinary.resolvePath
     ? await defaultBinary.resolvePath()
-    : await resolveLaunchPath(defaultBinary.command);
+    : await resolveLaunchPath(defaultBinary.command, undefined, options);
 }
 
 export interface ResolveProviderLaunchOptions {
@@ -117,11 +122,12 @@ export async function resolveProviderLaunch({
 export async function checkProviderLaunchAvailable(
   launch: ResolvedProviderLaunch,
   defaultBinary?: ProviderLaunchDefault,
+  options?: { probe?: boolean },
 ): Promise<ProviderLaunchAvailability> {
   const resolvedPath =
     defaultBinary && launch.source !== "override"
-      ? await resolveDefaultLaunchPath(defaultBinary)
-      : await resolveLaunchPath(launch.command, launch.env);
+      ? await resolveDefaultLaunchPath(defaultBinary, options)
+      : await resolveLaunchPath(launch.command, launch.env, options);
   return {
     available: resolvedPath !== null,
     resolvedPath,
@@ -219,11 +225,82 @@ export interface ProviderEnvOptions {
   baseEnv?: ProcessEnvRecord;
   runtimeSettings?: ProviderRuntimeSettings;
   overlays?: Array<ProcessEnvRecord | undefined>;
+  platform?: NodeJS.Platform;
 }
 
 export interface ProviderEnvSpec {
   baseEnv?: ProcessEnvRecord;
   envOverlay: ProcessEnvRecord;
+}
+
+const LOOPBACK_NO_PROXY_HOSTS = ["127.0.0.1", "localhost", "::1"] as const;
+
+function normalizeNoProxyEntry(entry: string): string {
+  const trimmed = entry.trim().toLowerCase();
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function mergeLoopbackNoProxyValue(existing: string | undefined): string {
+  const entries = (existing ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  const normalized = new Set(entries.map(normalizeNoProxyEntry));
+  if (normalized.has("*")) {
+    return entries.join(",");
+  }
+  for (const host of LOOPBACK_NO_PROXY_HOSTS) {
+    if (!normalized.has(host)) {
+      entries.push(host);
+      normalized.add(host);
+    }
+  }
+  return entries.join(",");
+}
+
+function applyLoopbackNoProxy(
+  envOverlay: ProcessEnvRecord,
+  baseEnv: ProcessEnvRecord,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  const merged: ProcessEnvRecord = { ...baseEnv, ...envOverlay };
+
+  if (platform === "win32") {
+    const matchingKeys = Object.keys(merged).filter(
+      (key) => key.toLowerCase() === "no_proxy" && merged[key] !== undefined,
+    );
+    if (matchingKeys.length === 0) {
+      envOverlay.NO_PROXY = mergeLoopbackNoProxyValue(undefined);
+      return;
+    }
+    const activeKey = matchingKeys[matchingKeys.length - 1]!;
+    for (const key of matchingKeys) {
+      if (key !== activeKey) {
+        envOverlay[key] = undefined;
+      }
+    }
+    envOverlay[activeKey] = mergeLoopbackNoProxyValue(merged[activeKey]);
+    return;
+  }
+
+  const upperValue = merged.NO_PROXY;
+  const lowerValue = merged.no_proxy;
+  if (upperValue !== undefined) {
+    envOverlay.NO_PROXY = mergeLoopbackNoProxyValue(upperValue);
+  }
+  if (lowerValue !== undefined) {
+    const mergedLower = mergeLoopbackNoProxyValue(lowerValue);
+    envOverlay.no_proxy = mergedLower;
+    if (upperValue === undefined) {
+      envOverlay.NO_PROXY = mergedLower;
+    }
+  }
+  if (upperValue === undefined && lowerValue === undefined) {
+    envOverlay.NO_PROXY = mergeLoopbackNoProxyValue(undefined);
+  }
 }
 
 function collectProviderEnvOverlays(
@@ -241,6 +318,7 @@ export function createProviderEnvSpec(options: ProviderEnvOptions = {}): Provide
   for (const key of PARENT_SESSION_ENV_VARS) {
     envOverlay[key] = undefined;
   }
+  applyLoopbackNoProxy(envOverlay, options.baseEnv ?? process.env, options.platform);
   return {
     ...(options.baseEnv ? { baseEnv: options.baseEnv } : {}),
     envOverlay,
@@ -250,6 +328,28 @@ export function createProviderEnvSpec(options: ProviderEnvOptions = {}): Provide
 export function createProviderEnv(options: ProviderEnvOptions = {}): ExternalProcessEnv {
   const spec = createProviderEnvSpec(options);
   return createExternalProcessEnv(spec.baseEnv ?? process.env, spec.envOverlay);
+}
+
+/**
+ * Sanitizes a sparse session env overlay without injecting unrelated base env defaults
+ * (such as `NO_PROXY` when the overlay did not set one) so callers merging it over a
+ * resolved provider launch environment preserve the launch environment's existing values.
+ */
+export function sanitizeProviderEnvOverlay(
+  overlay: ProcessEnvRecord | undefined,
+  platform: NodeJS.Platform = process.platform,
+): ExternalProcessEnv {
+  const envOverlay: ProcessEnvRecord = overlay ? { ...overlay } : {};
+  for (const key of PARENT_SESSION_ENV_VARS) {
+    envOverlay[key] = undefined;
+  }
+  const hasExplicitNoProxy = Object.entries(envOverlay).some(
+    ([key, value]) => key.toLowerCase() === "no_proxy" && value !== undefined,
+  );
+  if (hasExplicitNoProxy) {
+    applyLoopbackNoProxy(envOverlay, {}, platform);
+  }
+  return createExternalProcessEnv({}, envOverlay);
 }
 
 export async function isProviderCommandAvailable(

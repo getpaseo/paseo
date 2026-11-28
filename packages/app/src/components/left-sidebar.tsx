@@ -44,9 +44,15 @@ import {
 import { SidebarCloseButton } from "@/components/headers/sidebar-close-button";
 import {
   resolveDesktopSidebarInsetLeft,
+  resolveDesktopSidebarInsetTop,
   resolveDesktopSidebarWidth,
 } from "@/components/desktop-sidebar-layout";
-import { useTopBand, useWindowLayout, resolveDesktopDivisionLayout } from "@/window-layout";
+import {
+  useTopBand,
+  useWindowLayout,
+  useWindowSafeAreaInsets,
+  resolveDesktopDivisionLayout,
+} from "@/window-layout";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
   SIDEBAR_RESIZE_FAIL_OFFSET,
@@ -55,6 +61,7 @@ import { HostPicker } from "@/components/hosts/host-picker";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
 import { SidebarSeparator } from "@/components/sidebar/sidebar-separator";
 import { SidebarToastRegion } from "@/components/sidebar/sidebar-toast-region";
+import { SidebarSelectionHost } from "@/sidebar-selection";
 import { SidebarNavRows, useVisibleSidebarNavItems } from "@/components/sidebar/sidebar-nav-rows";
 import { SidebarFooterIconHighlight } from "@/components/sidebar/sidebar-footer-icon-highlight";
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
@@ -172,6 +179,7 @@ export const LeftSidebar = memo(function LeftSidebar({
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
+  const windowInsets = useWindowSafeAreaInsets();
   const isCompactLayout = useIsCompactFormFactor();
   const activeWorkspace = useActiveWorkspaceSelection();
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
@@ -226,7 +234,7 @@ export const LeftSidebar = memo(function LeftSidebar({
       openSettingsFromSidebar({
         workspace: activeWorkspace,
         isCompact: isCompactLayout,
-        route: buildSettingsHostSectionRoute(serverId, "host"),
+        route: buildSettingsHostSectionRoute(serverId, "daemon"),
       });
     },
     [activeWorkspace, isCompactLayout],
@@ -288,7 +296,11 @@ export const LeftSidebar = memo(function LeftSidebar({
           <DesktopSidebar
             {...sharedProps}
             {...handlers}
-            insetsTop={insets.top}
+            insetsTop={resolveDesktopSidebarInsetTop({
+              overlay: desktopOverlay,
+              safeAreaTop: insets.top,
+              windowSafeAreaTop: windowInsets.top,
+            })}
             active={active}
             overlay={desktopOverlay}
           />
@@ -388,10 +400,10 @@ function SidebarHostPicker({
       includeAddHost
       onAddHost={onAddHost}
       showActiveConnection
-      onOpenHostSettings={onOpenHostSettings}
       searchable
+      title={label}
       desktopPlacement="top-start"
-      desktopMinWidth={240}
+      desktopMinWidth={328}
       addHostTestID="sidebar-host-add"
       hostOptionTestID={sidebarHostOptionTestID}
     >
@@ -667,6 +679,7 @@ function MobileSidebar({
                 listHeaderComponent={workspacesSectionHeaderElement}
               />
             )}
+            <SidebarSelectionHost active={active} workspaceEntriesByKey={workspaceEntriesByKey} />
           </SidebarToastRegion>
         </SidebarViewSlot>
 
@@ -922,6 +935,7 @@ function DesktopSidebar({
                   listHeaderComponent={workspacesSectionHeaderElement}
                 />
               )}
+              <SidebarSelectionHost active={active} workspaceEntriesByKey={workspaceEntriesByKey} />
             </SidebarToastRegion>
           </SidebarViewSlot>
 

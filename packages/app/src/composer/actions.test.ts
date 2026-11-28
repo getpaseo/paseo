@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AgentAttachment, ForgeSearchItem } from "@getpaseo/protocol/messages";
+import type {
+  AgentAttachment,
+  ForgeSearchItem,
+  UploadedFileAttachment,
+} from "@getpaseo/protocol/messages";
 import type {
   AttachmentMetadata,
   ComposerAttachment,
@@ -181,17 +185,22 @@ interface FakeSendCall {
   options: {
     messageId: string;
     activeTurnBehavior?: "interrupt" | "steer";
-    images: Array<{ data: string; mimeType: string }>;
+    images?: Array<{ data: string; mimeType: string }>;
     attachments: AgentAttachment[];
   };
 }
 
 function createFakeSendClient(
   options: { rejection?: Error; beforeRejection?: (call: FakeSendCall) => void } = {},
-): ComposerSendClient & { calls: FakeSendCall[] } {
+): ComposerSendClient & {
+  calls: FakeSendCall[];
+  uploadCalls: Array<{ fileName: string; mimeType: string; bytes: Uint8Array }>;
+} {
   const calls: FakeSendCall[] = [];
+  const uploadCalls: Array<{ fileName: string; mimeType: string; bytes: Uint8Array }> = [];
   return {
     calls,
+    uploadCalls,
     sendAgentMessage: async (agentId, text, opts) => {
       const call = { agentId, text, options: opts };
       calls.push(call);
@@ -200,7 +209,21 @@ function createFakeSendClient(
         throw options.rejection;
       }
     },
-    uploadFile: async () => ({ requestId: "test", file: null, error: null }),
+    uploadFile: async (input) => {
+      uploadCalls.push(input);
+      return {
+        requestId: `req-${uploadCalls.length}`,
+        file: {
+          type: "uploaded_file",
+          id: `upload_${uploadCalls.length}`,
+          fileName: input.fileName,
+          mimeType: input.mimeType,
+          size: input.bytes.byteLength,
+          path: `/home/user/.paseo/uploads/upload_${uploadCalls.length}/${input.fileName}`,
+        },
+        error: null,
+      };
+    },
   };
 }
 
@@ -289,8 +312,18 @@ function createFakeQueue(
   return fake;
 }
 
-const passthroughEncodeImages = async (images: AttachmentMetadata[]) =>
-  images.map((image) => ({ data: image.id, mimeType: image.mimeType }));
+const passthroughUploadImages = async (
+  images: AttachmentMetadata[],
+): Promise<UploadedFileAttachment[]> =>
+  images.map((image) => ({
+    type: "uploaded_file",
+    id: `upload_${image.id}`,
+    fileName: image.fileName ?? `${image.id}.png`,
+    mimeType: image.mimeType,
+    size: image.byteSize ?? 0,
+    path: `/home/user/.paseo/uploads/upload_${image.id}/${image.fileName ?? `${image.id}.png`}`,
+    role: "image",
+  }));
 
 describe("cancelComposerAgent", () => {
   function baseInput(): {
@@ -428,7 +461,7 @@ describe("dispatchComposerAgentMessage", () => {
       agentId: "agent",
       text: "steer this turn",
       attachments: [],
-      encodeImages: async () => [],
+      uploadImages: async () => [],
       submission: stream,
       activeTurnBehavior: "steer",
     });
@@ -444,7 +477,7 @@ describe("dispatchComposerAgentMessage", () => {
       agentId: "agent",
       text: "hello",
       attachments: [],
-      encodeImages: async () => [],
+      uploadImages: async () => [],
       submission: stream,
       activeTurnBehavior: "steer",
       activeTurnId: "turn-1",
@@ -456,7 +489,7 @@ describe("dispatchComposerAgentMessage", () => {
       agentId: "legacy",
       text: "hello",
       attachments: [],
-      encodeImages: async () => [],
+      uploadImages: async () => [],
       submission: legacy,
       activeTurnBehavior: "steer",
     });
@@ -474,7 +507,7 @@ describe("dispatchComposerAgentMessage", () => {
         agentId: "agent",
         text: "rejected prompt",
         attachments: [],
-        encodeImages: passthroughEncodeImages,
+        uploadImages: passthroughUploadImages,
         submission: stream,
       }),
     ).rejects.toBe(rejection);
@@ -494,7 +527,7 @@ describe("dispatchComposerAgentMessage", () => {
         agentId: "agent",
         text: "force send",
         attachments: [],
-        encodeImages: passthroughEncodeImages,
+        uploadImages: passthroughUploadImages,
         submission: stream,
       }),
     ).rejects.toBe(transportError);
@@ -517,7 +550,7 @@ describe("dispatchComposerAgentMessage", () => {
         agentId: "agent",
         text: "unknown state",
         attachments: [],
-        encodeImages: passthroughEncodeImages,
+        uploadImages: passthroughUploadImages,
         submission,
       }),
     ).rejects.toBe(transportError);
@@ -538,14 +571,14 @@ describe("dispatchComposerAgentMessage", () => {
         agentId: "agent",
         text: "ambiguous steer",
         attachments: [],
-        encodeImages: passthroughEncodeImages,
+        uploadImages: passthroughUploadImages,
         submission,
         activeTurnBehavior: "steer",
       }),
     ).rejects.toBe(transportError);
   });
 
-  it("sends text + image data + structured attachments and appends user_message to the tail when head is empty", async () => {
+  it("sends text + uploaded images + structured attachments without inlining base64 and appends user_message to the tail when head is empty", async () => {
     const client = createFakeSendClient();
     const stream = createFakeStream();
     const image = imageWithId("img-2");
@@ -558,7 +591,7 @@ describe("dispatchComposerAgentMessage", () => {
         { kind: "image", metadata: image },
         { kind: "github_pr", item: prItem },
       ],
-      encodeImages: passthroughEncodeImages,
+      uploadImages: passthroughUploadImages,
       submission: stream,
     });
 
@@ -566,18 +599,28 @@ describe("dispatchComposerAgentMessage", () => {
     const [call] = client.calls;
     expect(call.agentId).toBe("agent");
     expect(call.text).toBe("send attachments");
-    expect(call.options.images).toEqual([{ data: image.id, mimeType: image.mimeType }]);
+    expect(call.options.images).toBeUndefined();
+    const expectedPrAttachment = {
+      type: "forge_change_request",
+      mimeType: "application/paseo-forge-change-request",
+      forge: "github",
+      number: 202,
+      title: "Refactor composer attachments",
+      url: "https://github.com/acme/paseo/pull/202",
+      body: "PR body",
+      baseRefName: "main",
+      headRefName: "composer-attachments",
+    };
     expect(call.options.attachments).toEqual([
+      expectedPrAttachment,
       {
-        type: "forge_change_request",
-        mimeType: "application/paseo-forge-change-request",
-        forge: "github",
-        number: 202,
-        title: "Refactor composer attachments",
-        url: "https://github.com/acme/paseo/pull/202",
-        body: "PR body",
-        baseRefName: "main",
-        headRefName: "composer-attachments",
+        type: "uploaded_file",
+        id: "upload_img-2",
+        fileName: "img-2.png",
+        mimeType: "image/png",
+        size: 42,
+        path: "/home/user/.paseo/uploads/upload_img-2/img-2.png",
+        role: "image",
       },
     ]);
 
@@ -588,7 +631,7 @@ describe("dispatchComposerAgentMessage", () => {
     expect(userMessage.kind).toBe("user_message");
     expect(userMessage.text).toBe("send attachments");
     expect(userMessage.images).toEqual([image]);
-    expect(userMessage.attachments).toEqual(call.options.attachments);
+    expect(userMessage.attachments).toEqual([expectedPrAttachment]);
     expect(userMessage.id).toBe(call.options.messageId);
     expect(userMessage.clientMessageId).toBe(call.options.messageId);
     expect(userMessage.messageId).toBeUndefined();
@@ -604,7 +647,7 @@ describe("dispatchComposerAgentMessage", () => {
       text: "send old attachment",
       attachments: [{ kind: "forge_change_request", item: prItem }],
       attachmentSubmitFormat: "legacy-github",
-      encodeImages: passthroughEncodeImages,
+      uploadImages: passthroughUploadImages,
       submission: stream,
     });
 
@@ -637,7 +680,7 @@ describe("dispatchComposerAgentMessage", () => {
       agentId: "agent",
       text: "next message",
       attachments: [],
-      encodeImages: passthroughEncodeImages,
+      uploadImages: passthroughUploadImages,
       submission: stream,
     });
 
@@ -645,7 +688,7 @@ describe("dispatchComposerAgentMessage", () => {
     expect(stream.tail.get("agent")).toEqual([]);
   });
 
-  it("submits empty wire arrays when no attachments are provided", async () => {
+  it("submits empty attachments and omits inline images when no attachments are provided", async () => {
     const client = createFakeSendClient();
     const stream = createFakeStream();
 
@@ -654,14 +697,12 @@ describe("dispatchComposerAgentMessage", () => {
       agentId: "agent",
       text: "plain message",
       attachments: [],
-      encodeImages: passthroughEncodeImages,
+      uploadImages: passthroughUploadImages,
       submission: stream,
     });
 
-    expect(client.calls[0]?.options).toMatchObject({
-      images: [],
-      attachments: [],
-    });
+    expect(client.calls[0]?.options.images).toBeUndefined();
+    expect(client.calls[0]?.options.attachments).toEqual([]);
   });
 
   it("serializes workspace review attachments through the structured attachment path", async () => {
@@ -674,12 +715,12 @@ describe("dispatchComposerAgentMessage", () => {
       agentId: "agent",
       text: "review this",
       attachments: [review],
-      encodeImages: passthroughEncodeImages,
+      uploadImages: passthroughUploadImages,
       submission: stream,
     });
 
     expect(client.calls[0]?.options.attachments).toEqual([review.attachment]);
-    expect(client.calls[0]?.options.images).toEqual([]);
+    expect(client.calls[0]?.options.images).toBeUndefined();
   });
 
   it("serializes browser_element workspace attachments as text attachments at the wire boundary", async () => {
@@ -692,7 +733,7 @@ describe("dispatchComposerAgentMessage", () => {
       agentId: "agent",
       text: "inspect element",
       attachments: [browserElement],
-      encodeImages: passthroughEncodeImages,
+      uploadImages: passthroughUploadImages,
       submission: stream,
     });
 

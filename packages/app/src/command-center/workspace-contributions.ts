@@ -29,7 +29,8 @@ export interface WorkspaceCommandCenterLabels {
   previousTab: string;
   nextTab: string;
   closeCurrentTab: string;
-  renameTab: string;
+  renameAgent: string;
+  renameTerminal: string;
   reloadAgent: string;
   copyResumeCommand: string;
   copyAgentId: string;
@@ -299,7 +300,10 @@ function buildActiveTabContributions(
       buildQueryAction(source, {
         id: "tab:rename-current",
         rank: 33,
-        title: source.labels.renameTab,
+        title:
+          source.activeTabKind === "agent"
+            ? source.labels.renameAgent
+            : source.labels.renameTerminal,
         keywords: ["tab", "rename", "current"],
         icon: source.icons.rename,
         action: { id: "workspace.tab.rename-current", scope: "workspace" },

@@ -1156,6 +1156,7 @@ describe("relay external socket reconnect behavior", () => {
     expect(serverInfo.features?.hopliteProvider).toBe(false);
     expect(serverInfo.features?.fxProvider).toBe(false);
     expect(serverInfo.features?.pluginLogs).toBe(true);
+    expect(serverInfo.features?.pushNotificationPreferences).toBe(true);
     expect(serverInfo.features?.workspaceMarkUnread).toBe(true);
     expect(serverInfo.features?.["terminal-input-mode-replay"]).toBe(true);
     expect(serverInfo.features?.["terminal-size-ownership"]).toBe(true);

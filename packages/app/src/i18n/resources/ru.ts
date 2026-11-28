@@ -117,6 +117,8 @@ export const ru: TranslationResources = {
       groupByProject: "Группировать по проекту",
       groupByStatus: "Группировать по статусу",
       copyBrowserHostName: "Скопировать имя хоста браузера",
+      profileGroupLabel: "Профиль",
+      profileSearchKeywords: "профиль применить профиль профиль агента пресет",
       modelGroupLabel: "Модель",
       modelSearchKeywords: "Сменить, изменить, выбрать или установить модель",
       thinkingGroupLabel: "Мышление",
@@ -298,6 +300,7 @@ export const ru: TranslationResources = {
     archived: {
       callout: "Этот агент находится в архиве",
       unarchive: "Разархивировать",
+      unarchiving: "Разархивация...",
     },
   },
   sessions: {
@@ -351,6 +354,7 @@ export const ru: TranslationResources = {
       viewDiagram: "Показать диаграмму",
     },
     actions: {
+      copyQuote: "Копировать цитату",
       copyCode: "Скопировать код",
       copyTurn: "Скопировать ответ",
       copyMessage: "Копировать сообщение",
@@ -662,6 +666,24 @@ export const ru: TranslationResources = {
         unsupportedProtocol:
           "URL браузера с неподдерживаемым протоколом заблокирован: {{protocol}}",
       },
+      routing: {
+        tooltipHost: "Просмотр через {{hostName}}. Нажмите, чтобы перейти в локальный режим.",
+        tooltipLocal: "Локальный просмотр. Нажмите, чтобы просматривать через {{hostName}}.",
+        switchToLocal: "Переключить маршрутизацию браузера с {{hostName}} на локальную",
+        switchToHost: "Переключить маршрутизацию браузера с локальной на {{hostName}}",
+      },
+      proxy: {
+        connecting: "Подключение к {{hostName}}...",
+        reconnecting: "Повторное подключение к {{hostName}}...",
+        updateTitle: "Обновите {{hostName}}, чтобы просматривать через этот хост",
+        updateDescription: "Этот хост пока не поддерживает проксирование браузера.",
+        routedTitle: "Прокси браузера недоступен для маршрутизируемых хостов",
+        routedDescription: "Подключитесь к хосту напрямую или просматривайте локально.",
+        offlineTitle: "{{hostName}} не в сети",
+        offlineDescription: "Дождитесь повторного подключения хоста или просматривайте локально.",
+        errorTitle: "Не удалось подключить прокси браузера",
+        browseLocally: "Просматривать локально",
+      },
     },
     terminal: {
       hostDisconnected: "Хост не подключён",
@@ -926,6 +948,8 @@ export const ru: TranslationResources = {
             "Отправка изменений недоступна: эта ветка ещё не связана с удалённым репозиторием.",
           pushBehind: "Отправка изменений пока недоступна: сначала получите более новые изменения.",
           pushNothing: "Отправка изменений недоступна: нет новых изменений для отправки.",
+          pushUpstreamGone:
+            "Отправка изменений недоступна: ветка, которую отслеживает эта ветка, больше не существует.",
           pullAndPushNoRemote:
             "Получение и отправка изменений недоступны: эта ветка ещё не связана с удалённым репозиторием.",
           pullAndPushDirty:
@@ -976,6 +1000,8 @@ export const ru: TranslationResources = {
         },
         archiveWarning: {
           title: "Архивировать «{{workspaceName}}»?",
+          bulkTitle: "Архивировать рабочие пространства ({{count}})?",
+          bulkWorkspaceReason: "{{workspaceName}}: {{reason}}",
           confirm: "Архивировать",
           cancel: "Отмена",
           uncommittedChanges: "Незафиксированные изменения",
@@ -1386,6 +1412,7 @@ export const ru: TranslationResources = {
         rename: "Переименовать рабочее пространство",
         pin: "Закрепить вверху",
         unpin: "Открепить",
+        select: "Выбрать",
         archive: "Архивировать",
         archiveWorkspace: "Архивировать рабочее пространство",
         hideFromSidebar: "Скрыть на боковой панели",
@@ -1404,6 +1431,10 @@ export const ru: TranslationResources = {
         submit: "Переименовать",
         invalidBranchName: "Недопустимое имя ветки",
       },
+      selection: {
+        count: "Выбрано: {{count}}",
+        exit: "Выйти из выбора",
+      },
       toasts: {
         workspacePathUnavailable: "Путь к рабочему пространству недоступен",
         pathCopied: "Путь скопирован",
@@ -1411,7 +1442,9 @@ export const ru: TranslationResources = {
         hostDisconnected: "Хост не подключён",
         hideFailed: "Не удалось скрыть рабочее пространство",
         archiveFailed: "Не удалось архивировать рабочее пространство",
+        archiveMultipleFailed: "Не удалось архивировать рабочие пространства ({{count}})",
         archived: "Рабочее пространство архивировано",
+        archivedCount: "Архивировано рабочих пространств: {{count}}",
         undoArchive: "Отменить",
         undoArchiveFailed: "Не удалось отменить архивацию",
       },
@@ -1559,6 +1592,8 @@ export const ru: TranslationResources = {
       status: {
         checking: "Проверка обновлений приложения...",
         installing: "Установка обновления приложения...",
+        downloadingVersionProgress: "Загрузка {{version}}... {{percent}}%",
+        downloadingProgress: "Загрузка обновления приложения... {{percent}}%",
         upToDate: "Установлена последняя версия приложения.",
         upToDateWithLastChecked:
           "Установлена последняя версия приложения. Последняя проверка: {{time}}.",
@@ -1568,6 +1603,15 @@ export const ru: TranslationResources = {
         pendingWithVersion: "Найдено обновление: {{version}}. Загрузка...",
         pendingWithVersionAndLastChecked:
           "Найдено обновление: {{version}}. Загрузка... Последняя проверка в {{time}}.",
+        pendingWithVersionProgress: "Найдено обновление: {{version}}. Загрузка... {{percent}}%",
+        pendingWithVersionProgressAndLastChecked:
+          "Найдено обновление: {{version}}. Загрузка... {{percent}}% Последняя проверка в {{time}}.",
+        downloadAvailableWithVersion: "Доступно обновление: {{version}}",
+        downloadAvailableWithVersionAndLastChecked:
+          "Доступно обновление: {{version}}. Последняя проверка: {{time}}.",
+        downloadAvailable: "Доступно обновление приложения.",
+        downloadAvailableWithLastChecked:
+          "Доступно обновление приложения. Последняя проверка: {{time}}.",
         availableWithVersion: "Обновление готово: {{version}}",
         availableWithVersionAndLastChecked:
           "Обновление готово: {{version}}. Последняя проверка: {{time}}.",
@@ -1580,14 +1624,21 @@ export const ru: TranslationResources = {
       },
       installError: "Не удалось установить обновление настольного приложения.",
       callout: {
+        downloadingTitle: "Загрузка обновления",
         installingTitle: "Установка обновления",
         failedTitle: "Обновление не выполнено",
         availableTitle: "Доступно обновление",
         genericError: "Что-то пошло не так.",
         whatsNew: "Что нового",
+        downloadingAction: "Загрузка...",
         installingAction: "Установка...",
+        downloadAndRestart: "Скачать",
         installAndRestart: "Установить и перезапустить",
+        downloadingVersionDescription: "Загрузка {{version}}... {{percent}}%",
+        downloadingDescription: "Загрузка обновления... {{percent}}%",
         installingDescription: "Установка и перезапуск...",
+        versionAvailable: "Версия {{version}} доступна для загрузки.",
+        newVersionAvailable: "Новая версия доступна для загрузки.",
         versionReady: "Версия {{version}} готова к установке.",
         newVersionReady: "Новая версия готова к установке.",
         restartWarning:
@@ -1812,12 +1863,6 @@ export const ru: TranslationResources = {
             "Полнофункциональное нативное мобильное приложение позволяет управлять любым компьютером с Paseo с телефона",
           appStore: "App Store",
           googlePlay: "Google Play",
-          connectTitle: "Выберите способ подключения",
-          connectDocs: "Документация",
-          openConnectDocs: "Открыть документацию по подключению",
-          recommended: "Рекомендуется",
-          relay: { title: "Ретранслятор", hint: "Сквозное шифрование, отсканируйте QR-код" },
-          tailscale: { title: "Tailscale", hint: "Требует небольшой настройки" },
         },
       },
     },
@@ -1838,11 +1883,15 @@ export const ru: TranslationResources = {
     defaultModel: "По умолчанию",
     profiles: "Профили",
     providers: "Провайдеры",
+    models: "Модели",
     model: "Модель",
     editProfiles: "Изменить",
     editProfilesLabel: "Изменить профили агентов",
     createProfile: "Создать профиль",
     createProfileFromModel: "Создать профиль из этой модели",
+    profileSaved: "Сохранено: «{{name}}»",
+    undo: "Отменить",
+    undoProfileSave: "Отменить сохранение профиля",
     editProfileLabel: "Изменить {{name}}",
     editProfilesCount: "Изменить профили ({{count}})",
     modelCount: "{{count}} модель",
@@ -1890,6 +1939,36 @@ export const ru: TranslationResources = {
       noModelAvailable: "Для выбранного провайдера нет доступных моделей.",
       workspaceDirectoryNotFound: "Каталог рабочего пространства не найден",
       hostDisconnected: "Хост не подключён",
+    },
+  },
+  devices: {
+    title: "Устройства",
+    waysToConnect: "Способы подключения",
+    docs: "Документация",
+    docsAccessibility: "Открыть документацию по подключению",
+    relay: {
+      title: "Ретранслятор",
+      hint: "Без настройки, сквозное шифрование, отсканируйте QR-код",
+    },
+    tailscale: {
+      hint: "Прямое подключение через ваш tailnet, по адресу",
+      unavailable: "Tailscale не запущен на этом хосте",
+      install: "Скачать Tailscale",
+      refresh: "Обновить",
+      refreshing: "Обновление...",
+      waiting: "Ожидаем запуска Tailscale на этом хосте",
+      alwaysOn: "Всегда включено, так как хост уже принимает подключения Tailscale",
+      socket: "Выключено, так как хост слушает локальный сокет",
+      launch: "Управляется командой, которая запускает этот хост",
+      update: "Обновите этот хост, чтобы использовать Tailscale",
+      updateDocs: "Как обновить",
+      address: "На телефоне с Tailscale добавьте хост с этим адресом",
+      statusError: "Не удалось проверить Tailscale",
+      turnOnError: "Не удалось включить Tailscale",
+      turnOffError: "Не удалось выключить Tailscale",
+      confirmTitle: "Выключить Tailscale?",
+      confirmMessage: "Это устройство подключено через Tailscale и потеряет соединение с хостом.",
+      confirmAction: "Выключить",
     },
   },
   pairing: {
@@ -2362,7 +2441,7 @@ export const ru: TranslationResources = {
     title: "Настройки",
     loading: "Загрузка настроек...",
     groups: {
-      app: "Приложение",
+      app: "Это устройство",
       host: "Хост",
     },
     hostPicker: {
@@ -2380,7 +2459,9 @@ export const ru: TranslationResources = {
     groupInfo: "О разделе «{{title}}»",
     sections: {
       general: "Основные",
+      hosts: "Хосты",
       chat: "Чат",
+      chatAndPanes: "Чат и панели",
       appearance: "Оформление",
       sidebar: "Боковая панель",
       terminal: "Терминал",
@@ -2393,6 +2474,16 @@ export const ru: TranslationResources = {
       permissions: "Разрешения",
       diagnostics: "Диагностика",
       about: "О приложении",
+    },
+    clientHosts: {
+      title: "Сохранённые хосты",
+      info: "Хосты, к которым подключается это устройство. Имена, значки, бейджи и маршруты здесь влияют только на это устройство.",
+      backToHosts: "Назад к хостам",
+      routesTitle: "Как подключается это устройство",
+      routesInfo:
+        "Сохранённые маршруты, по которым это устройство подключается к хосту. Paseo выбирает самый быстрый.",
+      addRoute: "Добавить маршрут",
+      activeRoute: "Активный",
     },
     layout: en.settings.layout,
     editor: {
@@ -2410,6 +2501,49 @@ export const ru: TranslationResources = {
     },
     notifications: {
       title: "Уведомления",
+      enabled: {
+        label: "Включить уведомления",
+        description: "Получать уведомления от агентов, терминалов и плагинов на этом устройстве",
+        pausedDescription:
+          "Все уведомления, включая уведомления от плагинов, приостановлены на этом устройстве",
+      },
+      events: {
+        title: "События",
+        agentPermission: {
+          label: "Агенту требуется разрешение",
+          description: "Подтверждения, планы и вопросы",
+        },
+        agentError: {
+          label: "Ошибка агента",
+          description: "Когда агент останавливается из-за ошибки",
+        },
+        agentFinished: {
+          label: "Агент завершил работу",
+          description: "Когда агент завершает ход",
+        },
+        terminalNeedsInput: {
+          label: "Терминал ожидает ввода",
+          description: "Когда команда в терминале ждёт ввода",
+        },
+        terminalFinished: {
+          label: "Терминал завершил команду",
+          description: "Когда команда в терминале завершается",
+        },
+      },
+      plugins: {
+        title: "Плагины",
+        enabled: {
+          label: "Уведомления плагинов",
+          description: "Разрешить установленным плагинам отправлять уведомления",
+        },
+        empty: "Установленные плагины появятся здесь, чтобы вы могли отключать их по отдельности",
+      },
+      legacyHostTitle: "Обновите хост для настроек push-уведомлений",
+      legacyHostHint:
+        "Обновите подключённые хосты для синхронизации настроек push-уведомлений с этого устройства",
+      desktop: {
+        title: "Система",
+      },
       permission: "Разрешение на уведомления",
       refreshAccessibility: "Обновить разрешение на уведомления",
       playSound: "Воспроизводить звук",
@@ -2427,6 +2561,8 @@ export const ru: TranslationResources = {
       projects: "Проекты",
       connections: "Подключения",
       agents: "Агенты",
+      tools: "Инструменты и промпты",
+      agentProfiles: "Профили агентов",
       metadata: "Метаданные",
       voice: "Голос",
       workspaces: "Рабочие пространства",
@@ -2435,12 +2571,13 @@ export const ru: TranslationResources = {
       terminals: "Терминалы",
       plugins: "Плагины",
       host: "Обзор",
+      daemon: "Демон",
     },
     plugins: pluginSettings.ru,
     metadataGeneration: {
       title: "Генерация метаданных",
       description:
-        "Выберите модель, которую Paseo будет использовать для названий рабочих пространств и веток, сообщений коммитов и черновиков PR",
+        "Выберите модель и инструкции, которые Paseo будет использовать для названий рабочих пространств и веток, сообщений коммитов и черновиков PR",
       selection: "Выбор модели",
       automatic: "Автоматически",
       preferred: "Вручную",
@@ -2449,6 +2586,10 @@ export const ru: TranslationResources = {
       model: "Модель",
       modelHint:
         "Используется только эта модель. Если она не сработает, Paseo не будет пробовать другую модель",
+      instructions: "Инструкции",
+      instructionsHint: "Применяются ко всем метаданным, создаваемым на этом хосте",
+      instructionsPlaceholder:
+        "Пример: Пиши на русском языке. Сохраняй единый стиль в названиях и коммитах. Не используй длинное тире.",
       docs: "Документация",
       saveError: "Не удалось обновить настройки генерации метаданных",
     },
@@ -2649,9 +2790,28 @@ export const ru: TranslationResources = {
         stable: "Стабильный",
         beta: "Бета",
       },
+      autoUpdate: {
+        label: "Автообновления",
+        options: {
+          automatic: "Авто",
+          notify: "Уведомлять",
+          off: "Выкл.",
+        },
+        descriptions: {
+          automatic: "Проверять и загружать обновления в фоновом режиме",
+          notify: "Проверять обновления, но загружать только по вашему выбору",
+          off: "Не проверять автоматически. Проверять только по нажатию кнопки Проверить",
+        },
+      },
       updates: {
         label: "Обновления приложения",
         readyToInstall: "Версия {{version}} готова к установке",
+        downloadTitle: "Загрузить обновление настольного приложения",
+        downloadMessage: "Это загрузит и установит обновление Paseo на этом компьютере.",
+        downloadConfirm: "Загрузить и установить",
+        download: "Загрузить",
+        downloadTo: "Загрузить {{version}}",
+        downloading: "Загрузка...",
         installTitle: "Установить обновление настольного приложения",
         installMessage: "Это обновит Paseo на этом компьютере.",
         installConfirm: "Установить обновление",
@@ -2854,6 +3014,23 @@ export const ru: TranslationResources = {
         name: {
           label: "Имя",
         },
+        icon: {
+          label: "Значок",
+          accessibilityLabel: "Значок, {{value}}",
+          auto: "Авто",
+          autoDetected: "Авто ({{icon}})",
+          options: {
+            server: "Сервер",
+            laptop: "Ноутбук",
+            desktop: "Компьютер",
+            mini: "Мини-ПК",
+            workstation: "Рабочая станция",
+            cloud: "Облако",
+            container: "Контейнер",
+            board: "Одноплатный ПК",
+            terminal: "Терминал",
+          },
+        },
         color: {
           label: "Цвет",
           accessibilityLabel: "Цвет, {{value}}",
@@ -2890,6 +3067,14 @@ export const ru: TranslationResources = {
         local: "Локальный",
         remoteSsh: "Удалённый SSH",
       },
+      connectionKinds: {
+        local: "Локальный",
+        relay: "Ретранслятор",
+        tailscale: "Tailscale",
+        ssh: "SSH",
+        direct: "Прямой",
+        routed: "Через",
+      },
       connections: {
         title: "Подключения",
         removeTitle: "Удалить подключение",
@@ -2900,15 +3085,12 @@ export const ru: TranslationResources = {
         timeout: "Время ожидания истекло",
       },
       pairDevices: {
-        title: "Подключение устройств",
         rowTitle: "Подключить устройство",
-        rowHint:
-          "Отсканируйте QR-код или скопируйте ссылку, чтобы подключить телефон к этому хосту.",
       },
       skills: {
-        sectionTitle: "Навыки оркестрации",
-        title: "Навыки оркестрации",
-        description: "Научите агентов пользоваться инструментами Paseo",
+        sectionTitle: "Навыки",
+        title: "Навыки Paseo",
+        description: "Установить встроенные навыки справки, плагинов и оркестрации",
         docs: "Навыки",
         openDocs: "Открыть документацию по навыкам",
         unavailable: "Подключитесь к этому хосту, чтобы управлять навыками оркестрации",
@@ -2945,6 +3127,10 @@ export const ru: TranslationResources = {
           update: "Обновить навык",
           delete: "Удалить навык",
         },
+      },
+      tools: {
+        instructionsTitle: "Инструкции",
+        toolsTitle: "Инструменты агентов",
       },
       orchestration: {
         title: "Оркестрация",
@@ -3013,6 +3199,8 @@ export const ru: TranslationResources = {
       },
       agentProfiles: {
         sectionTitle: "Профили агентов",
+        sectionDescription:
+          "Сохраняйте настройки агентов, чтобы быстро выбирать их и позволять агентам использовать их при делегировании задач",
         unavailable: "Подключитесь к этому хосту, чтобы управлять профилями агентов",
         unsupported: "На этом хосте запущен демон, который пока не поддерживает профили агентов",
         emptyState:
@@ -3037,6 +3225,9 @@ export const ru: TranslationResources = {
         featuresLabel: "Функции",
         featureCount: "Функции: {{count}}",
         featureCountOne: "{{count}} функция",
+        systemPromptLabel: "Системный промпт",
+        systemPromptPlaceholder: "Сосредоточься на вёрстке, доступности и дизайн-токенах.",
+        systemPromptHint: "Применяется только к новым агентам",
         notesLabel: "Когда использовать",
         notesPlaceholder: "Используйте для работы над UI — компоненты, макет и токены дизайна.",
         notesHint: "Помогает агентам выбрать этот профиль при запуске другого агента.",
@@ -3047,8 +3238,34 @@ export const ru: TranslationResources = {
         removeConfirmMessage: "Удалить «{{name}}»?",
         moveUp: "Переместить вверх",
         moveDown: "Переместить вниз",
+        searchPlaceholder: "Поиск профилей",
+        clearSearch: "Очистить поиск",
+        noSearchMatches: "Нет профилей по запросу «{{query}}»",
+        noRoutingNote: "Без заметки",
+        duplicate: "Дублировать",
+        copyName: "{{name}} (копия)",
+        moveToTop: "В начало списка",
+        profileActions: "Действия для {{name}}",
+        reorderProfile: "Изменить порядок {{name}}",
+        previousProfile: "Предыдущий профиль",
+        nextProfile: "Следующий профиль",
+        chooseModelPlaceholder: "Выберите модель",
+        searchModelsPlaceholder: "Поиск моделей",
+        chooseModelSubtitle: "Выберите модель",
+        customizeSettings: "Настроить параметры",
+        addRoutingNoteShort: "Добавить заметку",
+        providerOptionsLabel: "Параметры {{provider}}",
+        discardTitle: "Отменить изменения?",
+        discardMessage: "В этом профиле есть несохранённые изменения.",
+        discardConfirm: "Отменить",
+        columns: {
+          profile: "Профиль",
+          runtime: "Модель и запуск",
+          whenToUse: "Когда использовать",
+        },
       },
       daemon: {
+        runtimeTitle: "Среда выполнения агентов",
         rename: {
           editLabel: "Изменить название",
           title: "Переименовать хост",

@@ -56,6 +56,10 @@ import {
 } from "./storage";
 
 export {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  type NotificationPreferences,
+} from "@getpaseo/protocol/notification-preferences";
+export {
   APP_SETTINGS_KEY,
   DEFAULT_APP_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,

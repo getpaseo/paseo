@@ -40,7 +40,7 @@ Every failure is written to `$PASEO_HOME/daemon.log` (`~/.paseo/daemon.log` by d
 
 ## Choose a model
 
-Open **Settings → Host → Metadata** and select **Automatic** or **Manual**. In Manual mode, pick the model Paseo uses. Choosing a model replaces the first entry in `agents.metadataGeneration.providers` and preserves the rest of the list. Switching back to Automatic clears the list.
+Open **Settings → Host → Workspaces** and select **Automatic** or **Manual**. In Manual mode, pick the model Paseo uses. Choosing a model replaces the first entry in `agents.metadataGeneration.providers` and preserves the rest of the list. Switching back to Automatic clears the list.
 
 ## Configure a custom fallback order
 
@@ -66,6 +66,22 @@ Each entry accepts:
 - `thinkingOptionId` (optional) — a reasoning/thinking level for models that support one. Falls back to the model's default if the value isn't valid for that model.
 
 The Settings screen replaces only the first entry and preserves the rest of a custom list. Restart the daemon after editing the file directly.
+
+## Host-wide instructions
+
+To guide all metadata generated on a host, open **Settings → Host → Workspaces** and edit **Instructions** under **Metadata generation**, or set `agents.metadataGeneration.instructions` in `~/.paseo/config.json`.
+
+```json
+{
+  "agents": {
+    "metadataGeneration": {
+      "instructions": "Write in Simplified Chinese. Keep phrasing consistent across titles and commits. Do not use em dashes."
+    }
+  }
+}
+```
+
+Host instructions apply to workspace titles, branch names, commit messages, and pull request drafts alongside Paseo's default styles. Leave the field empty to use the defaults only. If a project sets its own `paseo.json` style instructions, both apply and the project style takes precedence when they conflict. Functional requirements (valid git branch names and JSON output format) always apply.
 
 ## Per-project instructions
 

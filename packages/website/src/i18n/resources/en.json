@@ -410,7 +410,7 @@
     },
     "plugins": {
       "title": "Ask Paseo to change Paseo",
-      "description": "Agents in Paseo can change the whole UI without a restart, even on mobile.",
+      "description": "Build or install a plugin once on your server, and it works across <desktop>desktop</desktop>, <web>web</web>, and <mobile>native mobile</mobile> with no restart.",
       "request": "Add a sidebar panel with the PRs waiting on my review.",
       "plan": "I'll build it as a local plugin and install it.",
       "done": "Review queue is in your sidebar.",
@@ -457,6 +457,12 @@
       "chatLabel": "Paseo agent chat",
       "diffLabel": "Paseo diff view"
     },
+    "trustStrip": {
+      "noTelemetry": "No telemetry",
+      "e2eeRelay": "Built-in E2EE relay",
+      "openSource": "Open source",
+      "independent": "Independent"
+    },
     "faq": {
       "title": "FAQ",
       "freeQuestion": "Is this free?",
@@ -472,7 +478,7 @@
       "voiceQuestion": "How does voice work?",
       "voiceAnswer": "Voice runs locally on your device by default. You talk, the app transcribes and sends it to your agent as text. Optionally, you can configure OpenAI speech providers for higher-quality transcription and text-to-speech. See the <voice>voice docs</voice>.",
       "networkQuestion": "Can I connect from outside my network?",
-      "networkAnswer": "Yes. You can use the hosted relay (end-to-end encrypted, Paseo can't read your traffic), set up your own tunnel (Tailscale, Cloudflare Tunnel, etc.), or expose the daemon port directly. See <configuration>configuration</configuration>.",
+      "networkAnswer": "Yes. You can use the hosted relay (end-to-end encrypted, Paseo can't read your traffic), set up your own tunnel (Tailscale, Cloudflare Tunnel, etc.), or expose the daemon port directly. See <connectivity>connectivity</connectivity>.",
       "gitQuestion": "Do I need git or GitHub?",
       "gitAnswer": "No. Paseo works in any directory. Worktrees are optional and only relevant if you use git. You can run agents anywhere you'd normally work.",
       "banQuestion": "Can I get banned for using Paseo?",
@@ -498,7 +504,6 @@
         "addProject": "Add project",
         "addHost": "Add host",
         "hosts": "Hosts",
-        "agentCount": "{{count}} agents",
         "hostLinks": {
           "local": "Local",
           "relay": "Relay",

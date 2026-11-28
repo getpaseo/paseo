@@ -1,9 +1,8 @@
-import { createExternalProcessEnv } from "../../../paseo-env.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 import { z } from "zod";
 
-import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import { createProviderEnv, type ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import {
   JSONL_RPC_NO_TIMEOUT,
   JsonlRpcProcess,
@@ -22,6 +21,7 @@ import {
   OmpBranchMessagesResultSchema,
   OmpBranchResultSchema,
   OmpCommandsResultSchema,
+  type OmpExtensionUiResponse,
   OmpHostToolsResultSchema,
   OmpMessagesResultSchema,
   OmpModelSchema,
@@ -76,13 +76,17 @@ export class OmpCliRuntime implements OmpRuntime {
       runtimeSettings: this.options.runtimeSettings,
       session: input,
     });
-    launch.env = createExternalProcessEnv(globalThis.process.env, launch.env ?? {});
+    launch.env = createProviderEnv({
+      baseEnv: globalThis.process.env,
+      overlays: [launch.env],
+    });
     const [command, ...args] = launch.argv;
     const processLaunch: JsonlRpcLaunch = {
       command,
       args,
       cwd: launch.cwd,
       env: launch.env,
+      wrap: launch.wrap,
     };
     const spawn = this.spawnProcess;
     const processOptions = {
@@ -288,10 +292,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     });
   }
 
-  respondToExtensionUiRequest(
-    id: string,
-    response: { value?: string; confirmed?: boolean; cancelled?: boolean },
-  ): void {
+  respondToExtensionUiRequest(id: string, response: OmpExtensionUiResponse): void {
     this.process.send({ type: "extension_ui_response", id, ...response });
   }
 

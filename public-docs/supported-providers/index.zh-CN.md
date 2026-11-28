@@ -30,7 +30,7 @@ Paseo 可以运行任何使用 [Agent Client Protocol](https://agentclientprotoc
 从目录添加其中一个：
 
 1. 如果该 Agent 不是通过 `npx` 或 `uvx` 启动的，请先在 daemon 主机上安装它的 CLI。
-2. 在 Paseo 中打开 **设置 → Hosts → 你的主机 → Providers**。
+2. 在 Paseo 中打开 **设置 → 主机 → Providers**。
 3. 选择 **+ Provider**，找到该 Agent，然后选择 **添加**。
 
 通过 `npx` 或 `uvx` 启动的条目只需要 daemon 主机上有该工具。如果缺少 CLI，Provider 页面会显示 **未安装**，选择 **安装** 会打开它的安装说明。
@@ -57,7 +57,7 @@ Paseo 可以运行任何使用 [Agent Client Protocol](https://agentclientprotoc
 - [GLM Agent](https://github.com/stefandevo/glm-acp-agent)：智谱 AI 的 GLM 编程 Agent。
 - [goose](https://block.github.io/goose/)：Block 的本地开源 AI Agent。如果 goose 支持发现模型清单，Paseo 会列出 goose 中所有已配置 Provider 的模型。
 - [Grok](https://docs.x.ai/build/overview)：xAI 的 Grok Build Agent 编程 CLI。
-- [Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp)：Nous Research 的自我改进型 Agent。
+- [Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp)：Nous Research 的自我改进型 Agent。Paseo 会显示每次终端调用的完整命令。
 - [Junie](https://junie.jetbrains.com/docs/junie-cli-acp.html)：JetBrains 的编程 Agent。
 - [Kilo Code](https://kilo.ai/docs/code-with-ai/platforms/cli)：开源编程 Agent。
 - [Kimi Code CLI](https://github.com/MoonshotAI/kimi-code)：月之暗面的编程助手。

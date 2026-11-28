@@ -1,9 +1,11 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import path from "node:path";
 import {
+  expectTimelinePromptVisible,
   holdOlderHistoryPages,
   scrollTimelineRowIntoView,
   userScrollsTimelineToHistoryStart,
+  waitForTimelineGeometryToSettle,
 } from "../support/helpers/timeline-pagination";
 import { getActiveTabTestId } from "../support/helpers/launcher";
 import type { Page, Locator } from "@playwright/test";
@@ -491,6 +493,39 @@ async function seedWholeTurnHistory() {
   return agent;
 }
 
+/** Read every command across the scroll window, without requiring offscreen rows to mount. */
+async function expectExpandedCommandsReadable(page: Page, count: number) {
+  const timeline = page.getByTestId("agent-chat-scroll");
+  const commands = new Set<number>();
+  await timeline.hover();
+  await waitForTimelineGeometryToSettle(page);
+  for (let step = 0; step < count && commands.size < count; step += 1) {
+    const labels = await timeline
+      .getByRole("button", { name: /echo stress-\d+/ })
+      .allTextContents();
+    for (const label of labels) {
+      const command = /echo stress-(\d+)/.exec(label);
+      if (command) commands.add(Number(command[1]));
+    }
+    if (commands.size < count) {
+      await page.mouse.wheel(0, 300);
+      await waitForTimelineGeometryToSettle(page);
+    }
+  }
+  expect([...commands].sort((a, b) => a - b)).toEqual(
+    Array.from({ length: count }, (_, index) => index),
+  );
+}
+
+async function returnToExpandedSummary(page: Page, summary: Locator) {
+  await page.getByTestId("agent-chat-scroll").hover();
+  for (let step = 0; step < 120 && !(await summary.isVisible()); step += 1) {
+    await page.mouse.wheel(0, -300);
+    await waitForTimelineGeometryToSettle(page);
+  }
+  await scrollTimelineRowIntoView(page, summary);
+}
+
 async function expectInitialFillIsConcealed(page: Page) {
   await expect(page.getByTestId("agent-initial-fill")).toBeVisible();
   await expect(page.getByTestId("agent-chat-scroll")).toHaveCSS("opacity", "0");
@@ -564,14 +599,14 @@ test("loads complete long turns and preserves expansion while revealing older hi
     ).toBeVisible();
     await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
     await latest.click();
-    await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(120);
+    await expectExpandedCommandsReadable(page, 120);
     await userScrollsTimelineToHistoryStart(page);
     await history.expectRequestedPages(3);
     history.releasePage(3);
-    await page.getByTestId("scroll-to-bottom-button").click();
-    await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(120);
+    await expectTimelinePromptVisible(page, "Short 4: emit 1 coalesced agent stream updates");
+    await expectExpandedCommandsReadable(page, 120);
     history.expectNoRepeatedEntries();
-    await scrollTimelineRowIntoView(page, latest);
+    await returnToExpandedSummary(page, latest);
     await latest.click();
     await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
   } finally {

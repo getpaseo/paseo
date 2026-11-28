@@ -90,3 +90,25 @@ test("holds the runtime when a turn that called a cron tool ends without a Stop 
   callTool("ScheduleWakeup");
   expect(runtime.canStopRuntime()).toBe(false);
 });
+
+test("withdrawing a prompt before init restores stoppability", () => {
+  const runtime = new ClaudeRuntimeSafety();
+  runtime.notePromptSent();
+  expect(runtime.canStopRuntime()).toBe(false);
+
+  runtime.notePromptWithdrawn();
+  expect(runtime.canStopRuntime()).toBe(true);
+});
+
+test("a withdrawn prompt does not clear a turn the process already announced", () => {
+  // A CLI older than 2.1.292 never publishes a roster, so the turn-seen mark is the only thing
+  // holding its runtime. `init` is the process saying it took a turn: withdrawing a prompt after
+  // that must not hand the runtime to idle cleanup while its work may still be running.
+  const runtime = new ClaudeRuntimeSafety();
+  runtime.observe(message({ type: "system", subtype: "init", claude_code_version: "2.1.220" }));
+  runtime.notePromptSent();
+
+  runtime.notePromptWithdrawn();
+
+  expect(runtime.canStopRuntime()).toBe(false);
+});

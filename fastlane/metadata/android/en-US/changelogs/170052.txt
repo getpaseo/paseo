@@ -1,0 +1,5 @@
+- Archive workspaces together: Cmd/Ctrl+click a workspace in the sidebar to select multiple workspaces and archive them in one step.
+- Copy quoted drafts: Copy a quote from a reply with one tap, without the > markers.
+- Redesigned agent profiles page: Agent profiles have their own dedicated settings page, and the model picker saves a new profile in one tap.
+
+Full notes: https://paseo.sh/changelog

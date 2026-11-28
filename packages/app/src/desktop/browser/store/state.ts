@@ -4,6 +4,8 @@ export type BrowserViewport =
   | { mode: "responsive" }
   | { mode: "fixed"; width: number; height: number };
 
+export type BrowserRoutingMode = "host" | "local";
+
 export const RESPONSIVE_BROWSER_VIEWPORT: BrowserViewport = { mode: "responsive" };
 
 export interface BrowserRecord {
@@ -16,6 +18,7 @@ export interface BrowserRecord {
   faviconUrl: string | null;
   lastError: string | null;
   viewport: BrowserViewport;
+  routingMode?: BrowserRoutingMode;
   createdAt: number;
 }
 
@@ -34,6 +37,8 @@ const BrowserViewportSchema = z.discriminatedUnion("mode", [
   }),
 ]);
 
+const BrowserRoutingModeSchema = z.enum(["host", "local"]);
+
 const BrowserRecordSchema = z.strictObject({
   browserId: z.string(),
   url: z.string(),
@@ -44,6 +49,7 @@ const BrowserRecordSchema = z.strictObject({
   faviconUrl: z.string().nullable(),
   lastError: z.string().nullable(),
   viewport: BrowserViewportSchema.optional().default(RESPONSIVE_BROWSER_VIEWPORT),
+  routingMode: BrowserRoutingModeSchema.optional(),
   createdAt: z.number(),
 });
 
@@ -104,9 +110,20 @@ export function normalizeBrowserUrl(value: string | null | undefined): string {
   return `https://${trimmed}`;
 }
 
+export function resolveBrowserRoutingMode(
+  record: Pick<BrowserRecord, "routingMode"> | null | undefined,
+  isRemoteHost: boolean,
+): BrowserRoutingMode {
+  if (!isRemoteHost) {
+    return "local";
+  }
+  return record?.routingMode === "local" ? "local" : "host";
+}
+
 export function createBrowserRecord(input: {
   browserId: string;
   initialUrl: string | null | undefined;
+  routingMode?: BrowserRoutingMode;
   now: number;
 }): BrowserRecord {
   return {
@@ -119,6 +136,7 @@ export function createBrowserRecord(input: {
     faviconUrl: null,
     lastError: null,
     viewport: RESPONSIVE_BROWSER_VIEWPORT,
+    ...(input.routingMode ? { routingMode: input.routingMode } : {}),
     createdAt: input.now,
   };
 }
@@ -155,6 +173,7 @@ export function applyBrowserPatch<S extends BrowserIndexState>(
     nextRecord.canGoForward === existing.canGoForward &&
     nextRecord.faviconUrl === existing.faviconUrl &&
     nextRecord.lastError === existing.lastError &&
+    nextRecord.routingMode === existing.routingMode &&
     browserViewportsEqual(nextRecord.viewport, existing.viewport)
   ) {
     return state;

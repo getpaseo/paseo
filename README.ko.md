@@ -51,9 +51,9 @@
 
 <!-- Sponsors: one cell per sponsor in the order of packages/website/src/data/sponsors.ts, then "become a sponsor" cells up to three. -->
 <table>
-  <tr>
-    <td align="center" width="33%"><a href="https://hoplite.sh/?utm_source=paseo&utm_medium=readme&utm_campaign=sponsor"><picture><source media="(prefers-color-scheme: dark)" srcset="packages/website/public/sponsors/hoplite-on-dark.svg"><img src="packages/website/public/sponsors/hoplite-on-light.svg" alt="Hoplite" height="40"></picture></a><br><sub>Cloud coding agents</sub></td>
-    <td align="center" width="33%"><a href="https://paseo.sh/sponsor">Paseo 스폰서 되기</a></td>
+  <tr valign="top">
+    <td align="center" width="33%"><a href="https://hoplite.sh/?utm_source=paseo&utm_medium=readme&utm_campaign=sponsor"><picture><source media="(prefers-color-scheme: dark)" srcset="packages/website/public/sponsors/hoplite-on-dark.svg"><img src="packages/website/public/sponsors/hoplite-on-light.svg" alt="Hoplite" height="40"></picture></a><br><sub>Hoplite runs swarms of coding agents in the cloud.</sub></td>
+    <td align="center" width="33%"><a href="https://encore.dev/?utm_source=paseo&utm_medium=readme&utm_campaign=sponsor"><picture><source media="(prefers-color-scheme: dark)" srcset="packages/website/public/sponsors/encore-on-dark.svg"><img src="packages/website/public/sponsors/encore-on-light.svg" alt="Encore" height="40"></picture></a><br><sub>Encore lets AI agents ship to production safely, at scale, in your own cloud.</sub></td>
     <td align="center" width="33%"><a href="https://paseo.sh/sponsor">Paseo 스폰서 되기</a></td>
   </tr>
 </table>

@@ -72,6 +72,41 @@ test("base selection RPCs are correlated while older checkout and branch message
   expect(WorkspaceBaseBranchSetResponseSchema.parse(response)).toEqual(response);
 });
 
+test("checkout status stays valid without pull and push remotes and retains them when sent", () => {
+  const olderDaemonPayload = {
+    cwd: "/repo",
+    requestId: "status",
+    error: null,
+    isGit: true,
+    isPaseoOwnedWorktree: false,
+    repoRoot: "/repo",
+    currentBranch: "main",
+    isDirty: false,
+    baseRef: "main",
+    aheadBehind: null,
+    aheadOfOrigin: 1,
+    behindOfOrigin: 2,
+    hasRemote: false,
+    remoteUrl: null,
+    upstreamRef: "refs/remotes/doras-mono/main",
+    upstreamState: "tracked",
+    firstPushRemote: null,
+  };
+  const parse = (payload: Record<string, unknown>) =>
+    CheckoutStatusResponseSchema.parse({ type: "checkout_status_response", payload }).payload;
+
+  const older = parse(olderDaemonPayload);
+  expect(older.pullRemote).toBeUndefined();
+  expect(older.pushRemote).toBeUndefined();
+  expect(
+    parse({ ...olderDaemonPayload, pullRemote: "doras-mono", pushRemote: "doras-mono" }),
+  ).toMatchObject({ pullRemote: "doras-mono", pushRemote: "doras-mono" });
+  expect(parse({ ...olderDaemonPayload, pullRemote: "upstream", pushRemote: null })).toMatchObject({
+    pullRemote: "upstream",
+    pushRemote: null,
+  });
+});
+
 test("terminal listings accept older rows and retain new per-terminal directories", () => {
   const response = {
     type: "list_terminals_response",
@@ -199,6 +234,34 @@ describe("wire schema compatibility", () => {
       version: null,
       features: { agentTurnIdentity: true },
     });
+  });
+
+  test("server info accepts optional machineKind and older clients drop it cleanly", () => {
+    const legacyServerInfo = z.object({
+      status: z.literal("server_info"),
+      serverId: z.string().trim().min(1),
+      hostname: z.string().nullable().optional(),
+      version: z.string().nullable().optional(),
+    });
+    const withKind = {
+      status: "server_info",
+      serverId: "macbook-server",
+      hostname: "mbp.local",
+      version: "0.9.5",
+      machineKind: "laptop",
+    };
+
+    expect(ServerInfoStatusPayloadSchema.parse(withKind).machineKind).toBe("laptop");
+    expect(
+      ServerInfoStatusPayloadSchema.parse({ ...withKind, machineKind: null }).machineKind,
+    ).toBeNull();
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "older-server",
+      }).machineKind,
+    ).toBeUndefined();
+    expect(legacyServerInfo.parse(withKind)).not.toHaveProperty("machineKind");
   });
 
   test("assistant timeline message ids are optional on the wire", () => {

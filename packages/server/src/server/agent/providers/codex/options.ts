@@ -64,29 +64,73 @@ export const CodexProviderOptionsSchema = z
 
 export type CodexProviderOptions = z.infer<typeof CodexProviderOptionsSchema>;
 
+const MCP_SERVERS_PREFIX = "mcp_servers.";
+
+function buildCodexToolApprovals(tools: string[]): Record<string, { approval_mode: "approve" }> {
+  return Object.fromEntries(tools.map((tool) => [tool, { approval_mode: "approve" }]));
+}
+
+function withCodexToolApprovals(
+  serverConfig: Record<string, unknown>,
+  tools: string[],
+): Record<string, unknown> {
+  return {
+    ...serverConfig,
+    enabled_tools: tools,
+    default_tools_approval_mode: "prompt",
+    tools: buildCodexToolApprovals(tools),
+  };
+}
+
 export function applyCodexToolPolicy(
   config: Record<string, unknown>,
   toolPolicy: ToolPolicy | undefined,
 ): Record<string, unknown> {
-  if (!toolPolicy) return config;
-  const mcpServers = readRecord(config.mcp_servers);
+  if (!toolPolicy || toolPolicy.preapproved.length === 0) return config;
+
   const grantsByServer = new Map<string, string[]>();
   for (const grant of toolPolicy.preapproved) {
     const tools = grantsByServer.get(grant.server) ?? [];
     tools.push(grant.tool);
     grantsByServer.set(grant.server, tools);
   }
-  for (const [server, tools] of grantsByServer) {
-    const serverConfig = readRecord(mcpServers[server]);
-    const approvals = Object.fromEntries(tools.map((tool) => [tool, { approval_mode: "approve" }]));
-    mcpServers[server] = {
-      ...serverConfig,
-      enabled_tools: tools,
-      default_tools_approval_mode: "prompt",
-      tools: approvals,
-    };
+
+  // Codex's `apply_toml_override` splits dotted paths on `.`, so a server name
+  // containing `.` cannot be addressed as `mcp_servers.<name>`. Keep all MCP
+  // entries in one `mcp_servers` table in that case so Codex's unordered config
+  // map cannot apply a whole-table override after a dotted one.
+  const hasWholeTable = "mcp_servers" in config;
+  const hasDottedGrantName = [...grantsByServer.keys()].some((server) => server.includes("."));
+  if (hasWholeTable || hasDottedGrantName) {
+    const next: Record<string, unknown> = {};
+    const mcpServers = readRecord(config.mcp_servers);
+    for (const [key, value] of Object.entries(config)) {
+      if (key === "mcp_servers") continue;
+      if (key.startsWith(MCP_SERVERS_PREFIX)) {
+        mcpServers[key.slice(MCP_SERVERS_PREFIX.length)] = value;
+      } else {
+        next[key] = value;
+      }
+    }
+    for (const [server, tools] of grantsByServer) {
+      mcpServers[server] = withCodexToolApprovals(readRecord(mcpServers[server]), tools);
+    }
+    next.mcp_servers = mcpServers;
+    return next;
   }
-  return { ...config, mcp_servers: mcpServers };
+
+  const next: Record<string, unknown> = { ...config };
+  for (const [server, tools] of grantsByServer) {
+    const key = `${MCP_SERVERS_PREFIX}${server}`;
+    if (key in next) {
+      next[key] = withCodexToolApprovals(readRecord(next[key]), tools);
+    } else {
+      next[`${key}.enabled_tools`] = tools;
+      next[`${key}.default_tools_approval_mode`] = "prompt";
+      next[`${key}.tools`] = buildCodexToolApprovals(tools);
+    }
+  }
+  return next;
 }
 
 function readRecord(value: unknown): Record<string, unknown> {

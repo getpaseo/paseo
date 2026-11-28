@@ -37,7 +37,7 @@ export interface AgentFormStore {
 
 export function openAgentForm(catalog: () => AgentFormCatalog): AgentFormStore {
   let state: AgentFormReducerState = {
-    form: { provider: null, modeId: "", model: "", thinkingOptionId: "" },
+    form: { provider: null, modeId: "", model: "", thinkingOptionId: "", systemPrompt: "" },
     userModified: INITIAL_USER_MODIFIED,
     resolution: INITIAL_AGENT_FORM_RESOLUTION,
   };

@@ -32,7 +32,7 @@ Use built-in Paseo tools or the CLI. Both let an agent launch and coordinate wor
 
 Enable Paseo tools so agents running inside Paseo can manage agents and workspaces on their host directly.
 
-1. Open **Settings → your host → Agents**.
+1. Open **Settings → Host → Tools & prompts**.
 2. Turn on **Enable Paseo tools**. Tool injection is off by default.
 3. Start a new agent, or reload an existing agent so it receives the tools.
 4. Ask:

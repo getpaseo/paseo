@@ -136,6 +136,8 @@ export interface ProviderSnapshotEntry {
   /** The page that helps users set up and troubleshoot this provider. */
   docsUrl?: string;
   defaultModeId?: string | null;
+  /** The provider can run a session behind an `agent.open.before` wrap. Absent means it cannot. */
+  launchWrap?: boolean;
 }
 
 export interface AgentFeatureToggle {
@@ -407,8 +409,22 @@ export interface AgentTaskItem {
   activeForm?: string;
 }
 
+export interface UploadedImage {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  path: string;
+}
+
 export type AgentTimelineItem =
-  | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
+  | {
+      type: "user_message";
+      text: string;
+      messageId?: string;
+      clientMessageId?: string;
+      images?: UploadedImage[];
+    }
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem

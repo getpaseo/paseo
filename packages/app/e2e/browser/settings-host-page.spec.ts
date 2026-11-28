@@ -18,6 +18,7 @@ import {
   expectProviderNotOnHost,
   expectProviderPageLoaded,
   gotoProviderPage,
+  openClientHostSettings,
   openSettingsHost,
   openHostSection,
   expectHostLabelDisplayed,
@@ -53,36 +54,30 @@ test.describe("Settings host page", () => {
     const port = getE2EDaemonPort();
     await gotoAppShell(page);
     await openSettings(page);
-    await openSettingsHost(page, serverId);
-    await test.step("connections section shows the seeded connection endpoint", async () => {
-      await expectSettingsHeader(page, "Connections");
+    await test.step("client host detail shows the seeded connection endpoint and label editor", async () => {
+      await openClientHostSettings(page, serverId);
       await expectHostConnectionsCard(page, port);
+      await expectHostLabelDisplayed(page);
+      await clickEditHostLabel(page);
+      await expectHostLabelEditMode(page, TEST_HOST_LABEL);
+      await page.keyboard.press("Escape");
     });
-    await test.step("agents section shows the inject MCP toggle", async () => {
-      await openHostSection(page, serverId, "agents");
-      await expectSettingsHeader(page, "Agents");
+    await test.step("tools section shows the inject MCP toggle", async () => {
+      await openHostSection(page, serverId, "tools");
+      await expectSettingsHeader(page, "Tools & prompts");
       await expectHostInjectMcpCard(page);
     });
     await test.step("providers section shows the providers card", async () => {
       await expectHostProvidersCard(page, serverId);
       await expectSettingsHeader(page, "Providers");
     });
-    await test.step("host section shows the host label and restart/remove action cards", async () => {
-      await openHostSection(page, serverId, "host");
-      await expectSettingsHeader(page, "Overview");
-      await expectHostLabelDisplayed(page);
+    await test.step("daemon section shows restart and client host shows remove", async () => {
+      await openHostSection(page, serverId, "daemon");
+      await expectSettingsHeader(page, "Daemon");
       await expectHostActionCards(page, serverId);
     });
-    await test.step("clicking the label pencil reveals the inline editor", async () => {
-      await openHostSection(page, serverId, "host");
-
-      await expectHostLabelDisplayed(page);
-      await clickEditHostLabel(page);
-      await expectHostLabelEditMode(page, TEST_HOST_LABEL);
-      await page.keyboard.press("Escape");
-    });
-    await test.step("host section does not render daemon lifecycle controls for a remote daemon", async () => {
-      await openHostSection(page, serverId, "host");
+    await test.step("daemon section does not render daemon lifecycle controls for a remote daemon", async () => {
+      await openHostSection(page, serverId, "daemon");
 
       await expectHostNoDaemonLifecycleRow(page);
     });
@@ -99,7 +94,7 @@ test.describe("Settings host page", () => {
     await page.reload();
     await openSettings(page);
     await openSettingsHost(page, outdatedDaemon.serverId);
-    await openHostSection(page, outdatedDaemon.serverId, "host");
+    await openHostSection(page, outdatedDaemon.serverId, "daemon");
 
     page.once("dialog", (dialog) => dialog.accept());
     const updateButton = page.getByTestId("host-page-update-button");
@@ -138,8 +133,7 @@ test.describe("Settings host page", () => {
       ]);
       await page.reload();
       await openSettings(page);
-      await selectSettingsHost(page, daemon.serverId);
-      await openHostSection(page, daemon.serverId, "host");
+      await openClientHostSettings(page, daemon.serverId);
 
       await test.step("the host page shows the reason and the re-add guidance, with no password UI", async () => {
         await expectHostRejectedWithReAddGuidance(page, "Password required");
@@ -149,7 +143,7 @@ test.describe("Settings host page", () => {
       await test.step("removing the host and adding it again with the password brings it online", async () => {
         await removeHostFromHostPage(page, daemon.serverId);
         await addDirectHostFromSettings(page, { host: "127.0.0.1", port: daemon.port, password });
-        await openHostSection(page, daemon.serverId, "host");
+        await openHostSection(page, daemon.serverId, "daemon");
         await expectHostOnlineWithoutError(page);
       });
     } finally {
@@ -192,7 +186,7 @@ test.describe("Settings host page", () => {
       await page.reload();
       await openSettings(page);
       await selectSettingsHost(page, serverId);
-      await openHostSection(page, serverId, "agents");
+      await openHostSection(page, serverId, "daemon");
     };
     try {
       await test.step("idle agent release starts on and turns off", async () => {
@@ -213,7 +207,7 @@ test.describe("Settings host page", () => {
 
       await test.step("other hosts keep their own setting", async () => {
         await selectSettingsHost(page, primaryServerId);
-        await openHostSection(page, primaryServerId, "agents");
+        await openHostSection(page, primaryServerId, "daemon");
         await expectIdleAgentRelease(page, true);
         await expectLiveSavedSetting(false);
       });
@@ -232,7 +226,7 @@ test.describe("Settings host page", () => {
       ]);
       await page.reload();
       await openSettings(page);
-      await openHostSection(page, daemon.serverId, "agents");
+      await openHostSection(page, daemon.serverId, "daemon");
       await expectIdleAgentRelease(page, true);
       // A real filesystem failure, with the daemon and RPC path intact.
       await rename(configPath, `${configPath}.saved`);
@@ -251,7 +245,7 @@ test.describe("Settings host page", () => {
     }
   });
 
-  test("navigating to /settings/hosts/[serverId] redirects to the connections section", async ({
+  test("navigating to /settings/hosts/[serverId] redirects to the daemon section", async ({
     page,
   }) => {
     const serverId = getServerId();
@@ -260,10 +254,9 @@ test.describe("Settings host page", () => {
     await page.goto(`/settings/hosts/${encodeURIComponent(serverId)}`);
 
     await expectHostPageVisible(page, serverId);
-    await expectSettingsHeader(page, "Connections");
-    await openHostSection(page, serverId, "host");
-    await expectHostLabelDisplayed(page);
+    await expectSettingsHeader(page, "Daemon");
     await expectHostActionCards(page, serverId);
+    await expectHostLabelDisplayed(page);
   });
 });
 
@@ -286,7 +279,7 @@ test("restart recovery defaults off and persists opt-in and custom prompt", asyn
   await gotoAppShell(page);
   await openSettings(page);
   await openSettingsHost(page, serverId);
-  await openHostSection(page, serverId, "agents");
+  await openHostSection(page, serverId, "daemon");
   await expectRestartRecoveryEnabled(page, false);
   await setRestartRecoveryEnabled(page, true);
   await page.reload();
@@ -354,12 +347,12 @@ test("sidebar Add host completes without navigating", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Hosts", exact: true })).toBeVisible();
 });
 
-test("Settings Add host opens the saved host Overview", async ({ page }) => {
+test("Settings Add host opens the saved host detail", async ({ page }) => {
   await gotoAppShell(page);
   await openSettings(page);
   await addDirectHostFromSettings(page, { host: "127.0.0.1", port: Number(getE2EDaemonPort()) });
-  await expectSettingsHeader(page, "Overview");
-  await expect(page).toHaveURL(new RegExp(`/settings/hosts/${getServerId()}/host$`));
+  await expect(page.getByTestId("host-page-connections-card")).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/settings/device-hosts/${getServerId()}$`));
 });
 
 test("New workspace Add host preserves the prompt after connecting", async ({ page }) => {

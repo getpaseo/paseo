@@ -8,7 +8,7 @@ import {
   useDraftStore,
 } from "@/stores/draft-store";
 import type { AgentSnapshotPayload, CreationSnapshot } from "@getpaseo/protocol/messages";
-import { encodeImages } from "@/utils/encode-images";
+import { uploadImageAttachments } from "@/attachments/service";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -333,6 +333,7 @@ interface WorkspaceDraftSubmissionConfig {
   model: string | null;
   thinkingOptionId: string | null;
   providerOptions: Record<string, unknown> | undefined;
+  systemPrompt: string | null;
   target: WorkspaceTabTarget;
 }
 
@@ -503,6 +504,9 @@ function buildWorkspaceDraftSetupFromComposer(input: {
     model: input.composerState.effectiveModelId || null,
     thinkingOptionId: input.composerState.effectiveThinkingOptionId || null,
     providerOptions: input.composerState.providerOptions ?? {},
+    ...(input.composerState.selectedSystemPrompt
+      ? { systemPrompt: input.composerState.selectedSystemPrompt }
+      : {}),
   };
 }
 
@@ -534,6 +538,7 @@ function buildComposerInitialValues(input: {
       modeId: input.initialSetup.modeId,
       model: input.initialSetup.model,
       thinkingOptionId: input.initialSetup.thinkingOptionId,
+      systemPrompt: input.initialSetup.systemPrompt,
     };
   }
   return undefined;
@@ -571,7 +576,14 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
   const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
     format: attachmentSubmitFormat,
   });
-  const images = await encodeImages(wirePayload.images);
+  const uploadedImageAttachments =
+    wirePayload.images.length > 0
+      ? await uploadImageAttachments({ client: input.resolveClient(), images: wirePayload.images })
+      : undefined;
+  const mergedAttachments = [
+    ...(wirePayload.attachments ?? []),
+    ...(uploadedImageAttachments ?? []),
+  ];
   let navigated = false;
   const delivery: { outcome: SubmitOutcome } = { outcome: "background" };
   const initialAgent: NonNullable<CreateWorkspaceRequestOptions["agent"]> = {
@@ -582,12 +594,14 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
       model: composerState.effectiveModelId || undefined,
       thinkingOptionId: composerState.effectiveThinkingOptionId || undefined,
       providerOptions: composerState.providerOptions,
+      ...(composerState.selectedSystemPrompt
+        ? { systemPrompt: composerState.selectedSystemPrompt }
+        : {}),
     },
     ...(Object.keys(composerState.metadata).length > 0 ? { metadata: composerState.metadata } : {}),
     initialPrompt: text,
     clientMessageId: `${input.draftId}:initial-message`,
-    images: images?.length ? images : undefined,
-    attachments: wirePayload.attachments?.length ? wirePayload.attachments : undefined,
+    attachments: mergedAttachments.length > 0 ? mergedAttachments : undefined,
   };
   const handOffWorkspace = (workspace: WorkspaceDescriptor) => {
     if (navigated) return;
@@ -698,6 +712,7 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
       model: initialSetup.model,
       thinkingOptionId: initialSetup.thinkingOptionId,
       providerOptions: initialSetup.providerOptions,
+      systemPrompt: initialSetup.systemPrompt ?? null,
       target: { kind: "draft", draftId, setup: initialSetup },
     };
   }
@@ -708,6 +723,7 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
     model: composerState.effectiveModelId || null,
     thinkingOptionId: composerState.effectiveThinkingOptionId || null,
     providerOptions: composerState.providerOptions,
+    systemPrompt: composerState.selectedSystemPrompt || null,
     target: { kind: "draft", draftId },
   };
 }
@@ -766,6 +782,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): SubmitOutcome {
     ...(submission.model ? { model: submission.model } : {}),
     ...(submission.thinkingOptionId ? { thinkingOptionId: submission.thinkingOptionId } : {}),
     ...(submission.providerOptions ? { providerOptions: submission.providerOptions } : {}),
+    ...(submission.systemPrompt ? { systemPrompt: submission.systemPrompt } : {}),
     allowEmptyText: true,
     agentCreation: input.agentCreation,
   });
@@ -1084,6 +1101,10 @@ export function NewWorkspaceScreen({
 
   useEffect(() => {
     const trimmed = pickerSearchQuery.trim();
+    if (!trimmed) {
+      setDebouncedPickerSearchQuery("");
+      return;
+    }
     const timer = setTimeout(() => setDebouncedPickerSearchQuery(trimmed), 180);
     return () => clearTimeout(timer);
   }, [pickerSearchQuery]);
@@ -1186,8 +1207,6 @@ export function NewWorkspaceScreen({
   }, [selectedServerId, t]);
 
   const clientReady = isConnected && Boolean(client);
-  const hasSelectedSourceDirectory = selectedSourceDirectory !== null;
-  const pickerQueryEnabled = pickerOpen && clientReady && hasSelectedSourceDirectory;
 
   const { status: checkoutStatus } = useCheckoutStatusQuery({
     serverId: selectedServerId,
@@ -1209,55 +1228,26 @@ export function NewWorkspaceScreen({
     projectDirectory: selectedSourceDirectory,
   });
 
-  const branchSuggestionsQuery = useQuery({
-    queryKey: [
-      "branch-suggestions",
-      selectedServerId,
-      selectedSourceDirectory,
-      debouncedPickerSearchQuery,
-    ],
-    queryFn: async () => {
-      if (!selectedSourceDirectory) {
-        throw new Error("Choose a project");
-      }
-      const connectedClient = withConnectedClient();
-      return connectedClient.getBranchSuggestions({
-        cwd: selectedSourceDirectory,
-        query: debouncedPickerSearchQuery || undefined,
-        limit: 20,
-      });
-    },
-    enabled: pickerQueryEnabled,
-    staleTime: 15_000,
-  });
-
-  const changeRequestContext = useChangeRequestContext({
-    serverId: selectedServerId,
-    cwd: selectedSourceDirectory,
-    pickerOpen: pickerQueryEnabled,
-    selectedItem,
-  });
-
-  const githubPrSearchQuery = useForgeSearchQuery({
+  const {
+    branchDetails,
+    prItems,
+    changeRequestContext,
+    isBranchesLoading,
+    isBranchesFetching,
+    isPrsFetching,
+  } = useRefPickerQueries({
     client,
+    clientReady,
     serverId: selectedServerId,
-    cwd: selectedSourceDirectory ?? "",
-    query: debouncedPickerSearchQuery,
-    kinds: ["change_request"],
+    sourceDirectory: selectedSourceDirectory,
+    pickerOpen,
+    showRefPicker,
+    isScreenFocused,
+    debouncedSearchQuery: debouncedPickerSearchQuery,
     supportsForgeSearch,
-    enabled: pickerQueryEnabled,
+    selectedItem,
+    withConnectedClient,
   });
-
-  const branchDetails = useMemo(
-    () => normalizeBranchDetails(branchSuggestionsQuery.data),
-    [branchSuggestionsQuery.data],
-  );
-  const forgeSearchAuthenticated =
-    !githubPrSearchQuery.data || githubPrSearchQuery.data.authState === "authenticated";
-  const prItems: ForgeSearchItem[] = useMemo(() => {
-    if (!forgeSearchAuthenticated) return [];
-    return githubPrSearchQuery.data?.items ?? [];
-  }, [forgeSearchAuthenticated, githubPrSearchQuery.data?.items]);
 
   const baseItem = useMemo(
     () => selectedItem ?? (checkoutStatus ? defaultBasePickerItem(checkoutStatus) : null),
@@ -1704,14 +1694,18 @@ export function NewWorkspaceScreen({
     [composerState, isPending],
   );
 
-  const pickerEmptyText =
-    branchSuggestionsQuery.isFetching || githubPrSearchQuery.isFetching
-      ? t("newWorkspace.refPicker.searching")
-      : t("newWorkspace.refPicker.noMatchingRefs");
+  // The prompt is where the user types; when a field's picker closes, focus returns there rather
+  // than to whatever had focus when the picker opened. A terminal profile that takes no prompt
+  // shows a read-only command preview, so its pickers keep returning focus to their field.
+  const composerFocusRef = useRef<{ focus: () => void } | null>(null);
+  const handleComposerFocusInput = useCallback((focus: () => void) => {
+    composerFocusRef.current = { focus };
+  }, []);
 
   const formStack = useNewWorkspaceForm({
     isCompact,
     isPending,
+    restoreFocusRef: terminalTakesPrompt ? composerFocusRef : undefined,
     pluginItems: (
       <PluginNewWorkspaceItems serverId={selectedServerId} screen={pluginScreen} setup={setup} />
     ),
@@ -1766,7 +1760,9 @@ export function NewWorkspaceScreen({
       selectedOptionId,
       onSelect: handleSelectOption,
       setSearchQuery: setPickerSearchQuery,
-      emptyText: pickerEmptyText,
+      isBranchesLoading,
+      isBranchesFetching,
+      isPrsFetching,
       showRefPicker,
       worktrees: projectWorktrees,
       actionFor: refActionFor,
@@ -1813,6 +1809,7 @@ export function NewWorkspaceScreen({
       clearDraft={noopClearDraft}
       autoFocus={terminalTakesPrompt}
       autoFocusKey={launchFocusKey}
+      onFocusInput={handleComposerFocusInput}
       error={errorMessage}
     />
   ) : (
@@ -1843,6 +1840,7 @@ export function NewWorkspaceScreen({
       clearDraft={handleClearDraft}
       autoFocus
       autoFocusKey={launchFocusKey}
+      onFocusInput={handleComposerFocusInput}
       commandDraft={composerState?.commandDraft}
       agentControls={agentControlsWithDisabled}
       error={errorMessage}
@@ -2022,8 +2020,110 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 /**
+ * The ref picker's branch, change-request, and forge-wording queries. Default branch suggestions
+ * and forge wording warm while the picker trigger is visible so the first open paints settled;
+ * change-request search stays gated on opening the picker.
+ */
+function useRefPickerQueries(input: {
+  client: ReturnType<typeof useHostRuntimeClient>;
+  clientReady: boolean;
+  serverId: string;
+  sourceDirectory: string | null;
+  pickerOpen: boolean;
+  showRefPicker: boolean;
+  isScreenFocused: boolean;
+  debouncedSearchQuery: string;
+  supportsForgeSearch: boolean;
+  selectedItem: PickerItem | null;
+  withConnectedClient: () => DaemonClient;
+}) {
+  const {
+    client,
+    clientReady,
+    serverId,
+    sourceDirectory,
+    pickerOpen,
+    showRefPicker,
+    isScreenFocused,
+    debouncedSearchQuery,
+    supportsForgeSearch,
+    selectedItem,
+    withConnectedClient,
+  } = input;
+  const hasDirectory = sourceDirectory !== null;
+  const pickerQueryEnabled = pickerOpen && clientReady && hasDirectory;
+  const warmEnabled = showRefPicker && isScreenFocused && clientReady && hasDirectory;
+  const branchSuggestionsEnabled =
+    (pickerOpen || (warmEnabled && debouncedSearchQuery === "")) && clientReady && hasDirectory;
+
+  const branchSuggestionsQuery = useQuery({
+    queryKey: ["branch-suggestions", serverId, sourceDirectory, debouncedSearchQuery],
+    queryFn: async () => {
+      if (!sourceDirectory) {
+        throw new Error("Choose a project");
+      }
+      const connectedClient = withConnectedClient();
+      return connectedClient.getBranchSuggestions({
+        cwd: sourceDirectory,
+        query: debouncedSearchQuery || undefined,
+        limit: 20,
+      });
+    },
+    // Keep the previous result while typing a search query in the same project so rows do not
+    // blank out mid-search, without carrying branches across project or host switches.
+    placeholderData: (previousData, previousQuery) => {
+      const prevKey = previousQuery?.queryKey;
+      if (Array.isArray(prevKey) && prevKey[1] === serverId && prevKey[2] === sourceDirectory) {
+        return previousData;
+      }
+      return undefined;
+    },
+    enabled: branchSuggestionsEnabled,
+    staleTime: 15_000,
+  });
+
+  const changeRequestContext = useChangeRequestContext({
+    serverId,
+    cwd: sourceDirectory,
+    pickerOpen: pickerQueryEnabled || warmEnabled,
+    selectedItem,
+  });
+
+  const githubPrSearchQuery = useForgeSearchQuery({
+    client,
+    serverId,
+    cwd: sourceDirectory ?? "",
+    query: debouncedSearchQuery,
+    kinds: ["change_request"],
+    supportsForgeSearch,
+    enabled: pickerQueryEnabled,
+  });
+
+  const branchDetails = useMemo(
+    () => normalizeBranchDetails(branchSuggestionsQuery.data),
+    [branchSuggestionsQuery.data],
+  );
+  const forgeSearchAuthenticated =
+    !githubPrSearchQuery.data || githubPrSearchQuery.data.authState === "authenticated";
+  const prItems: ForgeSearchItem[] = useMemo(() => {
+    if (!forgeSearchAuthenticated) return [];
+    return githubPrSearchQuery.data?.items ?? [];
+  }, [forgeSearchAuthenticated, githubPrSearchQuery.data?.items]);
+
+  return {
+    branchDetails,
+    prItems,
+    changeRequestContext,
+    isBranchesLoading:
+      branchSuggestionsQuery.data === undefined && branchSuggestionsQuery.isFetching,
+    isBranchesFetching: branchSuggestionsQuery.isFetching,
+    isPrsFetching: githubPrSearchQuery.isFetching,
+  };
+}
+
+/**
  * The project's forge names its change requests: pull requests, or merge requests on GitLab.
- * The forge is looked up once the ref picker opens or a change request is chosen.
+ * The forge is looked up while the ref picker is shown or a change request is chosen.
  */
 function useChangeRequestContext(input: {
   serverId: string;

@@ -11,7 +11,7 @@ nav: 自定义 Provider
 - **扩展**一个一等 Provider，让它指向不同的 API（Z.AI、阿里巴巴/通义千问、代理或自托管端点）。
 - **添加多个配置**：针对同一个底层 Provider 创建多个条目，使用不同的凭据或精选的模型列表。
 - **覆盖二进制文件**：运行 nightly 构建、包装脚本或 Docker 镜像，而不是已安装的 CLI。
-- **添加 ACP Agent**：Gemini CLI、Hermes，或任何通过 stdio 使用 Agent Client Protocol 的 Agent。
+- **添加 ACP Agent**：Gemini CLI、Qwen Code，或任何通过 stdio 使用 Agent Client Protocol 的 Agent。
 - **禁用**你不使用的 Provider。
 
 编辑文件后运行 `paseo reload`。Provider 的修改会应用到之后的启动，无需重启 daemon。
@@ -159,11 +159,6 @@ Z.AI 通过兼容 Anthropic 的端点提供 GLM 模型。把 `ANTHROPIC_BASE_URL
         "extends": "acp",
         "label": "Google Gemini",
         "command": ["gemini", "--acp"]
-      },
-      "hermes": {
-        "extends": "acp",
-        "label": "Hermes",
-        "command": ["hermes", "acp"]
       }
     }
   }

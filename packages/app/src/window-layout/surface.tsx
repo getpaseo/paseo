@@ -2,10 +2,11 @@ import { useMemo, type ReactNode } from "react";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
+import { isWeb } from "@/constants/platform";
 import { useWindowLayout } from "./context";
 import { resolveWorkspaceActionPlacement, type DesktopDivisionLayout } from "./model";
 
-/** Consume horizontal safe areas once, including compact content beside a vertical bar. */
+/** Consume safe areas once; compact headers own their top inset. */
 export function WindowLayoutSurface({
   children,
   compact,
@@ -17,16 +18,24 @@ export function WindowLayoutSurface({
 }) {
   const insets = useSafeAreaInsets();
   const usesBar = resolveWorkspaceActionPlacement(useWindowLayout()) === "vertical-bar";
+  // Wide browser layouts have no compact header to clear the standalone iOS status bar.
+  // Native window chrome owns its own top band.
+  const consumesTop = isWeb && !compact;
   const surfaceStyle = useMemo(
     () => [
       style,
+      consumesTop && { paddingTop: insets.top },
       (!compact || usesBar) && { paddingLeft: insets.left, paddingRight: insets.right },
     ],
-    [style, compact, usesBar, insets.left, insets.right],
+    [style, compact, usesBar, consumesTop, insets.top, insets.left, insets.right],
   );
   const contentInsets = useMemo(
-    () => (compact && usesBar ? { ...insets, left: 0, right: 0 } : insets),
-    [compact, usesBar, insets],
+    () => ({
+      ...insets,
+      ...(consumesTop ? { top: 0 } : {}),
+      ...(compact && usesBar ? { left: 0, right: 0 } : {}),
+    }),
+    [compact, usesBar, consumesTop, insets],
   );
   return (
     <View style={surfaceStyle}>

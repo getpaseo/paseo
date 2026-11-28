@@ -248,23 +248,26 @@ export async function holdTerminalCreationResponse(page: Page) {
   };
 }
 
-type EncodingGateWindow = typeof globalThis & {
-  encodingPaused?: boolean;
-  resumeEncoding?: () => void;
+type ImageReadGateWindow = typeof globalThis & {
+  imageReadPaused?: boolean;
+  resumeImageRead?: () => void;
 };
-export async function pauseNextImageEncoding(page: Page) {
+export async function pauseNextImageRead(page: Page) {
   await page.evaluate(() => {
-    const runtime = globalThis as EncodingGateWindow;
-    const original = FileReader.prototype.readAsDataURL;
-    FileReader.prototype.readAsDataURL = function (blob: Blob) {
-      FileReader.prototype.readAsDataURL = original;
-      runtime.encodingPaused = true;
-      runtime.resumeEncoding = () => original.call(this, blob);
+    const runtime = globalThis as ImageReadGateWindow;
+    const original = Blob.prototype.arrayBuffer;
+    const gate = new Promise<void>((resolve) => {
+      runtime.resumeImageRead = resolve;
+    });
+    Blob.prototype.arrayBuffer = function () {
+      Blob.prototype.arrayBuffer = original;
+      runtime.imageReadPaused = true;
+      return gate.then(() => original.call(this));
     };
   });
   return {
     wait: () =>
-      page.waitForFunction(() => (globalThis as EncodingGateWindow).encodingPaused === true),
-    release: () => page.evaluate(() => (globalThis as EncodingGateWindow).resumeEncoding?.()),
+      page.waitForFunction(() => (globalThis as ImageReadGateWindow).imageReadPaused === true),
+    release: () => page.evaluate(() => (globalThis as ImageReadGateWindow).resumeImageRead?.()),
   };
 }

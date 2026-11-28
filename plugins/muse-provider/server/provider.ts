@@ -29,6 +29,7 @@ const capabilities = [
   "prompt.image",
   "prompt.steer",
   "session.configure",
+  "session.launch_wrap",
   "session.persistence",
   "permission",
   "session.list",
@@ -48,6 +49,8 @@ export function createMuseProvider(
     label: "Muse Code",
     icon: "icon.svg",
     command: ["muse"],
+    // Each session starts its own `muse serve`, so it can run behind that session's wrap.
+    launchWrap: true,
     docsUrl: "https://paseo.sh/docs/supported-providers/muse-code",
     installation: {
       installUrl: "https://paseo.sh/docs/muse-code",

@@ -700,6 +700,112 @@ async function waitForCapturedLog(
     120000,
   );
 
+  test("multi-photo >24 MiB batch crosses encrypted relay via file.upload.request with supportsDrain=false", async () => {
+    await startRelay({ useLocalRelay: true });
+    const daemon = await createTestPaseoDaemon({
+      relayEnabled: true,
+      relayEndpoint: `127.0.0.1:${relayPort}`,
+      relayUseTls: false,
+      relayPublicUseTls: false,
+    });
+    let client: HostClient | null = null;
+    let maxOutboundFrameBytes = 0;
+    try {
+      const offerUrl = await getPairingOfferUrl({
+        paseoHome: daemon.paseoHome,
+        relayEnabled: true,
+        relayEndpoint: daemon.config.relayEndpoint,
+      });
+      const { serverId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
+      client = new HostClient({
+        clientId: "uploaded-images-relay-mobile",
+        webSocketFactory: Object.assign(
+          (url: string) => {
+            const ws = new WebSocket(url);
+            const origSend = ws.send.bind(ws);
+            ws.send = ((data: Parameters<WebSocket["send"]>[0], ...rest: unknown[]) => {
+              let byteLength = 0;
+              if (typeof data === "string") {
+                byteLength = Buffer.byteLength(data, "utf8");
+              } else if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+                byteLength = data.byteLength;
+              }
+              if (byteLength > maxOutboundFrameBytes) {
+                maxOutboundFrameBytes = byteLength;
+              }
+              return (origSend as (...args: unknown[]) => unknown)(data, ...rest);
+            }) as WebSocket["send"];
+            return ws;
+          },
+          { supportsDrain: false },
+        ),
+        url: buildRelayWebSocketUrl({
+          endpoint: `127.0.0.1:${relayPort}`,
+          useTls: false,
+          serverId,
+          role: "client",
+        }),
+        e2ee: { enabled: true, daemonPublicKeyB64 },
+        reconnect: { baseDelayMs: 100, maxDelayMs: 100 },
+      });
+      await client.connect();
+      const statuses: string[] = [];
+      client.subscribeConnectionStatus((state) => statuses.push(state.status));
+
+      const agent = await client.createAgent({ provider: "claude", cwd: daemon.staticDir });
+
+      // 13 photos × 2 MiB = 26 MiB (> 24 MiB) uploaded sequentially over encrypted relay
+      const photoCount = 13;
+      const photoSize = 2 * 1024 * 1024;
+      const uploadedImageAttachments = [];
+      for (let index = 0; index < photoCount; index += 1) {
+        const bytes = new Uint8Array(photoSize);
+        bytes.fill((index + 17) & 0xff);
+        bytes[0] = 0xff;
+        bytes[1] = 0xd8;
+        bytes[photoSize - 1] = index;
+
+        const upload = await client.uploadFile({
+          fileName: `relay-photo-${index + 1}.jpg`,
+          mimeType: "image/jpeg",
+          bytes,
+        });
+        expect(upload.error).toBeNull();
+        expect(upload.file).not.toBeNull();
+        uploadedImageAttachments.push({
+          ...upload.file!,
+          role: "image" as const,
+        });
+      }
+
+      await client.sendMessage(agent.id, "Check all 13 relay photos", {
+        messageId: "relay-batch-13",
+        attachments: uploadedImageAttachments,
+      });
+
+      // Every frame stayed tiny (well under 16 MiB OkHttp and 32 MiB relay caps).
+      expect(maxOutboundFrameBytes).toBeLessThan(256 * 1024);
+
+      // Connection never dropped or reconnected.
+      await client.ping();
+      expect(statuses).toEqual(["connected"]);
+
+      const timeline = await client.fetchAgentTimeline(agent.id, { projection: "canonical" });
+      const userRow = timeline.entries.find(
+        (entry) =>
+          entry.item.type === "user_message" && entry.item.clientMessageId === "relay-batch-13",
+      );
+      expect(userRow?.item.type).toBe("user_message");
+      if (userRow?.item.type === "user_message") {
+        expect(userRow.item.images).toHaveLength(photoCount);
+      }
+    } finally {
+      await client?.close();
+      await daemon.close();
+      await stopRelay();
+    }
+  }, 120000);
+
   test("daemon connects to relay and client ping/pong works through relay", async () => {
     process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
 

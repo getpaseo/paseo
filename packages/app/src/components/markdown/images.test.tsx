@@ -24,6 +24,9 @@ const memoryStore: AttachmentStore = {
   async encodeBase64() {
     return "";
   },
+  async readBytes() {
+    return new Uint8Array();
+  },
   async resolvePreviewUrl() {
     return "blob:chart";
   },

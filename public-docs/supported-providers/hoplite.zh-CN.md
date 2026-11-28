@@ -14,7 +14,7 @@ Paseo 通过你已安装的 `hoplite` CLI 提供的 Agent Client Protocol（`hop
 
 1. 在 daemon 主机上安装 [Hoplite CLI](https://hoplite.sh/docs/cli)。
 2. 在终端中运行 `hoplite login`。
-3. 在 Paseo 中打开 **设置 → Hosts → 你的主机 → Providers**，选择 **+ Provider**，找到 **Hoplite**，然后选择 **添加**。
+3. 在 Paseo 中打开 **设置 → 主机 → Providers**，选择 **+ Provider**，找到 **Hoplite**，然后选择 **添加**。
 
 认证和项目设置见 [Hoplite 的 ACP 指南](https://hoplite.sh/docs/cli/acp)。如果 `hoplite` 不在 daemon 的 PATH 中，请使用[命令覆盖](/docs/custom-providers#custom-binary)，并在参数中保留 `acp`。
 

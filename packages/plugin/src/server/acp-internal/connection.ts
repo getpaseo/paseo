@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { spawnProcess, terminateProcess } from "../process.js";
 import { Readable, Writable } from "node:stream";
 import {
@@ -9,18 +10,21 @@ import {
   type Client,
   type AgentCapabilities,
   type ContentBlock,
+  type CreateElicitationRequest,
+  type CreateElicitationResponse,
   type NewSessionResponse,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionConfigOption,
+  type SessionInfo,
   type SessionNotification,
   type SessionUpdate,
   type ToolCall,
-  type ToolCallContent,
   type ToolCallUpdate,
   type Stream,
 } from "@agentclientprotocol/sdk";
 import { z } from "zod";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type {
   AcpConfigAccess,
   AcpConfigChange,
@@ -31,6 +35,8 @@ import type {
   AcpVendorUpdate,
   RunAcpProviderOptions,
 } from "../acp.js";
+import { AcpFormElicitation } from "./elicitation.js";
+import { standardToolCallDetail } from "./tool-call-detail.js";
 import {
   PROVIDER_PROTOCOL_VERSION,
   ProviderEventSchema,
@@ -39,6 +45,7 @@ import {
   requireProviderCapabilities,
   type ProviderCatalog,
   type ProviderCapability,
+  type ProviderClientInfo,
   type ProviderCommand,
   type ProviderConfigState,
   type ProviderConnectRequest,
@@ -48,6 +55,7 @@ import {
   type ProviderLaunch,
   type ProviderModel,
   type ProviderPermissionResponse,
+  type ProviderToolCallDetail,
   type ProviderPersistence,
   type ProviderSessionConfig,
   type ProviderSetting,
@@ -60,7 +68,30 @@ const ADAPTER_CAPABILITIES = [
   "prompt.command",
   "session.configure",
   "permission",
+  "request.cancel",
 ] as const;
+
+const WARM_PROBE_IDLE_MS = 5_000;
+
+function readPluginPackageVersion(): string {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(new URL("../../../package.json", import.meta.url), "utf8"),
+    ) as { version?: unknown };
+    if (typeof manifest.version === "string" && manifest.version.trim().length > 0) {
+      return manifest.version.trim();
+    }
+  } catch {
+    // Bundled or standalone callers without adjacent package.json fall back below.
+  }
+  return "0.0.0";
+}
+
+const DEFAULT_CLIENT_INFO: ProviderClientInfo = {
+  name: "paseo",
+  title: "Paseo",
+  version: readPluginPackageVersion(),
+};
 
 interface AcpBoundarySession {
   runtime: AcpRuntime;
@@ -75,14 +106,18 @@ export async function createAcpProviderConnection(
   if (!request.versions.includes(PROVIDER_PROTOCOL_VERSION)) {
     throw new Error(`ACP adapter requires provider protocol ${PROVIDER_PROTOCOL_VERSION}`);
   }
+  const clientInfo = request.clientInfo ?? DEFAULT_CLIENT_INFO;
   const probe = await AcpRuntime.start({
     options,
     launch: request.launch,
+    clientInfo,
     boundarySessionId: "capability-probe",
     env: {},
     emit: () => undefined,
   });
   const supportedCapabilities: ProviderCapability[] = [...ADAPTER_CAPABILITIES];
+  // A connector stream has no process of its own to wrap.
+  if (options.command) supportedCapabilities.push("session.launch_wrap");
   if (probe.agentCapabilities.promptCapabilities?.image) {
     supportedCapabilities.push("prompt.image");
   }
@@ -95,13 +130,50 @@ export async function createAcpProviderConnection(
   if (options.acpOptions?.deferTurnOnRunningTools) {
     supportedCapabilities.push("prompt.steer");
   }
-  await probe.close();
   const capabilities = negotiateProviderCapabilities(request.capabilities, supportedCapabilities);
   const listeners = new Set<(event: ProviderEvent) => void>();
   const sessions = new Map<string, AcpBoundarySession>();
   const inFlight = new Set<Promise<void>>();
+  // Catalogue and listing requests each run a probe runtime that cancellation stops.
+  const cancellable = new Map<string, AbortController>();
   let closed = false;
   let closePromise: Promise<void> | null = null;
+
+  // Keep the initialized capability probe briefly so an immediate global catalog/sessions
+  // request reuses the already-initialized process instead of spawning a second one.
+  let warmProbe: { runtime: AcpRuntime; timer: ReturnType<typeof setTimeout> } | null = null;
+  let warmProbeClose: Promise<void> | null = null;
+  const disposeWarmProbe = (): Promise<void> => {
+    if (warmProbe) {
+      const { runtime, timer } = warmProbe;
+      warmProbe = null;
+      clearTimeout(timer);
+      warmProbeClose = runtime.close().catch(() => undefined);
+    }
+    return warmProbeClose ?? Promise.resolve();
+  };
+  const discardWarmProbe = (): void => {
+    void disposeWarmProbe();
+  };
+  const claimWarmProbe = (binding: {
+    boundarySessionId: string;
+    emit: (event: ProviderEvent) => void;
+  }): AcpRuntime | null => {
+    if (!warmProbe) return null;
+    const { runtime, timer } = warmProbe;
+    warmProbe = null;
+    clearTimeout(timer);
+    if (!runtime.isUsable()) {
+      warmProbeClose = runtime.close().catch(() => undefined);
+      return null;
+    }
+    runtime.rebindRequest(binding);
+    return runtime;
+  };
+  const warmProbeTimer = setTimeout(discardWarmProbe, WARM_PROBE_IDLE_MS);
+  warmProbeTimer.unref?.();
+  warmProbe = { runtime: probe, timer: warmProbeTimer };
+
   const emit = (event: ProviderEvent) => {
     if (closed) return;
     const parsed = ProviderEventSchema.parse(event);
@@ -110,10 +182,13 @@ export async function createAcpProviderConnection(
   const state: AcpConnectionState = {
     options,
     launch: request.launch,
+    clientInfo,
     capabilities,
     sessions,
     emit,
     isClosed: () => closed,
+    claimWarmProbe,
+    discardWarmProbe,
   };
 
   return {
@@ -123,16 +198,31 @@ export async function createAcpProviderConnection(
       if (closed) throw new Error("ACP provider connection is closed");
       input = ProviderInputSchema.parse(input);
       validateAdmission(input, { capabilities, sessions });
+      if (input.type === "request.cancel") {
+        cancellable.get(input.requestId)?.abort(new Error("Paseo canceled the request"));
+        return;
+      }
+      const admitted = input;
+      const controller = new AbortController();
+      const { signal } = controller;
+      if (admitted.type === "catalog" || admitted.type === "sessions") {
+        cancellable.set(admitted.requestId, controller);
+      }
       const operation = Promise.resolve().then(async () => {
         if (closed) return undefined;
-        await dispatch(input, state);
+        await dispatch(admitted, state, signal);
         return undefined;
       });
       const settled = operation.catch((error) => {
-        emitOperationFailure(input, emit, error);
+        if (!signal.aborted) emitOperationFailure(admitted, emit, error);
       });
       inFlight.add(settled);
-      void settled.finally(() => inFlight.delete(settled));
+      void settled.finally(() => {
+        inFlight.delete(settled);
+        if ("requestId" in admitted && cancellable.get(admitted.requestId) === controller) {
+          cancellable.delete(admitted.requestId);
+        }
+      });
     },
     onEvent(listener) {
       listeners.add(listener);
@@ -142,10 +232,17 @@ export async function createAcpProviderConnection(
       if (closePromise) return closePromise;
       closed = true;
       closePromise = (async () => {
+        const closingWarmProbe = disposeWarmProbe();
+        for (const controller of cancellable.values()) {
+          controller.abort(new Error("ACP provider connection closed"));
+        }
         await Promise.all(inFlight);
         const active = [...sessions.values()];
         sessions.clear();
-        await Promise.all(active.map(({ runtime }) => runtime.closeSession()));
+        await Promise.all([
+          closingWarmProbe,
+          ...active.map(({ runtime }) => runtime.closeSession()),
+        ]);
         listeners.clear();
       })();
       return closePromise;
@@ -155,11 +252,17 @@ export async function createAcpProviderConnection(
 
 interface AcpConnectionState {
   launch?: ProviderLaunch;
+  clientInfo: ProviderClientInfo;
   options: RunAcpProviderOptions;
   capabilities: readonly ProviderCapability[];
   sessions: Map<string, AcpBoundarySession>;
   emit(event: ProviderEvent): void;
   isClosed(): boolean;
+  claimWarmProbe(binding: {
+    boundarySessionId: string;
+    emit: (event: ProviderEvent) => void;
+  }): AcpRuntime | null;
+  discardWarmProbe(): void;
 }
 
 function validateAdmission(
@@ -204,13 +307,17 @@ function emitOperationFailure(
   }
 }
 
-async function dispatch(input: ProviderInput, state: AcpConnectionState): Promise<void> {
+async function dispatch(
+  input: Exclude<ProviderInput, { type: "request.cancel" }>,
+  state: AcpConnectionState,
+  signal: AbortSignal,
+): Promise<void> {
   switch (input.type) {
     case "catalog":
-      await discover(input, state);
+      await discover(input, state, signal);
       return;
     case "sessions":
-      await listSessions(input, state);
+      await listSessions(input, state, signal);
       return;
     case "session.open":
       await openSession(input, state);
@@ -258,59 +365,107 @@ async function dispatch(input: ProviderInput, state: AcpConnectionState): Promis
   }
 }
 
+/**
+ * Runs one request in its own short-lived runtime and publishes its result before shutting the
+ * runtime down, so a slow session close cannot delay the reply. Aborting `signal` until shutdown
+ * ends closes the runtime, which terminates its process and fails whatever the request awaits.
+ */
+async function withRequestRuntime<Result>(
+  state: AcpConnectionState,
+  request: {
+    boundarySessionId: string;
+    cwd?: string;
+    signal: AbortSignal;
+    run(runtime: AcpRuntime): Promise<Result>;
+    publish(result: Result): void;
+  },
+): Promise<void> {
+  const { signal } = request;
+  signal.throwIfAborted();
+  let runtime: AcpRuntime | null = null;
+  if (request.cwd === undefined) {
+    runtime = state.claimWarmProbe({
+      boundarySessionId: request.boundarySessionId,
+      emit: state.emit,
+    });
+  } else {
+    state.discardWarmProbe();
+  }
+  runtime ??= await AcpRuntime.start({
+    options: state.options,
+    launch: state.launch,
+    clientInfo: state.clientInfo,
+    boundarySessionId: request.boundarySessionId,
+    cwd: request.cwd,
+    env: {},
+    emit: state.emit,
+    signal,
+  });
+  const closeOnAbort = () => void runtime.close().catch(() => undefined);
+  signal.addEventListener("abort", closeOnAbort, { once: true });
+  try {
+    signal.throwIfAborted();
+    const result = await request.run(runtime);
+    signal.throwIfAborted();
+    request.publish(result);
+  } finally {
+    await (signal.aborted ? runtime.close() : runtime.closeSession());
+    signal.removeEventListener("abort", closeOnAbort);
+  }
+}
+
 async function discover(
   input: Extract<ProviderInput, { type: "catalog" }>,
   state: AcpConnectionState,
+  signal: AbortSignal,
 ): Promise<void> {
-  const runtime = await AcpRuntime.start({
-    options: state.options,
-    launch: state.launch,
+  if (input.cwd === undefined && state.options.acpOptions?.workspaceOnlyCatalog) {
+    state.discardWarmProbe();
+    state.emit({ type: "catalog", requestId: input.requestId, catalog: { models: [], modes: [] } });
+    return;
+  }
+  await withRequestRuntime(state, {
     boundarySessionId: "catalog",
     cwd: input.cwd,
-    env: {},
-    emit: state.emit,
-  });
-  try {
-    let catalog = await runtime.discover(input.cwd);
-    const context = runtime.configContext();
-    for (const transformer of state.options.transformers ?? []) {
-      if (transformer.discover) {
-        catalog = await transformer.discover(catalog, context);
+    signal,
+    async run(runtime) {
+      let catalog = await runtime.discover(input.cwd);
+      const context = runtime.configContext();
+      for (const transformer of state.options.transformers ?? []) {
+        if (transformer.discover) {
+          catalog = await transformer.discover(catalog, context);
+        }
       }
-    }
-    state.emit({ type: "catalog", requestId: input.requestId, catalog });
-  } finally {
-    await runtime.closeSession();
-  }
+      return catalog;
+    },
+    publish(catalog) {
+      state.emit({ type: "catalog", requestId: input.requestId, catalog });
+    },
+  });
 }
 
 async function listSessions(
   input: Extract<ProviderInput, { type: "sessions" }>,
   state: AcpConnectionState,
+  signal: AbortSignal,
 ): Promise<void> {
-  const runtime = await AcpRuntime.start({
-    options: state.options,
-    launch: state.launch,
+  await withRequestRuntime(state, {
     boundarySessionId: "sessions",
-    env: {},
-    emit: state.emit,
+    signal,
+    run: (runtime) => runtime.listSessions({ cwd: input.cwd, limit: input.limit }),
+    publish(selected) {
+      state.emit({
+        type: "sessions",
+        requestId: input.requestId,
+        sessions: selected.map((session) => ({
+          persistence: nativePersistence(session.sessionId),
+          cwd: session.cwd,
+          title: session.title ?? undefined,
+          updatedAt: session.updatedAt ?? undefined,
+        })),
+      });
+    },
   });
-  try {
-    const response = await runtime.listSessions(input.cwd);
-    const selected = input.limit ? response.sessions.slice(0, input.limit) : response.sessions;
-    state.emit({
-      type: "sessions",
-      requestId: input.requestId,
-      sessions: selected.map((session) => ({
-        persistence: nativePersistence(session.sessionId),
-        cwd: session.cwd,
-        title: session.title ?? undefined,
-        updatedAt: session.updatedAt ?? undefined,
-      })),
-    });
-  } finally {
-    await runtime.close();
-  }
 }
 
 function retireSession(state: AcpConnectionState, sessionId: string): void {
@@ -325,12 +480,15 @@ async function openSession(
 ): Promise<void> {
   if (state.sessions.has(input.sessionId))
     throw new Error(`Session already exists: ${input.sessionId}`);
+  state.discardWarmProbe();
   const runtime = await AcpRuntime.start({
     options: state.options,
     launch: state.launch,
+    clientInfo: state.clientInfo,
     boundarySessionId: input.sessionId,
     cwd: input.config.cwd,
     env: input.config.env,
+    wrap: input.config.wrap,
     emit: state.emit,
     onRetired: () => retireSession(state, input.sessionId),
   });
@@ -369,19 +527,33 @@ function requireSession(state: AcpConnectionState, sessionId: string): AcpBounda
 
 interface StartRuntimeOptions {
   launch?: ProviderLaunch;
+  clientInfo?: ProviderClientInfo;
   options: RunAcpProviderOptions;
   boundarySessionId: string;
   cwd?: string;
   env: Readonly<Record<string, string>>;
+  wrap?: readonly [string, ...string[]];
+  /** Aborting it during startup closes the runtime and rejects with the abort reason. */
+  signal?: AbortSignal;
   emit(event: ProviderEvent): void;
   onRetired?: () => void;
 }
 
-interface PendingPermission {
+interface PendingToolPermission {
+  kind: "tool";
   request: RequestPermissionRequest;
   turnId: string | undefined;
   resolve(response: RequestPermissionResponse): void;
 }
+
+interface PendingElicitation {
+  kind: "elicitation";
+  form: AcpFormElicitation;
+  turnId: string | undefined;
+  resolve(response: CreateElicitationResponse): void;
+}
+
+type PendingPermission = PendingToolPermission | PendingElicitation;
 
 type DeferredTurnOutcome =
   | { type: "complete"; terminalizeTools: boolean }
@@ -408,14 +580,14 @@ interface ActivePrompt {
 }
 
 const DEFAULT_DEFERRED_SETTLE_DELAY_MS = 500;
+const SESSION_SCAN_LIMIT = 500;
+// COMPAT(acpAutoAccept): added in v0.17.4, remove after 2027-05-23. The generic ACP adapter saves
+// its Auto Accept toggle as this setting on agents that later moved to a bundled ACP provider.
+const LEGACY_AUTO_ACCEPT_SETTING = "auto_accept";
 const DEFAULT_DEFERRED_QUIET_LIMIT_MS = 120_000;
 
-type AcpToolCallSource = AcpToolCallSnapshot & {
-  diff?: Extract<ToolCallContent, { type: "diff" }>;
-};
-
 interface AcpToolCallState {
-  source: AcpToolCallSource;
+  source: AcpToolCallSnapshot;
   presentation: AcpToolCallSnapshot;
 }
 
@@ -434,6 +606,7 @@ class AcpRuntime {
   private readonly vendorToolCalls = new Map<string, ToolCallTimelineItem>();
   private readonly pendingCompactions = new Set<string>();
   private readonly permissions = new Map<string, PendingPermission>();
+  private elicitationSequence = 0;
   private readonly transformers: readonly AcpTransformer[];
   private configOptions: SessionConfigOption[] = [];
   private modes: NewSessionResponse["modes"] = null;
@@ -478,6 +651,7 @@ class AcpRuntime {
   private lastUsage: ProviderUsage = {};
 
   static async start(options: StartRuntimeOptions): Promise<AcpRuntime> {
+    options.signal?.throwIfAborted();
     let child: ChildProcessWithoutNullStreams | null = null;
     let spawnFailure: Promise<never> | null = null;
     let stream: Stream;
@@ -496,6 +670,7 @@ class AcpRuntime {
         env: process.env,
       };
       child = spawnProcess(launch.command, launch.args, {
+        wrap: options.wrap,
         cwd: options.cwd,
         env: { ...launch.env, ...options.env },
         stdio: "pipe",
@@ -509,6 +684,7 @@ class AcpRuntime {
       >[1];
       stream = ndJsonStream(output, input);
     } else {
+      if (options.wrap) throw new Error("An ACP connector cannot run behind a launch wrap");
       const owned = ownConnectorStream(await options.options.connector());
       stream = owned.stream;
       closeConnector = owned.close;
@@ -516,13 +692,16 @@ class AcpRuntime {
     }
     const runtime = new AcpRuntime(stream, child, closeConnector, whenConnectorClosed, options);
     onPartialWireRead = () => runtime.notePartialWireRead();
+    // Closing ends the transport, which fails the pending initialize below.
+    const closeOnAbort = () => void runtime.close().catch(() => undefined);
+    options.signal?.addEventListener("abort", closeOnAbort, { once: true });
     try {
       const initialize = withTimeout(
         runtime.call(
           runtime.connection.initialize({
             protocolVersion: PROTOCOL_VERSION,
-            clientCapabilities: {},
-            clientInfo: { name: "paseo", version: "1" },
+            clientCapabilities: { elicitation: { form: {} } },
+            clientInfo: options.clientInfo ?? DEFAULT_CLIENT_INFO,
           }),
         ),
         options.options.acpOptions?.startupTimeoutMs ?? 10_000,
@@ -531,11 +710,15 @@ class AcpRuntime {
       const initialized = spawnFailure
         ? await Promise.race([initialize, spawnFailure])
         : await initialize;
+      options.signal?.throwIfAborted();
       runtime.agentCapabilities = initialized.agentCapabilities ?? {};
       return runtime;
     } catch (error) {
       await runtime.close();
+      options.signal?.throwIfAborted();
       throw error;
+    } finally {
+      options.signal?.removeEventListener("abort", closeOnAbort);
     }
   }
 
@@ -553,6 +736,7 @@ class AcpRuntime {
     this.transformers = options.options.transformers ?? [];
     const client: Client = {
       requestPermission: (request) => this.requestPermission(request),
+      createElicitation: (request) => this.createElicitation(request),
       sessionUpdate: (notification) => {
         const wireSeq = this.sessionUpdateWireSeqs.shift() ?? ++this.incomingWireSeq;
         return this.enqueueNotification(() => this.sessionUpdate(notification, wireSeq));
@@ -593,6 +777,21 @@ class AcpRuntime {
     });
   }
 
+  isUsable(): boolean {
+    if (this.closing || this.processFailed) return false;
+    if (this.child && (this.child.exitCode !== null || this.child.signalCode !== null))
+      return false;
+    return true;
+  }
+
+  rebindRequest(binding: {
+    boundarySessionId: string;
+    emit: (event: ProviderEvent) => void;
+  }): void {
+    this.options.boundarySessionId = binding.boundarySessionId;
+    this.emit = binding.emit;
+  }
+
   async open(
     input: Extract<ProviderInput, { type: "session.open" }>,
     connectionCapabilities: readonly ProviderCapability[],
@@ -601,14 +800,7 @@ class AcpRuntime {
     const mcpServers = toAcpMcpServers(input.config);
     this.mcpServerNames = mcpServers.map((server) => server.name);
     let nativeSessionId = readNativeSessionId(input.persistence);
-    const metadata: Record<string, unknown> = {
-      _paseo: {
-        systemPrompt: input.config.systemPrompt,
-        providerOptions: input.config.providerOptions,
-        toolPolicy: input.config.toolPolicy,
-        persist: input.config.persist,
-      },
-    };
+    const metadata: Record<string, unknown> = {};
     for (const transformer of this.transformers) {
       const prepared = transformer.sessionOpen?.({
         persistence: input.persistence,
@@ -618,6 +810,7 @@ class AcpRuntime {
       nativeSessionId ??= prepared?.sessionId ?? null;
       Object.assign(metadata, prepared?.metadata);
     }
+    const meta = Object.keys(metadata).length > 0 ? metadata : undefined;
     let response: Pick<NewSessionResponse, "modes" | "configOptions">;
     if (nativeSessionId) {
       // ACP agents replay the loaded session's updates before session/load resolves,
@@ -629,7 +822,7 @@ class AcpRuntime {
           sessionId: nativeSessionId,
           cwd: input.config.cwd,
           mcpServers,
-          _meta: metadata,
+          ...(meta ? { _meta: meta } : {}),
         }),
       );
       await this.drainNotifications();
@@ -639,7 +832,7 @@ class AcpRuntime {
         this.connection.newSession({
           cwd: input.config.cwd,
           mcpServers,
-          _meta: metadata,
+          ...(meta ? { _meta: meta } : {}),
         }),
       );
       response = newSession;
@@ -916,8 +1109,17 @@ class AcpRuntime {
     return true;
   }
 
-  listSessions(cwd?: string) {
-    return this.call(this.connection.listSessions({ cwd }));
+  /** Follows `nextCursor` until `limit` sessions, the last page, or the scan cap. */
+  async listSessions({ cwd, limit }: { cwd?: string; limit?: number }): Promise<SessionInfo[]> {
+    const wanted = Math.min(limit ?? SESSION_SCAN_LIMIT, SESSION_SCAN_LIMIT);
+    const sessions: SessionInfo[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.call(this.connection.listSessions({ cwd, cursor }));
+      sessions.push(...page.sessions);
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor && sessions.length < wanted);
+    return sessions.slice(0, wanted);
   }
 
   async drainNotifications(): Promise<void> {
@@ -933,6 +1135,10 @@ class AcpRuntime {
     if (!pending) return;
     const active = this.activePrompt;
     if (active?.cancelling && pending.turnId === active.turnId) return;
+    if (pending.kind === "elicitation") {
+      this.resolveElicitation(permissionId, pending, pending.form.respond(response));
+      return;
+    }
     const selected = selectPermissionOption(pending.request.options, response);
     if (response.selectedActionId !== undefined && !selected) {
       throw new Error(
@@ -948,7 +1154,10 @@ class AcpRuntime {
 
   private finishTurnPermissions(turnId: string): void {
     for (const [permissionId, pending] of this.permissions) {
-      if (pending.turnId === turnId) {
+      if (pending.turnId !== turnId) continue;
+      if (pending.kind === "elicitation") {
+        this.resolveElicitation(permissionId, pending, { action: "cancel" });
+      } else {
         this.resolvePermission(permissionId, pending, { outcome: { outcome: "cancelled" } });
       }
     }
@@ -956,8 +1165,23 @@ class AcpRuntime {
 
   private resolvePermission(
     permissionId: string,
-    pending: PendingPermission,
+    pending: PendingToolPermission,
     response: RequestPermissionResponse,
+  ): void {
+    this.permissions.delete(permissionId);
+    pending.resolve(response);
+    this.emit({
+      type: "session.permission_resolved",
+      sessionId: this.options.boundarySessionId,
+      permissionId,
+    });
+    if (this.activePrompt?.deferred) this.scheduleDeferredSettle();
+  }
+
+  private resolveElicitation(
+    permissionId: string,
+    pending: PendingElicitation,
+    response: CreateElicitationResponse,
   ): void {
     this.permissions.delete(permissionId);
     pending.resolve(response);
@@ -1032,6 +1256,10 @@ class AcpRuntime {
   }
 
   async closeSession(): Promise<void> {
+    if (this.cancelPendingPermissions()) {
+      // Let the ACP SDK flush the cancel response on the wire before closing the session/stream.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
     if (this.nativeSessionId) {
       await withTimeout(
         this.call(this.connection.closeSession({ sessionId: this.nativeSessionId })),
@@ -1072,15 +1300,39 @@ class AcpRuntime {
     const requested: AcpConfigChange[] = [];
     if (config.model) requested.push({ target: "model", value: config.model });
     const autoAcceptMode = this.options.options.acpOptions?.autoAcceptMode;
-    const mode = config.mode ?? (autoAcceptMode?.default ? autoAcceptMode.mode.id : undefined);
+    const { settings, legacyAutoAccept } = this.withoutLegacyAutoAccept(config.settings);
+    // The toggle stays saved after a mode is chosen here, so it counts only while the saved mode
+    // is one the generic adapter wrote.
+    const mode =
+      legacyAutoAccept && autoAcceptMode && !this.offersMode(config.mode)
+        ? autoAcceptMode.mode.id
+        : (config.mode ?? (autoAcceptMode?.default ? autoAcceptMode.mode.id : undefined));
     if (mode) requested.push({ target: "mode", value: mode });
     if (config.thinkingOption) {
       requested.push({ target: "thinking", value: config.thinkingOption });
     }
-    for (const [id, value] of Object.entries(config.settings)) {
+    for (const [id, value] of Object.entries(settings)) {
       requested.push({ target: "setting", id, value });
     }
     for (const change of this.inAgentOrder(requested)) await this.applyConfigChange(change);
+  }
+
+  private offersMode(mode: string | undefined): boolean {
+    if (mode === undefined) return false;
+    if (mode === this.options.options.acpOptions?.autoAcceptMode?.mode.id) return true;
+    return toProviderCatalog(this.modes, this.configOptions).modes.some(({ id }) => id === mode);
+  }
+
+  /** Reads the generic ACP adapter's saved Auto Accept toggle unless the agent has such a setting. */
+  private withoutLegacyAutoAccept(settings: Readonly<Record<string, JsonValue>>): {
+    settings: Readonly<Record<string, JsonValue>>;
+    legacyAutoAccept: boolean;
+  } {
+    if (this.configOptions.some((option) => option.id === LEGACY_AUTO_ACCEPT_SETTING)) {
+      return { settings, legacyAutoAccept: false };
+    }
+    const { [LEGACY_AUTO_ACCEPT_SETTING]: saved, ...rest } = settings;
+    return { settings: rest, legacyAutoAccept: saved === true };
   }
 
   // One option can reset another: choosing an fx provider also selects that provider's saved
@@ -1282,8 +1534,14 @@ class AcpRuntime {
       }
     }
     const permissionId = `permission:${request.toolCall.toolCallId}`;
+    const { presentation } = this.presentToolCall(request.toolCall);
     return new Promise((resolve) => {
-      this.permissions.set(permissionId, { request, resolve, turnId: this.activePrompt?.turnId });
+      this.permissions.set(permissionId, {
+        kind: "tool",
+        request,
+        resolve,
+        turnId: this.activePrompt?.turnId,
+      });
       if (this.activePrompt?.deferred) this.scheduleDeferredSettle();
       this.emit({
         type: "session.permission",
@@ -1294,12 +1552,61 @@ class AcpRuntime {
           kind: "tool",
           title: request.toolCall.title ?? undefined,
           input: jsonRecord(request.toolCall.rawInput),
+          detail: toolCallDetail(presentation),
           actions: request.options.map((option) => ({
             id: option.optionId,
             label: option.name,
             behavior: option.kind.startsWith("allow") ? "allow" : "deny",
           })),
         },
+      });
+    });
+  }
+
+  private async createElicitation(
+    request: CreateElicitationRequest,
+  ): Promise<CreateElicitationResponse> {
+    await this.notificationLane;
+    if (this.closing || this.processFailed || this.activePrompt?.cancelling) {
+      return { action: "cancel" };
+    }
+    // Forms are only answerable during an active turn of this session; declining out-of-turn
+    // or mismatched requests avoids hanging session open, discovery, or idle connections.
+    if (
+      !this.activePrompt ||
+      request.mode !== "form" ||
+      !("sessionId" in request) ||
+      typeof request.sessionId !== "string" ||
+      !this.nativeSessionId ||
+      request.sessionId !== this.nativeSessionId
+    ) {
+      return { action: "decline" };
+    }
+    const toolCallId =
+      "toolCallId" in request && typeof request.toolCallId === "string"
+        ? request.toolCallId
+        : undefined;
+    const toolName = toolCallId ? this.toolCalls.get(toolCallId)?.presentation.name : undefined;
+    const form = AcpFormElicitation.parse(request, { toolName });
+    if (!form) {
+      return { action: "decline" };
+    }
+    const permissionId = toolCallId
+      ? `elicitation:${toolCallId}:${++this.elicitationSequence}`
+      : `elicitation:${++this.elicitationSequence}`;
+    const turnId = this.activePrompt.turnId;
+    return new Promise((resolve) => {
+      this.permissions.set(permissionId, {
+        kind: "elicitation",
+        form,
+        resolve,
+        turnId,
+      });
+      if (this.activePrompt?.deferred) this.scheduleDeferredSettle();
+      this.emit({
+        type: "session.permission",
+        sessionId: this.options.boundarySessionId,
+        request: { id: permissionId, ...form.request },
       });
     });
   }
@@ -1562,6 +1869,21 @@ class AcpRuntime {
     this.pendingCompactions.clear();
   }
 
+  /** Merges an update into the call's earlier updates and runs it through the transformers. */
+  private presentToolCall(update: ToolCall | ToolCallUpdate): AcpToolCallState {
+    const tool = this.toolCalls.get(update.toolCallId);
+    const source = mergeToolCallSnapshot(update, tool?.source);
+    const context = {
+      sessionId: this.options.boundarySessionId,
+      mcpServerNames: this.mcpServerNames,
+      previous: tool?.presentation,
+    };
+    let presentation: AcpToolCallSnapshot = source;
+    for (const transformer of this.transformers)
+      presentation = transformer.toolCall?.(presentation, context) ?? presentation;
+    return { source, presentation };
+  }
+
   private reduceToolCall(
     update: Extract<SessionUpdate, { sessionUpdate: "tool_call" | "tool_call_update" }>,
     wireSeq: number,
@@ -1581,25 +1903,7 @@ class AcpRuntime {
       current !== undefined &&
       this.liveOpenToolIds.has(current.id) &&
       this.toolKeepsTurnOpen(current);
-    const source = mergeToolCallSnapshot(update, tool?.source);
-    let snapshot: AcpToolCallSnapshot = source;
-    const context = {
-      sessionId: this.options.boundarySessionId,
-      mcpServerNames: this.mcpServerNames,
-    };
-    for (const transformer of this.transformers)
-      snapshot = transformer.toolCall?.(snapshot, context) ?? snapshot;
-    if (!snapshot.detail && source.diff && snapshot.kind === "edit") {
-      snapshot = {
-        ...snapshot,
-        detail: {
-          type: "edit",
-          filePath: source.diff.path,
-          oldString: source.diff.oldText ?? undefined,
-          newString: source.diff.newText,
-        },
-      };
-    }
+    const { source, presentation: snapshot } = this.presentToolCall(update);
     this.toolCalls.set(snapshot.id, { source, presentation: snapshot });
     const isOpen = snapshot.status === "pending" || snapshot.status === "in_progress";
     if (this.replayWindow === null) {
@@ -1688,11 +1992,21 @@ class AcpRuntime {
     });
   }
 
-  private settlePendingWork(failureMessage?: string): void {
+  private cancelPendingPermissions(): boolean {
+    if (this.permissions.size === 0) return false;
     for (const permission of this.permissions.values()) {
-      permission.resolve({ outcome: { outcome: "cancelled" } });
+      if (permission.kind === "elicitation") {
+        permission.resolve({ action: "cancel" });
+      } else {
+        permission.resolve({ outcome: { outcome: "cancelled" } });
+      }
     }
     this.permissions.clear();
+    return true;
+  }
+
+  private settlePendingWork(failureMessage?: string): void {
+    this.cancelPendingPermissions();
     if (this.activePrompt?.deferred) {
       this.finishDeferredTurn(
         this.activePrompt,
@@ -2179,8 +2493,8 @@ function ownConnectorStream(source: Stream): {
 
 function mergeToolCallSnapshot(
   update: ToolCall | ToolCallUpdate,
-  current: AcpToolCallSource | undefined,
-): AcpToolCallSource {
+  current: AcpToolCallSnapshot | undefined,
+): AcpToolCallSnapshot {
   return {
     id: update.toolCallId,
     name: firstText(update.name, current?.name),
@@ -2190,10 +2504,7 @@ function mergeToolCallSnapshot(
     input: jsonValue(firstDefined(update.rawInput, current?.input, null)),
     output: jsonValue(firstDefined(update.rawOutput, current?.output, null)),
     locations: update.locations?.map((location) => location.path) ?? current?.locations ?? [],
-    diff:
-      update.content === undefined
-        ? current?.diff
-        : update.content?.find((item) => item.type === "diff"),
+    content: update.content === undefined ? current?.content : jsonValue(update.content),
   };
 }
 
@@ -2367,21 +2678,12 @@ function configValues(
 
 type ToolCallTimelineItem = Extract<ProviderTimelineItem, { type: "tool_call" }>;
 
+function toolCallDetail(snapshot: AcpToolCallSnapshot): ProviderToolCallDetail {
+  return snapshot.detail ?? standardToolCallDetail(snapshot);
+}
+
 function toolTimelineItem(snapshot: AcpToolCallSnapshot): ToolCallTimelineItem {
-  const input = jsonRecord(snapshot.input);
-  const isEdit = snapshot.kind === "edit" || snapshot.name?.toLowerCase().includes("edit") === true;
-  const detail =
-    snapshot.detail ??
-    (isEdit
-      ? {
-          type: "edit" as const,
-          filePath:
-            typeof input.filePath === "string" ? input.filePath : (snapshot.locations[0] ?? ""),
-          oldString: typeof input.oldString === "string" ? input.oldString : undefined,
-          newString: typeof input.newString === "string" ? input.newString : undefined,
-          unifiedDiff: typeof input.unifiedDiff === "string" ? input.unifiedDiff : undefined,
-        }
-      : { type: "unknown" as const, input: snapshot.input, output: snapshot.output });
+  const detail = toolCallDetail(snapshot);
   const status =
     snapshot.status === "in_progress" || snapshot.status === "pending"
       ? "running"
@@ -2416,6 +2718,7 @@ function jsonValue(value: unknown) {
 }
 
 function jsonRecord(value: unknown): Record<string, ReturnType<typeof jsonValue>> {
+  if (value === undefined) return {};
   const parsed = jsonValue(value);
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
   return parsed;

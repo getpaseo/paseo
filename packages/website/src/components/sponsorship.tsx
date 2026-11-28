@@ -267,7 +267,7 @@ export function HomepageSponsorsSection() {
     <section aria-labelledby="sponsors-heading">
       <SectionOpener headingId="sponsors-heading" title={t("sponsor.sponsors")} className="mb-10" />
 
-      <ul className="flex flex-wrap items-center gap-x-14 gap-y-8">
+      <ul className="flex flex-wrap items-start gap-x-14 gap-y-8">
         {SPONSORS.map((sponsor) => (
           <li key={sponsor.url}>
             <a
@@ -278,7 +278,9 @@ export function HomepageSponsorsSection() {
             >
               <img src={sponsor.logo.onDark} alt={sponsor.name} className="h-12 w-auto" />
             </a>
-            <p className="mt-2 text-sm text-white/55">{sponsor.description}</p>
+            <p className="mt-2 max-w-72 text-sm text-balance text-white/55">
+              {sponsor.description}
+            </p>
           </li>
         ))}
         {open > 0 ? (
@@ -313,9 +315,10 @@ const SPONSORS_PLACEMENTS = {
     section: "space-y-10",
     heading: "gap-2.5 text-3xl font-medium tracking-tight",
     heart: "size-6",
+    list: "gap-x-14",
     link: "",
     logo: "h-14",
-    description: "mt-2 text-sm text-white/55",
+    description: "mt-2 max-w-72 text-sm text-balance text-white/55",
     button: "h-12 px-5 text-sm",
   },
   footer: {
@@ -323,9 +326,11 @@ const SPONSORS_PLACEMENTS = {
     heading:
       "gap-1.5 font-mono text-[11px] uppercase tracking-[0.12em] text-extra-muted-foreground",
     heart: "size-3",
+    // Narrower than `page` so two captions and the invitation fit one row in the docs column.
+    list: "gap-x-10",
     link: "opacity-85 transition-opacity hover:opacity-100",
     logo: "h-9",
-    description: "mt-1.5 text-xs text-white/45",
+    description: "mt-1.5 max-w-58 text-xs text-balance text-white/45",
     button: "h-9 px-3.5 text-xs",
   },
 } as const;
@@ -354,7 +359,7 @@ export function SponsorsSection({ placement }: SponsorsSectionProps) {
         />
         {t("sponsor.sponsors")}
       </h2>
-      <ul className="flex flex-wrap items-center gap-x-14 gap-y-8">
+      <ul className={`flex flex-wrap items-start gap-y-8 ${style.list}`}>
         {SPONSORS.map((sponsor) => (
           <li key={sponsor.url}>
             <a

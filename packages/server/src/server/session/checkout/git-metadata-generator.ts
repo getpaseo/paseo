@@ -96,8 +96,9 @@ export function createGitMetadataGenerator(deps: {
   workspaceGitService: GitMetadataDiffSource;
   generation: StructuredTextGeneration;
   logger: GitMetadataLogger;
+  readHostInstructions?: () => string | undefined;
 }): GitMetadataGenerator {
-  const { workspaceGitService, generation, logger } = deps;
+  const { workspaceGitService, generation, logger, readHostInstructions } = deps;
 
   async function generateOrFallback<T>(
     request: StructuredTextGenerationRequest<T>,
@@ -129,6 +130,7 @@ export function createGitMetadataGenerator(deps: {
     return buildMetadataPrompt({
       cwd: input.cwd,
       workspaceGitService,
+      hostInstructions: readHostInstructions?.(),
       contract: input.contract,
       styles: [{ configKey: input.styleConfigKey, default: input.styleDefault }],
       after: [

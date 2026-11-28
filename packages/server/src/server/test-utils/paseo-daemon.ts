@@ -12,16 +12,19 @@ import {
 } from "../bootstrap.js";
 import type { AgentClient, AgentProvider } from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "./fake-agent-client.js";
-import type { PushNotificationSender } from "../push/index.js";
+import type { PushNotifications, PushNotificationSender } from "../push/index.js";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
+import type { TailscaleNetwork } from "../listeners.js";
 
 interface TestPaseoDaemonOptions {
   daemonVersion?: string;
   desktopManaged?: boolean;
   downloadTokenTtlMs?: number;
   corsAllowedOrigins?: string[];
+  hostnames?: PaseoDaemonConfig["hostnames"];
   listen?: string;
   listenPort?: number;
+  getTailscaleNetwork?: () => TailscaleNetwork;
   logger?: Parameters<typeof createPaseoDaemon>[1];
   mcpEnabled?: boolean;
   mcpDebug?: boolean;
@@ -35,6 +38,7 @@ interface TestPaseoDaemonOptions {
   relayConfigCapability?: boolean;
   agentClients?: Partial<Record<AgentProvider, AgentClient>>;
   providerOverrides?: PaseoDaemonConfig["providerOverrides"];
+  providerCatalogRefreshTimeoutMs?: PaseoDaemonConfig["providerCatalogRefreshTimeoutMs"];
   paseoHomeRoot?: string;
   staticDir?: string;
   cleanup?: boolean;
@@ -47,6 +51,7 @@ interface TestPaseoDaemonOptions {
   dictationFinalTimeoutMs?: number;
   auth?: PaseoDaemonConfig["auth"];
   pushNotificationSender?: PushNotificationSender;
+  pushNotifications?: PushNotifications;
   serviceProxy?: PaseoDaemonConfig["serviceProxy"];
   webUi?: PaseoDaemonConfig["webUi"];
   trustedProxies?: PaseoDaemonConfig["trustedProxies"];
@@ -110,6 +115,7 @@ export async function createTestPaseoDaemon(
       await prepareTestDaemonConfig(options);
     const logger = options.logger ?? pino({ level: "silent" });
     const daemon = await createPaseoDaemon(config, logger, {
+      getTailscaleNetwork: options.getTailscaleNetwork,
       builtinPlugins: options.builtinPlugins ?? new BuiltinPluginLoader(undefined, []),
       lazyTerminalWorker: options.lazyTerminalWorker ?? true,
       serverFeatureOverrides: {
@@ -195,13 +201,14 @@ async function prepareTestDaemonConfig(
     daemonVersion: options.daemonVersion,
     desktopManaged: options.desktopManaged,
     corsAllowedOrigins: options.corsAllowedOrigins ?? [],
-    hostnames: true,
+    hostnames: options.hostnames ?? true,
     mcpEnabled: options.mcpEnabled ?? true,
     staticDir,
     mcpDebug: options.mcpDebug ?? false,
     isDev: options.isDev,
     agentClients: options.agentClients ?? createTestAgentClients(),
     providerOverrides: options.providerOverrides,
+    providerCatalogRefreshTimeoutMs: options.providerCatalogRefreshTimeoutMs,
     agentStoragePath: path.join(paseoHome, "agents"),
     relayEnabled: options.relayEnabled ?? false,
     relayEndpoint: options.relayEndpoint ?? "relay.paseo.sh:443",
@@ -211,6 +218,7 @@ async function prepareTestDaemonConfig(
     appBaseUrl: "https://app.paseo.sh",
     auth: options.auth,
     pushNotificationSender: options.pushNotificationSender,
+    pushNotifications: options.pushNotifications,
     serviceProxy: options.serviceProxy,
     webUi: options.webUi,
     trustedProxies: options.trustedProxies,

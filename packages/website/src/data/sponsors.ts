@@ -25,7 +25,7 @@ export interface Sponsor {
   url: string;
   /** Paths under `public/`, one per ground. Use the sponsor's official lockup. */
   logo: { onDark: string; onLight: string };
-  /** What the product is, in a few words from the sponsor's own site. Shown under the logo. */
+  /** What the product is, in the sponsor's own words. Shown under the logo, wrapped to its width. */
   description: string;
 }
 
@@ -37,7 +37,16 @@ export const SPONSORS: ReadonlyArray<Sponsor> = [
       onDark: "/sponsors/hoplite-on-dark.svg",
       onLight: "/sponsors/hoplite-on-light.svg",
     },
-    description: "Cloud coding agents",
+    description: "Hoplite runs swarms of coding agents in the cloud.",
+  },
+  {
+    name: "Encore",
+    url: "https://encore.dev",
+    logo: {
+      onDark: "/sponsors/encore-on-dark.svg",
+      onLight: "/sponsors/encore-on-light.svg",
+    },
+    description: "Encore lets AI agents ship to production safely, at scale, in your own cloud.",
   },
 ];
 

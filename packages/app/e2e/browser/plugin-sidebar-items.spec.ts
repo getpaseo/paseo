@@ -372,6 +372,25 @@ test.describe("Plugin sidebar items", () => {
     await expect(page.getByText("Plugin failed", { exact: false })).toHaveCount(0);
   });
 
+  test("a plugin screen keeps the sidebar toggle before its title", async ({ page }) => {
+    await page.setViewportSize(WIDE);
+    await gotoWorkspace(page, workspaceId);
+    await expect(headerRow(page, SHOWCASE_PLUGIN_ID, "deploys")).toBeVisible({ timeout: 30_000 });
+    await runCommand(page, "Open plugin workspaces");
+    await expect(screenTitle(page)).toHaveText("Workspaces");
+    await page.keyboard.press("ControlOrMeta+b");
+    await expect(page.getByTestId("sidebar-global-new-workspace")).not.toBeVisible();
+
+    await expect(visibleTestId(page, "menu-button")).toBeVisible();
+    const toggle = await boxOf(visibleTestId(page, "menu-button"));
+    const title = await boxOf(screenTitle(page));
+    expect(toggle.x + toggle.width).toBeLessThanOrEqual(title.x);
+    await qaScreenshot(page, "plugin-screen-sidebar-collapsed");
+
+    await visibleTestId(page, "menu-button").click();
+    await expect(page.getByTestId("sidebar-global-new-workspace")).toBeVisible();
+  });
+
   test("a header row's shortcut hint presses the row", async ({ page }) => {
     await page.setViewportSize(WIDE);
     await gotoWorkspace(page, workspaceId);

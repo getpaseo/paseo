@@ -35,6 +35,7 @@ import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import type { LocalSpeechModel } from "@getpaseo/protocol/speech/rpc-schemas";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
+import type { NotificationPreferences } from "@getpaseo/protocol/notification-preferences";
 import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
 import {
   AgentCreateFailedStatusPayloadSchema,
@@ -61,6 +62,7 @@ import type {
   CreatePaseoWorktreeRequest,
   FileDownloadTokenResponse,
   FileUploadResponse,
+  NetworkTunnelCreateTicketPayload,
   FileExplorerResponse,
   FileVersion,
   FileWriteResult,
@@ -124,6 +126,7 @@ import type {
   ProviderInstallationCheckUpdatesResponseMessage,
   UsageReportEntry,
   DaemonGetStatusResponse,
+  DaemonTailscaleSetResponse,
   DaemonGetPairingOfferResponse,
   DaemonConfigReloadResponse,
   DiagnosticsResponse,
@@ -474,6 +477,13 @@ export interface DaemonClientConfig {
   runtimeMetricsWindowMs?: number;
   trace?: DaemonClientTrace;
   capabilities?: Partial<Record<ClientCapability, unknown>>;
+  /**
+   * Ping the daemon every 10 s and reconnect after missed replies (default true). Turn it off
+   * only where the transport reports its own loss (a plugin's IPC channel, an in-process
+   * channel): there a ping cannot find a dead link the channel would not, and it costs both
+   * processes a wakeup per client every 10 s.
+   */
+  livenessHeartbeat?: boolean;
 }
 
 export interface DaemonClientTrace {
@@ -836,6 +846,7 @@ export interface ShutdownServerOptions {
   keepTerminals?: boolean;
 }
 export interface DaemonStatusOptions {
+  includeProviders?: boolean;
   requestId?: string;
   timeout?: number;
 }
@@ -1183,6 +1194,8 @@ function toTimeoutError(error: unknown, label: string, timeoutMs: number): Error
 const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
 const DEFAULT_SESSION_RPC_TIMEOUT_MS = 60_000;
+// The daemon allows 90s per provider; retain its result through the delivery margin.
+const RECENT_PROVIDER_SESSIONS_TIMEOUT_MS = 100_000;
 const PUSH_TOKEN_REVOCATION_TIMEOUT_MS = 2_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 const DEFAULT_LIVENESS_TIMEOUT_MS = 5000;
@@ -2644,10 +2657,11 @@ export class DaemonClient {
     });
   }
 
-  registerPushToken(token: string): void {
+  registerPushToken(token: string, preferences?: NotificationPreferences): void {
     this.sendSessionMessage({
       type: "register_push_token",
       token,
+      ...(preferences !== undefined ? { preferences } : {}),
     });
   }
 
@@ -2805,7 +2819,11 @@ export class DaemonClient {
   }
 
   private scheduleNextLivenessHeartbeat(): void {
-    if (this.connectionState.status !== "connected" || this.livenessHeartbeatTimer) {
+    if (
+      this.config.livenessHeartbeat === false ||
+      this.connectionState.status !== "connected" ||
+      this.livenessHeartbeatTimer
+    ) {
       return;
     }
     this.livenessHeartbeatTimer = setTimeout(() => {
@@ -3061,6 +3079,7 @@ export class DaemonClient {
     return this.sendRequest({
       requestId: resolvedRequestId,
       message,
+      timeout: RECENT_PROVIDER_SESSIONS_TIMEOUT_MS,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "fetch_recent_provider_sessions_response") {
@@ -5971,6 +5990,62 @@ export class DaemonClient {
     });
   }
 
+  private assertUploadTransportConnected(uploadTransport: DaemonTransport | null): void {
+    if (this.transport !== uploadTransport || this.connectionState.status !== "connected") {
+      throw new DaemonConnectionError("Connection changed during file upload");
+    }
+  }
+
+  private async streamUploadFileChunks(params: {
+    bytes: Uint8Array;
+    chunkSize: number;
+    requestId: string;
+    uploadTransport: DaemonTransport | null;
+    isSettled: () => boolean;
+    responsePromise: Promise<FileUploadResult>;
+    sendFrame: (frame: Uint8Array) => Promise<unknown>;
+  }): Promise<boolean> {
+    const { bytes, chunkSize, requestId, uploadTransport, isSettled, responsePromise, sendFrame } =
+      params;
+    const unpaced = uploadTransport?.supportsDrain === false;
+    // On transports without bufferedAmount backpressure (React Native / Android OkHttp),
+    // confirm a 1 MiB window has drained via a correlated session ping/pong before queuing
+    // more chunks so OkHttp's 16 MiB outbound queue never overflows and closes with code 1001.
+    const unpacedFlushWindowBytes = 1024 * 1024;
+    let unpacedBytesSinceFlush = 0;
+
+    for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
+      // Native WebSocket.send encodes binary synchronously. Let rendering and
+      // incoming messages run between bounded pieces on every platform.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      if (isSettled()) return true;
+      this.assertUploadTransportConnected(uploadTransport);
+      const chunkEnd = Math.min(offset + chunkSize, bytes.byteLength);
+      const chunk = bytes.subarray(offset, chunkEnd);
+      await sendFrame(
+        encodeFileTransferFrame({
+          opcode: FileTransferOpcode.FileChunk,
+          requestId,
+          payload: chunk,
+        }),
+      );
+      if (!unpaced) continue;
+      unpacedBytesSinceFlush += chunk.byteLength;
+      if (unpacedBytesSinceFlush < unpacedFlushWindowBytes || chunkEnd >= bytes.byteLength) {
+        continue;
+      }
+      unpacedBytesSinceFlush = 0;
+      if (isSettled()) return true;
+      this.assertUploadTransportConnected(uploadTransport);
+      const flushPing = this.ping({ timeoutMs: 0 });
+      void flushPing.catch(() => undefined);
+      await Promise.race([flushPing, responsePromise]);
+      if (isSettled()) return true;
+    }
+
+    return false;
+  }
+
   async uploadFile(input: FileUploadInput): Promise<FileUploadResult> {
     const bytes = asUint8Array(input.bytes);
     if (!bytes) {
@@ -5981,6 +6056,9 @@ export class DaemonClient {
     const uploadTransport = this.transport;
     const resolvedRequestId = this.createRequestId(input.requestId);
     const modifiedAt = input.modifiedAt ?? new Date().toISOString();
+    // Do not start the 60s RPC deadline while chunks are still streaming; slow uplinks can
+    // legitimately take longer than 60s to finish sending all chunks. The response deadline
+    // starts once FileEnd is sent.
     const responsePromise = this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message: {
@@ -5992,6 +6070,7 @@ export class DaemonClient {
         requestId: resolvedRequestId,
       },
       responseType: "file.upload.response",
+      timeout: 0,
       options: { skipQueue: true },
     });
 
@@ -6024,23 +6103,16 @@ export class DaemonClient {
       );
 
       if (settled) return await responsePromise;
-      const chunkSize = input.chunkSize ?? 128 * 1024;
-      for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
-        // Native WebSocket.send encodes binary synchronously. Let rendering and
-        // incoming messages run between bounded pieces on every platform.
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        if (settled) return await responsePromise;
-        if (this.transport !== uploadTransport || this.connectionState.status !== "connected") {
-          throw new DaemonConnectionError("Connection changed during file upload");
-        }
-        await sendFrame(
-          encodeFileTransferFrame({
-            opcode: FileTransferOpcode.FileChunk,
-            requestId: resolvedRequestId,
-            payload: bytes.subarray(offset, Math.min(offset + chunkSize, bytes.byteLength)),
-          }),
-        );
-      }
+      const settledDuringChunks = await this.streamUploadFileChunks({
+        bytes,
+        chunkSize: input.chunkSize ?? 128 * 1024,
+        requestId: resolvedRequestId,
+        uploadTransport,
+        isSettled: () => settled,
+        responsePromise,
+        sendFrame,
+      });
+      if (settledDuringChunks) return await responsePromise;
 
       await sendFrame(
         encodeFileTransferFrame({
@@ -6056,7 +6128,20 @@ export class DaemonClient {
       throw error;
     }
 
-    return responsePromise;
+    if (settled) return await responsePromise;
+    let responseDeadline: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const timeoutError = new DaemonConnectionError(
+        `No response to file.upload.request after ${DEFAULT_SESSION_RPC_TIMEOUT_MS}ms`,
+        "DAEMON_REQUEST_TIMEOUT",
+      );
+      responseDeadline = setTimeout(() => {
+        this.rejectWaitersForRequestId(resolvedRequestId, timeoutError);
+      }, DEFAULT_SESSION_RPC_TIMEOUT_MS);
+      return await responsePromise;
+    } finally {
+      if (responseDeadline !== null) clearTimeout(responseDeadline);
+    }
   }
 
   async requestDownloadToken(
@@ -6072,6 +6157,27 @@ export class DaemonClient {
         path,
       },
       responseType: "file_download_token_response",
+    });
+  }
+
+  /**
+   * Requests a short-lived single-use ticket for opening a dedicated binary
+   * network tunnel WebSocket against this daemon.
+   * Gated on `server_info.features.networkTunnel`.
+   */
+  async createNetworkTunnelTicket(requestId?: string): Promise<NetworkTunnelCreateTicketPayload> {
+    if (!this.isConnected) {
+      throw this.unavailableError();
+    }
+    // COMPAT(networkTunnel): added in v0.17.6, remove gate after 2027-05-26.
+    if (this.getLastServerInfoMessage()?.features?.networkTunnel !== true) {
+      throw Object.assign(new Error("Update the daemon to use the network tunnel"), {
+        code: "unsupported_capability",
+      });
+    }
+    return this.sendNamespacedCorrelatedSessionRequest<"network.tunnel.create_ticket.response">({
+      requestId,
+      message: { type: "network.tunnel.create_ticket.request" },
     });
   }
 
@@ -6231,6 +6337,17 @@ export class DaemonClient {
     });
   }
 
+  async setTailscaleEnabled(
+    enabled: boolean,
+    confirmed = false,
+  ): Promise<DaemonTailscaleSetResponse["payload"]> {
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "daemon.tailscale.set.request", enabled, confirmed },
+      responseType: "daemon.tailscale.set.response",
+    });
+  }
+
+  /** The Tailscale disconnect flag describes the connection used for this request. */
   async getDaemonStatus(options?: DaemonStatusOptions): Promise<DaemonStatusPayload> {
     if (!this.lastServerInfoMessage) throw new DaemonConnectionError("Transport not connected");
     if (this.lastServerInfoMessage?.features?.daemonStatusRpc !== true) {
@@ -6240,6 +6357,7 @@ export class DaemonClient {
       requestId: options?.requestId,
       message: {
         type: "daemon.get_status.request",
+        includeProviders: options?.includeProviders,
       },
       responseType: "daemon.get_status.response",
       timeout: options?.timeout,

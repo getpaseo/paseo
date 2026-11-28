@@ -9,6 +9,7 @@ import { ProviderLineReader, ProviderStreamLimitError } from "../jsonl-frame-dec
 // A measured long-thread resume was 19.75 MB; preserve the existing 32 MiB fixture
 // with 4x margin for longer threads. This is provider stdout, not the client protocol.
 export const CODEX_PROVIDER_LINE_BYTES = 128 * 1024 * 1024;
+export const CODEX_MCP_STARTUP_STATUS_METHOD = "mcpServer/startupStatus/updated";
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 const APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
@@ -478,7 +479,11 @@ export class CodexAppServerClient {
     }
 
     if (isJsonRpcNotification(raw)) {
-      this.traceRawEvent(raw);
+      // Startup errors can include credentials and remote response bodies.
+      // The session logs a safe summary for this method.
+      if (raw.method !== CODEX_MCP_STARTUP_STATUS_METHOD) {
+        this.traceRawEvent(raw);
+      }
       this.notificationHandler?.(raw.method, raw.params);
     }
   }

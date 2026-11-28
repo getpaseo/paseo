@@ -6,6 +6,7 @@ import type {
   OmpStartSessionInput,
 } from "../runtime.js";
 import type {
+  OmpExtensionUiResponse,
   OmpRpcHostToolDefinition,
   OmpRpcHostToolResult,
   OmpRpcHostToolUpdate,
@@ -159,7 +160,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
   readonly canceledExtensionUiRequests: string[] = [];
   readonly extensionUiResponses: Array<{
     id: string;
-    response: { value?: string; confirmed?: boolean; cancelled?: boolean };
+    response: OmpExtensionUiResponse;
   }> = [];
   setModelResult: OmpModel | null = null;
   models: OmpModel[] = [];
@@ -468,10 +469,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
     this.handoffRequests.push(customInstructions ? { customInstructions } : {});
   }
 
-  respondToExtensionUiRequest(
-    id: string,
-    response: { value?: string; confirmed?: boolean; cancelled?: boolean },
-  ): void {
+  respondToExtensionUiRequest(id: string, response: OmpExtensionUiResponse): void {
     this.extensionUiResponses.push({ id, response });
   }
 

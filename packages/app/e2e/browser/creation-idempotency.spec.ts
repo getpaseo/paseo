@@ -30,7 +30,7 @@ import {
   expectWorkspaceOpensWithTerminalTab,
   seedTerminalProfiles,
   holdTerminalCreationResponse,
-  pauseNextImageEncoding,
+  pauseNextImageRead,
 } from "../support/helpers/new-workspace-launch";
 
 test("an uncertain background agent cannot lose its identity through a terminal launch after reload", async ({
@@ -555,7 +555,7 @@ for (const outcome of ["completed", "failed"] as const) {
   });
 }
 
-test("chat admission keeps its prepared ID when a late terminal retires it during image encoding", async ({
+test("chat admission keeps its prepared ID when a late terminal retires it during image upload", async ({
   creation,
   startup,
   page,
@@ -563,7 +563,7 @@ test("chat admission keeps its prepared ID when a late terminal retires it durin
   test.setTimeout(120_000);
   const terminal = await holdTerminalCreationResponse(page);
   const client = await connectNewWorkspaceDaemonClient();
-  let encoding: Awaited<ReturnType<typeof pauseNextImageEncoding>> | undefined;
+  let imageRead: Awaited<ReturnType<typeof pauseNextImageRead>> | undefined;
   try {
     await creation.openWorkspaceForm("local");
     const before = new Set((await client.fetchWorkspaces()).entries.map((entry) => entry.id));
@@ -583,16 +583,16 @@ test("chat admission keeps its prepared ID when a late terminal retires it durin
     await creation.returnToWorkspaceForm();
     await selectLaunchOption(page, "chat");
     await expectAttachmentPill(page, "composer-image-attachment-pill");
-    encoding = await pauseNextImageEncoding(page);
+    imageRead = await pauseNextImageRead(page);
     await page.getByRole("button", { name: "Create", exact: true }).click();
-    await encoding.wait();
+    await imageRead.wait();
     terminal.release();
     await page.waitForFunction(
       (key) =>
         JSON.parse(localStorage.getItem("paseo-drafts")!).state.creationIdByDraftKey[key] === null,
       scopeKey,
     );
-    await encoding.release();
+    await imageRead.release();
     await creation.expectAgentStillStarting();
     const operation = await page.evaluate(
       (key) => JSON.parse(localStorage.getItem(`draft-creation:${key}`)!),
@@ -621,7 +621,7 @@ test("chat admission keeps its prepared ID when a late terminal retires it durin
     ).toHaveLength(1);
   } finally {
     terminal.release();
-    await encoding?.release();
+    await imageRead?.release();
     await startup.release();
     await client.close();
   }

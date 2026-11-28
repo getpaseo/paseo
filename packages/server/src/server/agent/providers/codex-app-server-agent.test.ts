@@ -1470,6 +1470,31 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test.each(["thread/start", "thread/resume"] as const)(
+    "%s appends plugin instructions to the developer instructions configured in Codex",
+    async (method) => {
+      const appServer = createFakeCodexAppServer({
+        "config/read": () => ({ config: { developer_instructions: "Configured role" } }),
+      });
+      const provider = createProviderWithFakeAppServer(appServer);
+      const config = { pluginAppendSystemPrompt: ["Plugin instructions"] };
+      const session =
+        method === "thread/start"
+          ? await provider.createSession(createConfig(config))
+          : await provider.resumeSession({ sessionId: "saved-thread" }, config);
+      try {
+        await session.startTurn("hello");
+        await appServer.waitForTurnStart();
+        expect(
+          appServer.requests().find((request) => request.method === method)?.params,
+        ).toMatchObject({ developerInstructions: "Configured role\n\nPlugin instructions" });
+        appServer.assertNoErrors();
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   test("reopen injects current instructions once, including an explicit empty snapshot", async () => {
     const handlers = {
       initialize: () => ({ userAgent: "codex/0.165.0" }),
@@ -1767,6 +1792,89 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("injects MCP servers as per-server dotted overrides so alias -c mcp_servers.* entries survive", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = await createProviderWithFakeAppServer(appServer).createSession(
+      createConfig({
+        mcpServers: {
+          paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1" },
+          "plugin-tool": { type: "stdio", command: "node", args: ["server.js"] },
+        },
+      }),
+    );
+    try {
+      await session.startTurn("hello");
+      const threadStart = appServer.requests().find((req) => req.method === "thread/start");
+      const startConfig = (threadStart?.params as { config?: Record<string, unknown> } | undefined)
+        ?.config;
+      expect(startConfig).toEqual({
+        "mcp_servers.paseo": {
+          url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+        },
+        "mcp_servers.plugin-tool": {
+          command: "node",
+          args: ["server.js"],
+        },
+      });
+      expect(startConfig).not.toHaveProperty("mcp_servers");
+      appServer.completeTurn();
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("omits mcp_servers from thread/start config when mcpServers is empty", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = await createProviderWithFakeAppServer(appServer).createSession(
+      createConfig({ mcpServers: {} }),
+    );
+    try {
+      await session.startTurn("hello");
+      const threadStart = appServer.requests().find((req) => req.method === "thread/start");
+      expect(
+        (threadStart?.params as { config?: Record<string, unknown> } | undefined)?.config,
+      ).toBeUndefined();
+      appServer.completeTurn();
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("falls back to whole-table mcp_servers when an injected server name contains a dot", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = await createProviderWithFakeAppServer(appServer).createSession(
+      createConfig({
+        mcpServers: {
+          paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1" },
+          "my.dotted": { type: "http", url: "http://127.0.0.1:8080/mcp" },
+        },
+      }),
+    );
+    try {
+      await session.startTurn("hello");
+      const threadStart = appServer.requests().find((req) => req.method === "thread/start");
+      const startConfig = (threadStart?.params as { config?: Record<string, unknown> } | undefined)
+        ?.config;
+      expect(startConfig).toEqual({
+        mcp_servers: {
+          paseo: {
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+          },
+          "my.dotted": {
+            url: "http://127.0.0.1:8080/mcp",
+          },
+        },
+      });
+      expect(Object.keys(startConfig ?? {})).toEqual(["mcp_servers"]);
+      appServer.completeTurn();
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("preapproves only granted tools on the injected Codex MCP server", async () => {
     const session = createSession({
       modeId: undefined,
@@ -1788,21 +1896,27 @@ describe("Codex app-server provider", () => {
 
     await session.startTurn("finish");
 
-    const turnStart = request.mock.calls.find(([method]) => method === "turn/start")?.[1];
+    const turnStart = request.mock.calls.find(([method]) => method === "turn/start")?.[1] as {
+      sandboxPolicy?: unknown;
+      config?: Record<string, unknown>;
+    };
     expect(turnStart).toMatchObject({
       sandboxPolicy: { type: "readOnly" },
       config: {
         sandbox_mode: "read-only",
-        mcp_servers: {
-          hub: {
-            enabled_tools: ["finish_execution"],
-            default_tools_approval_mode: "prompt",
-            tools: { finish_execution: { approval_mode: "approve" } },
-          },
+        "mcp_servers.hub": {
+          url: "http://127.0.0.1/hub",
+          enabled_tools: ["finish_execution"],
+          default_tools_approval_mode: "prompt",
+          tools: { finish_execution: { approval_mode: "approve" } },
         },
       },
     });
-    expect(turnStart).not.toHaveProperty("config.mcp_servers.hub.tools.reply");
+    expect(turnStart.config).not.toHaveProperty("mcp_servers");
+    expect(
+      (turnStart.config?.["mcp_servers.hub"] as { tools?: Record<string, unknown> } | undefined)
+        ?.tools,
+    ).not.toHaveProperty("reply");
   });
 
   test("passes ephemeral: true to thread/start when constructed as ephemeral", async () => {
@@ -2466,6 +2580,60 @@ describe("Codex app-server provider", () => {
     await session.close();
     appServer.assertNoErrors();
   });
+
+  test.each(["interactive", "history"] as const)(
+    "spawns a wrapped %s resume through the launch wrap",
+    async (purpose) => {
+      const spawned: Array<{ command: string; args: string[]; wrap?: readonly string[] }> = [];
+      let resumes = 0;
+      // History reads the archived thread; an interactive resume unarchives it and resumes again.
+      const appServer = createFakeCodexAppServer({
+        "thread/loaded/list": () => ({ data: [] }),
+        "thread/resume": () =>
+          resumes++ === 0
+            ? Promise.reject(new Error(archivedThreadErrorMessage("archived-thread-id")))
+            : { thread: { id: "archived-thread-id" } },
+        "thread/unarchive": () => ({ thread: { id: "archived-thread-id" } }),
+        "thread/read": () => ({ thread: { turns: [] } }),
+      });
+      const provider = new CodexAppServerAgentClient(createTestLogger(), undefined, {
+        appServerProcess: {
+          resolvePrefix: async () => ({
+            command: "/opt/codex/bin/codex",
+            args: ["--profile", "x"],
+          }),
+          spawn: ({ command, args, options }) => {
+            spawned.push({ command, args, wrap: options.wrap });
+            return appServer.child;
+          },
+        },
+      });
+      const internals = castInternals<{
+        goalsEnabledPromise: Promise<boolean> | null;
+        autoReviewEnabledPromise: Promise<boolean> | null;
+      }>(provider);
+      internals.goalsEnabledPromise = Promise.resolve(false);
+      internals.autoReviewEnabledPromise = Promise.resolve(false);
+
+      const session = await provider.resumeSession(
+        archivedThreadHandle(),
+        undefined,
+        { wrap: ["/opt/sandbox/bin/run", "--profile", "a b"] },
+        { purpose },
+      );
+
+      expect(spawned.length).toBeGreaterThan(0);
+      for (const input of spawned) {
+        expect(input).toEqual({
+          command: "/opt/codex/bin/codex",
+          args: ["--profile", "x", "app-server"],
+          wrap: ["/opt/sandbox/bin/run", "--profile", "a b"],
+        });
+      }
+      await session.close();
+      appServer.assertNoErrors();
+    },
+  );
 
   test("unarchives Codex when an active Paseo agent resumes an archived thread", async () => {
     const threadRequests: string[] = [];
@@ -3180,13 +3348,12 @@ describe("Codex app-server provider", () => {
       expect(forkConfigs).toEqual([
         expect.objectContaining({
           ...customCodexConfig,
-          mcp_servers: {
-            paseo: expect.objectContaining({
-              url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
-            }),
-          },
+          "mcp_servers.paseo": expect.objectContaining({
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+          }),
         }),
       ]);
+      expect(forkConfigs[0]).not.toHaveProperty("mcp_servers");
       appServer.assertNoErrors();
       await session.close();
     },

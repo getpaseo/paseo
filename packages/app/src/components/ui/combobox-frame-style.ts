@@ -10,6 +10,17 @@ export interface DesktopFrameStyleInput {
   availableHeight: number | undefined;
 }
 
+function resolveFixedHeight(
+  desktopFixedHeight: number | undefined,
+  availableHeight: number | undefined,
+): number | null {
+  if (desktopFixedHeight == null) return null;
+  if (typeof availableHeight === "number") {
+    return Math.min(availableHeight, desktopFixedHeight);
+  }
+  return desktopFixedHeight;
+}
+
 export function buildDesktopFrameStyle(input: DesktopFrameStyleInput): StyleProp<ViewStyle> {
   const {
     desktopMinWidth,
@@ -20,14 +31,15 @@ export function buildDesktopFrameStyle(input: DesktopFrameStyleInput): StyleProp
     shouldHideDesktopContent,
     availableHeight,
   } = input;
+  const resolvedFixedHeight = resolveFixedHeight(desktopFixedHeight, availableHeight);
   const fixedHeightStyle =
-    desktopFixedHeight != null
-      ? { minHeight: desktopFixedHeight, maxHeight: desktopFixedHeight }
+    resolvedFixedHeight != null
+      ? { minHeight: resolvedFixedHeight, maxHeight: resolvedFixedHeight }
       : null;
   const hiddenStyle = shouldHideDesktopContent ? { opacity: 0 } : null;
   const availableHeightStyle =
-    typeof availableHeight === "number"
-      ? { maxHeight: Math.min(availableHeight, desktopFixedHeight ?? 400) }
+    resolvedFixedHeight == null && typeof availableHeight === "number"
+      ? { maxHeight: Math.min(availableHeight, 400) }
       : null;
   const floor = Math.max(desktopMinWidth ?? 0, referenceWidth ?? 200);
   const widthStyle = desktopLockWidth
