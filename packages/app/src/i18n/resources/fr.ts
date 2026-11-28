@@ -2885,6 +2885,14 @@ export const fr: TranslationResources = {
         description: "Afficher un plan pour naviguer entre les prompts",
       },
       sidebar: {
+        workspaces: {
+          title: "Espaces de travail",
+          sortLabel: "Tri des espaces de travail",
+          manualHint:
+            "Choisissez Manuel pour réorganiser les espaces de travail par glisser-déposer dans chaque projet.",
+          projectHint:
+            "Le tri des espaces de travail s’applique lorsque le regroupement se fait par projet.",
+        },
         view: {
           title: "Vue de la barre latérale",
           label: "Vue",

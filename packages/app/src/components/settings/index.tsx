@@ -144,18 +144,22 @@ export function SettingsSwitch({
   );
 }
 
+type AppSettingsOption<Value extends string> = SettingsSelectProps<Value>["options"][number] & {
+  disabled?: boolean;
+};
+
 function SettingsOption<Value extends string>({
   option,
   selected,
   onValueChange,
 }: {
-  option: { label: string; value: Value };
+  option: AppSettingsOption<Value>;
   selected: boolean;
   onValueChange(value: Value): void;
 }) {
   const select = useCallback(() => onValueChange(option.value), [onValueChange, option.value]);
   return (
-    <DropdownMenuItem selected={selected} onSelect={select}>
+    <DropdownMenuItem selected={selected} onSelect={select} disabled={option.disabled}>
       {option.label}
     </DropdownMenuItem>
   );
@@ -167,7 +171,9 @@ export function SettingsSelect<Value extends string>({
   onValueChange,
   disabled,
   ...row
-}: SettingsSelectProps<Value> & AppRowExtras) {
+}: Omit<SettingsSelectProps<Value>, "options"> & {
+  options: readonly AppSettingsOption<Value>[];
+} & AppRowExtras) {
   const selectedLabel = options.find((option) => option.value === value)?.label ?? value;
   return (
     <SettingsRow {...row}>

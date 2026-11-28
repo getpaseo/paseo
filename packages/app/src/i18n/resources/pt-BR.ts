@@ -2867,6 +2867,14 @@ export const ptBR: TranslationResources = {
         description: "Mostrar uma estrutura para navegar entre prompts",
       },
       sidebar: {
+        workspaces: {
+          title: "Espaços de trabalho",
+          sortLabel: "Ordenação dos espaços de trabalho",
+          manualHint:
+            "Escolha Manual para arrastar e reordenar os espaços de trabalho dentro de cada projeto.",
+          projectHint:
+            "A ordenação dos espaços de trabalho se aplica quando eles são agrupados por projeto.",
+        },
         view: {
           title: "Visualização da barra lateral",
           label: "Visualização",

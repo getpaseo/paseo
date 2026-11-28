@@ -2792,6 +2792,12 @@ export const zhCN: TranslationResources = {
         description: "显示用于在提示词之间跳转的大纲",
       },
       sidebar: {
+        workspaces: {
+          title: "工作区",
+          sortLabel: "工作区排序",
+          manualHint: "选择「手动」后，可拖动工作区调整其在各项目内的顺序。",
+          projectHint: "工作区排序在按项目分组时生效。",
+        },
         view: {
           title: "侧边栏视图",
           label: "视图",

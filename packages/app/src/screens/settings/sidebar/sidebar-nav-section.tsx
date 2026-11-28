@@ -31,6 +31,7 @@ import { pluginIconComponent } from "@/plugins/icons";
 import { useSidebarNavItems } from "@/sidebar-nav/use-sidebar-nav-items";
 import { settingsStyles } from "@/styles/settings";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { SidebarWorkspacesSection } from "./sidebar-workspaces-section";
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
@@ -184,6 +185,7 @@ function SidebarItemsCard({ section }: { section: SidebarSection }): ReactElemen
 export function SidebarNavSection(): ReactElement {
   return (
     <>
+      <SidebarWorkspacesSection />
       <SidebarViewPicker />
       <SidebarItemsCard section="header" />
       <SidebarItemsCard section="footer" />

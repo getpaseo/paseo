@@ -96,19 +96,12 @@ export interface SidebarWorkspacesListResult {
   refreshAll: () => void;
 }
 
-export function useSidebarWorkspacesList(options?: {
-  hostFilters?: readonly string[];
-  enabled?: boolean;
-}): SidebarWorkspacesListResult {
-  const runtime = getHostRuntimeStore();
+export function useSidebarWorkspaceScope(hostFilterOverride?: readonly string[]) {
   const allHosts = useHosts();
   const hostRegistryLoaded = useHostRegistryLoaded();
   const allServerIds = useMemo(() => allHosts.map((h) => h.serverId), [allHosts]);
-
   const storeHostFilters = useSidebarViewStore((state) => state.hostFilters);
-  const hostFilters = options?.hostFilters ?? storeHostFilters;
-  const reconcileHostFilters = useSidebarViewStore((state) => state.reconcileHostFilters);
-  const isActive = options?.enabled !== false;
+  const hostFilters = hostFilterOverride ?? storeHostFilters;
 
   const serverIds = useMemo(() => {
     if (hostFilters.length === 0) {
@@ -123,6 +116,32 @@ export function useSidebarWorkspacesList(options?: {
     }
     return matched;
   }, [allServerIds, hostFilters, hostRegistryLoaded]);
+  const directoryServerIds = useWorkspaceDirectoryServerIds(serverIds);
+  const sortSupport = useHostFeatureMap(directoryServerIds, "workspaceSortTimes");
+  const workspaceSortSupported = [...sortSupport.values()].every(Boolean);
+  return {
+    allServerIds,
+    hostRegistryLoaded,
+    serverIds,
+    directoryServerIds,
+    workspaceSortSupported,
+  };
+}
+
+export function useSidebarWorkspacesList(options?: {
+  hostFilters?: readonly string[];
+  enabled?: boolean;
+}): SidebarWorkspacesListResult {
+  const runtime = getHostRuntimeStore();
+  const {
+    allServerIds,
+    hostRegistryLoaded,
+    serverIds,
+    directoryServerIds,
+    workspaceSortSupported,
+  } = useSidebarWorkspaceScope(options?.hostFilters);
+  const reconcileHostFilters = useSidebarViewStore((state) => state.reconcileHostFilters);
+  const isActive = options?.enabled !== false;
   useEffect(() => {
     if (!isActive) return;
     const releases = serverIds.map((serverId) => runtime.acquireDirectoryDemand(serverId));
@@ -138,12 +157,8 @@ export function useSidebarWorkspacesList(options?: {
 
   const persistedProjectOrder = useSidebarOrderStore((state) => state.projectOrder ?? EMPTY_ORDER);
 
-  const directoryServerIds = useWorkspaceDirectoryServerIds(serverIds);
-
   const workspaceSort = useSidebarViewStore((state) => state.workspaceSort);
   const groupMode = useSidebarViewStore((state) => state.groupMode);
-  const sortSupport = useHostFeatureMap(directoryServerIds, "workspaceSortTimes");
-  const workspaceSortSupported = [...sortSupport.values()].every(Boolean);
   const sort =
     groupMode === "project" && (workspaceSort === "manual" || workspaceSortSupported)
       ? workspaceSort

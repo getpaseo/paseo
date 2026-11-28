@@ -2846,6 +2846,14 @@ export const ja: TranslationResources = {
         description: "プロンプト間を移動するためのアウトラインを表示します",
       },
       sidebar: {
+        workspaces: {
+          title: "ワークスペース",
+          sortLabel: "ワークスペースの並び順",
+          manualHint:
+            "「手動」を選ぶと、プロジェクト内でワークスペースをドラッグして並べ替えられます。",
+          projectHint:
+            "ワークスペースの並び順はプロジェクトごとにグループ化したときに適用されます。",
+        },
         view: {
           title: "サイドバーのビュー",
           label: "ビュー",

@@ -2885,6 +2885,14 @@ export const es: TranslationResources = {
         description: "Muestra un esquema para saltar entre instrucciones",
       },
       sidebar: {
+        workspaces: {
+          title: "Espacios de trabajo",
+          sortLabel: "Orden de los espacios de trabajo",
+          manualHint:
+            "Elige Manual para arrastrar y reordenar los espacios de trabajo dentro de cada proyecto.",
+          projectHint:
+            "El orden de los espacios de trabajo se aplica cuando se agrupan por proyecto.",
+        },
         view: {
           title: "Vista de la barra lateral",
           label: "Vista",

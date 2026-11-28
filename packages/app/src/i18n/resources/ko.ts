@@ -2835,6 +2835,13 @@ export const ko: TranslationResources = {
         description: "프롬프트 사이를 이동하기 위한 개요 표시",
       },
       sidebar: {
+        workspaces: {
+          title: "워크스페이스",
+          sortLabel: "워크스페이스 정렬",
+          manualHint:
+            "수동을 선택하면 각 프로젝트 안에서 워크스페이스를 끌어 순서를 바꿀 수 있습니다.",
+          projectHint: "워크스페이스 정렬은 프로젝트별로 그룹화할 때 적용됩니다.",
+        },
         view: {
           title: "사이드바 보기",
           label: "보기",

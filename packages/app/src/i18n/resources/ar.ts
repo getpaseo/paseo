@@ -2856,6 +2856,12 @@ export const ar: TranslationResources = {
         description: "عرض مخطط للتنقل بين المطالبات",
       },
       sidebar: {
+        workspaces: {
+          title: "مساحات العمل",
+          sortLabel: "ترتيب مساحات العمل",
+          manualHint: "اختر «يدوي» لسحب مساحات العمل وترتيبها داخل كل مشروع.",
+          projectHint: "يُطبَّق ترتيب مساحات العمل عند تجميعها حسب المشروع.",
+        },
         view: {
           title: "عرض الشريط الجانبي",
           label: "العرض",

@@ -5,6 +5,7 @@ import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
 import { getServerId } from "../support/helpers/server-id";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
+import { leaveSettings, openSidebarNavSettings } from "../support/helpers/sidebar-nav-settings";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
 async function rowTestIds(rows: Locator) {
@@ -407,7 +408,18 @@ test("Manual restores pre-beta order and keeps drag order across sorting and rel
     await waitForSidebarHydration(page);
     await restorePreBetaOrder(page, projectEquivalenceViewKey(seed.projectKey), keys);
     await expect.poll(() => rowTestIds(rows)).toEqual([ids[1], ids[0]]);
-    await selectWorkspaceSort(page, "Manual");
+    await openSidebarNavSettings(page);
+    await page.getByRole("button", { name: "Grouping: Project" }).click();
+    await page.getByRole("menuitem", { name: "Status", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Workspace sort: Created" })).toBeDisabled();
+    await page.getByRole("button", { name: "Grouping: Status" }).click();
+    await page.getByRole("menuitem", { name: "Project", exact: true }).click();
+    await page.getByRole("button", { name: "Workspace sort: Created" }).click();
+    await page.getByRole("menuitem", { name: "Manual", exact: true }).click();
+    await leaveSettings(page);
+    await page.getByLabel("Display preferences", { exact: true }).click();
+    await expect(page.getByRole("menuitem", { name: /^Sort/ })).toContainText("Manual");
+    await page.keyboard.press("Escape");
     await expect.poll(() => rowTestIds(rows)).toEqual(ids);
     await selectWorkspaceSort(page, "Created");
     await expect.poll(() => rowTestIds(rows)).toEqual([ids[1], ids[0]]);
@@ -422,6 +434,8 @@ test("Manual restores pre-beta order and keeps drag order across sorting and rel
     await reconnectSidebar(page);
     await selectWorkspaceSort(page, "Manual");
     await expect.poll(() => rowTestIds(rows)).toEqual(ids);
+    await openSidebarNavSettings(page);
+    await expect(page.getByRole("button", { name: "Workspace sort: Manual" })).toBeVisible();
   } finally {
     await seed.cleanup();
   }

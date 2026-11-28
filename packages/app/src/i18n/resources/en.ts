@@ -2954,6 +2954,12 @@ export const en = {
         description: "Show an outline for jumping between prompts",
       },
       sidebar: {
+        workspaces: {
+          title: "Workspaces",
+          sortLabel: "Workspace sort",
+          manualHint: "Choose Manual to drag workspaces into a custom order within each project.",
+          projectHint: "Workspace sort applies when grouping by project.",
+        },
         view: {
           title: "Sidebar view",
           label: "View",
