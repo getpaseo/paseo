@@ -2,6 +2,9 @@
 
 A voice-controlled terminal assistant that runs as a single local service.
 
+> This package README describes an early prototype. For current Paseo setup and development,
+> see the [repository README](../../README.md).
+
 ## Quick Start
 
 ```bash
@@ -24,7 +27,7 @@ npm run dev
 - **Vite Dev Server** (port 5173) - Hot-reload React UI in development
 - **WebSocket** (`/ws`) - Real-time bidirectional communication
 - **Agent** - STT → LLM → TTS pipeline with terminal control
-- **Daemon** - tmux-based terminal management (in-process)
+- **Daemon** - in-process terminal management using `node-pty`
 
 ## Development
 
@@ -57,7 +60,7 @@ npm start
 
 **⏳ In Progress** (Phase 3):
 
-- Terminal control (tmux integration)
+- Terminal control (`node-pty` integration)
 
 **📋 Planned** (Phases 4-9):
 
@@ -92,7 +95,7 @@ PASEO_HOME=~/.paseo-blue PASEO_LISTEN=127.0.0.1:7777 npm run dev
 
 - **Server**: Express, TypeScript, ws (WebSocket)
 - **Client**: React 18, Vite, TypeScript
-- **Terminal**: tmux (via child_process)
+- **Terminal**: `node-pty`
 - **AI**: OpenAI (LLM + TTS), Deepgram (STT)
 
 ## Testing
