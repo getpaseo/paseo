@@ -2,6 +2,7 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  planReview: en.planReview,
   pluginCombobox: {
     searching: "검색 중…",
     empty: "결과 없음",

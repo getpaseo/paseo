@@ -2,6 +2,7 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  planReview: en.planReview,
   pluginCombobox: {
     searching: "جارٍ البحث…",
     empty: "لا توجد نتائج",

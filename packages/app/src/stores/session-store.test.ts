@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
+import type { PendingPermission } from "@/types/shared";
 
 import {
   normalizeWorkspaceDescriptor,
@@ -133,6 +134,144 @@ function permutations<T>(values: readonly T[]): T[][] {
 function taskTexts(tasks: ReadonlyArray<{ text: string }>): string[] {
   return tasks.map((task) => task.text);
 }
+
+function planPermission(key: string, planText = "Plan v1", agentId = "agent-1"): PendingPermission {
+  return {
+    key,
+    agentId,
+    request: {
+      id: key,
+      provider: "codex",
+      name: "plan",
+      kind: "plan",
+      metadata: { acpPlanReview: true, planText },
+    },
+  };
+}
+
+describe("plan review state", () => {
+  it("retains the same model and draft across canonical replacement and client update", () => {
+    initializeTestSession();
+    const first = planPermission("request-1");
+    useSessionStore.getState().setPendingPermissions("test-server", new Map([[first.key, first]]));
+    const initial = useSessionStore.getState().sessions["test-server"]!.planReviews.get(first.key)!;
+    initial.setField("feedback", "Keep this draft");
+
+    useSessionStore
+      .getState()
+      .setPendingPermissions(
+        "test-server",
+        new Map([[first.key, planPermission(first.key, "Plan v2")]]),
+      );
+    const session = useSessionStore.getState().sessions["test-server"]!;
+    expect(session.planReviews.get(first.key)).toBe(initial);
+    expect(initial.lines).toEqual(["Plan v1"]);
+    expect(initial.getState().feedback).toBe("Keep this draft");
+
+    const client = {} as unknown as DaemonClient;
+    useSessionStore.getState().updateSessionClient("test-server", client, 2);
+    expect(useSessionStore.getState().sessions["test-server"]!.client).toBe(client);
+    expect(useSessionStore.getState().sessions["test-server"]!.planReviews.get(first.key)).toBe(
+      initial,
+    );
+    expect(initial.getState().feedback).toBe("Keep this draft");
+  });
+
+  it("creates a fresh model when the permission revision key changes", () => {
+    initializeTestSession();
+    useSessionStore
+      .getState()
+      .setPendingPermissions(
+        "test-server",
+        new Map([["revision-1", planPermission("revision-1")]]),
+      );
+    const original = useSessionStore
+      .getState()
+      .sessions["test-server"]!.planReviews.get("revision-1")!;
+    original.setField("feedback", "Old draft");
+    useSessionStore
+      .getState()
+      .setPendingPermissions(
+        "test-server",
+        new Map([["revision-2", planPermission("revision-2", "Plan v2")]]),
+      );
+    const current = useSessionStore
+      .getState()
+      .sessions["test-server"]!.planReviews.get("revision-2")!;
+    expect(current).not.toBe(original);
+    expect(current.getState().feedback).toBe("");
+    expect(original.getState().feedback).toBe("Old draft");
+  });
+
+  it("isolates equal permission keys across hosts", () => {
+    initializeTestSession();
+    useSessionStore.getState().initializeSession("test-server-2", null);
+    useSessionStore
+      .getState()
+      .setPendingPermissions(
+        "test-server",
+        new Map([["shared-key", planPermission("shared-key", "Host one")]]),
+      );
+    useSessionStore
+      .getState()
+      .setPendingPermissions(
+        "test-server-2",
+        new Map([["shared-key", planPermission("shared-key", "Host two")]]),
+      );
+    const first = useSessionStore
+      .getState()
+      .sessions["test-server"]!.planReviews.get("shared-key")!;
+    const second = useSessionStore
+      .getState()
+      .sessions["test-server-2"]!.planReviews.get("shared-key")!;
+    expect(second).not.toBe(first);
+    expect(first.lines).toEqual(["Host one"]);
+    expect(second.lines).toEqual(["Host two"]);
+  });
+
+  it("closes subscriptions when permissions are pruned or the session is cleared", () => {
+    initializeTestSession();
+    useSessionStore
+      .getState()
+      .setPendingPermissions("test-server", new Map([["pruned", planPermission("pruned")]]));
+    const pruned = useSessionStore.getState().sessions["test-server"]!.planReviews.get("pruned")!;
+    let pruneNotifications = 0;
+    pruned.subscribe(() => pruneNotifications++);
+    useSessionStore.getState().setPendingPermissions("test-server", new Map());
+    pruned.setField("feedback", "Closed");
+    expect(pruneNotifications).toBe(0);
+
+    useSessionStore
+      .getState()
+      .setPendingPermissions("test-server", new Map([["teardown", planPermission("teardown")]]));
+    const teardown = useSessionStore
+      .getState()
+      .sessions["test-server"]!.planReviews.get("teardown")!;
+    let teardownNotifications = 0;
+    teardown.subscribe(() => teardownNotifications++);
+    useSessionStore.getState().clearSession("test-server");
+    teardown.setField("feedback", "Closed");
+    expect(teardownNotifications).toBe(0);
+  });
+
+  it("does not create review models for generic permissions", () => {
+    initializeTestSession();
+    const generic: PendingPermission = {
+      ...planPermission("generic"),
+      request: {
+        id: "generic",
+        provider: "codex",
+        name: "write",
+        kind: "tool",
+        metadata: {},
+      },
+    };
+    useSessionStore
+      .getState()
+      .setPendingPermissions("test-server", new Map([[generic.key, generic]]));
+    expect(useSessionStore.getState().sessions["test-server"]!.planReviews.size).toBe(0);
+  });
+});
 
 describe("agent task state", () => {
   it("notifies the task subscriber only when its task snapshot changes", () => {

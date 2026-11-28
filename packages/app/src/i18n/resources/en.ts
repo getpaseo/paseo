@@ -1,6 +1,27 @@
 import { pluginGallery } from "./plugin-gallery";
 
 export const en = {
+  planReview: {
+    wholePlan: "Whole plan",
+    commentTarget: "Comment target",
+    comment: "Comment on these lines",
+    addComment: "Add comment",
+    lineRange: "Lines {{start}}–{{end}}",
+    removeComment: "Remove comment",
+    feedback: "Additional feedback",
+    feedbackBeforeApproval:
+      "Request changes to send your comments. Clear feedback before approving this revision.",
+    requestChanges: "Request changes",
+    approve: "Approve",
+    abandon: "Abandon plan",
+    submitting: "Sending plan decision…",
+    responseFailed: "Could not send your plan decision. Your comments are saved here. Retry.",
+    invalidRange: "Select lines within this plan (1–{{count}}).",
+    enterComment: "Enter a comment, or remove the empty comment.",
+    enterFeedback: "Add a comment or feedback before requesting changes.",
+    missingPlan: "Grok did not provide plan content. Request a complete plan before approving.",
+    updateHost: "Update this host to review Grok plans.",
+  },
   pluginCombobox: {
     searching: "Searching…",
     empty: "No results",

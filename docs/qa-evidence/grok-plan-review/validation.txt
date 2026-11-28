@@ -1,0 +1,339 @@
+QA command output captured on 2026-11-28. Node 22.20.0 / npm 10.
+Local absolute paths are redacted; test warnings are retained.
+
+
+=== Final repository format/typecheck/lint: npm run format && npm run typecheck && npm run lint ===
+
+From https://github.com/getpaseo/paseo
+ * branch                main       -> FETCH_HEAD
+   dbeb181f0..34d38a82d  main       -> upstream/main
+
+> paseo@0.18.1 format
+> oxfmt .
+
+Finished in 2539ms on 6529 files using 12 threads.
+
+> paseo@0.18.1 typecheck
+> npm run typecheck --workspaces --if-present
+
+
+> @getpaseo/builtin-plugins@0.18.1 typecheck
+> tsgo -p tsconfig.json --noEmit
+
+
+> @getpaseo/expo-two-way-audio@0.18.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/highlight@0.18.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/plugin@0.18.1 typecheck
+> tsgo --noEmit && npm run typecheck:examples
+
+
+> @getpaseo/plugin@0.18.1 typecheck:examples
+> npm --prefix ../../plugin-examples/markdown-panel install --ignore-scripts --no-audit --no-fund && tsgo -p tsconfig.examples.json --noEmit
+
+
+up to date in 231ms
+
+> @getpaseo/protocol@0.18.1 pretypecheck
+> npm run generate:validators
+
+
+> @getpaseo/protocol@0.18.1 generate:validators
+> node scripts/generate-validation-aot.mjs
+
+generated src/generated/validation/ws-outbound.aot.ts: envelope + 267 session message validators; src/generated/validation/message-defaults.ts: 50 outbound + 11 inbound default tables
+
+> @getpaseo/protocol@0.18.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/client@0.18.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/server@0.18.1 typecheck
+> tsgo -p tsconfig.server.typecheck.json --noEmit
+
+
+> @getpaseo/app@0.18.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/relay@0.18.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/website@0.18.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/desktop@0.18.1 typecheck
+> tsgo --noEmit -p tsconfig.json
+
+
+> @getpaseo/cli@0.18.1 typecheck
+> tsgo --noEmit
+
+
+> paseo@0.18.1 lint
+> oxlint
+
+Found 0 warnings and 0 errors.
+Finished in 1.6s on 5994 files with 177 rules using 12 threads.
+
+
+=== App focused tests: npx vitest run src/agent-stream/model.test.ts --bail=1 -t "plan review drafts"; npx vitest run src/i18n/resources.test.ts --bail=1 ===
+
+
+> paseo@0.18.1 format:files
+> oxfmt packages/app/src/agent-stream/plan-review packages/app/src/agent-stream/model.test.ts
+
+Finished in 25ms on 6 files using 12 threads.
+
+> @getpaseo/app@0.18.1 typecheck
+> tsgo --noEmit
+
+
+> paseo@0.18.1 lint
+> oxlint
+
+Found 0 warnings and 0 errors.
+Finished in 1.4s on 5994 files with 177 rules using 12 threads.
+
+ RUN  v4.1.7 <checkout>/packages/app
+
+(node:46996) [DEP0151] DeprecationWarning: Package <checkout>/node_modules/react-native-worklets/ has a "main" field set to "./lib/module/index", excluding the full filename and extension to the resolved file at "lib/module/index.js", imported from <checkout>/node_modules/react-native-reanimated/lib/module/initializers.js.
+ Automatic extension resolution of the "main" field is deprecated for ES modules.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+stderr | src/agent-stream/model.test.ts
+[DraftStore] Attachment garbage collection failed Error: IndexedDB is unavailable in this runtime.
+    at ensureIndexedDb (<checkout>/packages/app/src/attachments/web/indexeddb-attachment-store.ts:27:11)
+    at <checkout>/packages/app/src/attachments/web/indexeddb-attachment-store.ts:34:21
+    at new Promise (<anonymous>)
+    at openAttachmentDb (<checkout>/packages/app/src/attachments/web/indexeddb-attachment-store.ts:33:10)
+    at Object.garbageCollect (<checkout>/packages/app/src/attachments/web/indexeddb-attachment-store.ts:202:24)
+    at <checkout>/packages/app/src/attachments/service.ts:260:17
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+
+ ✓ |unit| src/agent-stream/model.test.ts (23 tests | 13 skipped) 5ms
+
+ Test Files  1 passed (1)
+      Tests  10 passed | 13 skipped (23)
+   Start at  20:56:16
+   Duration  8.59s (transform 7.15s, setup 25ms, import 8.49s, tests 5ms, environment 0ms)
+
+
+ RUN  v4.1.7 <checkout>/packages/app
+
+ ✓ |unit| src/i18n/resources.test.ts (40 tests) 509ms
+
+ Test Files  1 passed (1)
+      Tests  40 passed (40)
+   Start at  20:56:26
+   Duration  966ms (transform 329ms, setup 25ms, import 360ms, tests 509ms, environment 0ms)
+
+
+
+=== Existing Codex plan approval browser regression: npm run test:e2e -- --project=browser e2e/browser/codex-plan-approval.spec.ts ===
+
+> @getpaseo/app@0.18.1 test:e2e
+> playwright test --project=browser --project=browser e2e/browser/codex-plan-approval.spec.ts
+
+[metro] Skipping web setup: EXPO_NO_WEB_SETUP is enabled.
+[metro] Using src/app as the root directory for Expo Router.
+[metro] Waiting on http://localhost:61935
+[metro] Logs for your project will appear below.
+[metro] Web Bundled 1612ms packages/app/index.ts (6057 modules)
+[e2e] Metro warmed on port 61935
+
+Running 1 test using 1 worker
+
+(node:19819) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:19819) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[e2e] Worker 0 daemon started on port 61954, home: <temporary-path>
+[metro] Web Bundled 113ms packages/app/index.ts (1 module)
+[metro] Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[metro] Web  LOG  Running application "main" with appParams:
+[metro]  {"hydrate": undefined, "rootTag": "#root"}
+[metro] Development-level warnings: ON.
+[metro] Performance optimizations: OFF.
+[metro] Web  WARN  Require cycle: src/components/adaptive-modal-sheet.tsx -> src/components/ui/pane-content-toolbar.tsx -> src/components/ui/dropdown-menu.tsx -> src/components/ui/menu/index.ts -> src/components/ui/menu/menu-surface.tsx -> src/components/adaptive-modal-sheet.tsx
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/components/adaptive-modal-sheet.tsx -> src/components/ui/pane-content-toolbar.tsx -> src/components/ui/dropdown-menu.tsx -> src/components/ui/menu/index.ts -> src/components/ui/menu/menu-surface.tsx -> src/components/ui/menu/menu-item.tsx -> src/components/adaptive-modal-sheet.tsx
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/runtime/host-runtime.ts -> src/desktop/browser/automation/handler.ts -> src/desktop/browser/proxy/index.ts -> src/desktop/browser/proxy/internal/bridge.ts -> src/runtime/host-runtime.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/runtime/host-runtime.ts -> src/desktop/browser/automation/handler.ts -> src/desktop/browser/proxy/index.ts -> src/desktop/browser/proxy/internal/use-host-browser-proxy.ts -> src/runtime/host-runtime.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/runtime/host-runtime.ts -> src/desktop/browser/automation/handler.ts -> src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/client-runtime.ts -> src/plugins/client-state/api.ts -> src/runtime/host-runtime.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/client-runtime.ts -> src/plugins/client-state/api.ts -> src/stores/navigation-active-workspace-store/index.ts -> src/workspace-tabs/navigation.ts -> src/stores/workspace-layout-store.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/client-runtime.ts -> src/plugins/client-state/api.ts -> src/stores/navigation-active-workspace-store/index.ts -> src/stores/workspace-layout-store.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/runtime/host-runtime.ts -> src/desktop/browser/automation/handler.ts -> src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/client-runtime.ts -> src/plugins/client-state/api.ts -> src/plugins/client-state/source.ts -> src/plugins/client-state/connected-hosts.ts -> src/runtime/host-runtime.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/runtime/host-runtime.ts -> src/desktop/browser/automation/handler.ts -> src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/client-runtime.ts -> src/plugins/client-state/api.ts -> src/plugins/client-state/source.ts -> src/plugins/client-state/terminals.ts -> src/runtime/host-runtime.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/client-runtime.ts -> src/plugins/actions.ts -> src/plugins/workspace-panels/locations.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/client-runtime.ts -> src/plugins/navigation.ts -> src/stores/workspace-layout-store.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/runtime/host-runtime.ts -> src/desktop/browser/automation/handler.ts -> src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/evaluate.ts -> src/plugins/react-native/ui.ts -> src/plugins/react-native/markdown.tsx -> src/components/markdown/renderer.tsx -> src/agent-commands/index.tsx -> src/agent-commands/use-query.ts -> src/runtime/host-runtime.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/evaluate.ts -> src/plugins/react-native/ui.ts -> src/plugins/react-native/markdown.tsx -> src/components/markdown/renderer.tsx -> src/components/markdown/link-menu/index.tsx -> src/components/markdown/link-menu/internal/surface.tsx -> src/desktop/browser/open-url-in-workspace.ts -> src/stores/workspace-layout-store.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/runtime/host-runtime.ts -> src/desktop/browser/automation/handler.ts -> src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/evaluate.ts -> src/plugins/react-native/ui.ts -> src/plugins/react-native/markdown.tsx -> src/components/markdown/renderer.tsx -> src/components/markdown/link-menu/index.tsx -> src/components/markdown/link-menu/internal/surface.tsx -> src/workspace/file-actions/index.ts -> src/workspace/file-actions/use-workspace-file-actions.ts -> src/hooks/use-file-download.ts -> src/runtime/host-runtime.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/evaluate.ts -> src/plugins/react-native/ui.ts -> src/plugins/react-native/markdown.tsx -> src/components/markdown/renderer.tsx -> src/components/markdown/link-menu/index.tsx -> src/components/markdown/link-menu/internal/surface.tsx -> src/workspace/file-actions/index.ts -> src/workspace/file-actions/use-workspace-file-actions.ts -> src/workspace-tabs/explorer-sidebar.ts -> src/stores/workspace-layout-store.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/runtime/host-runtime.ts -> src/desktop/browser/automation/handler.ts -> src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/evaluate.ts -> src/plugins/react-native/ui.ts -> src/plugins/react-native/markdown.tsx -> src/runtime/host-runtime.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/plugins/registry.ts -> src/plugins/evaluate.ts -> src/plugins/themes/index.ts -> src/plugins/registry.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/runtime/host-runtime.ts -> src/runtime/directory-sync/index.ts -> src/runtime/directory-sync/agent-replica.ts -> src/hooks/use-archive-agent.ts -> src/runtime/host-runtime.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/components/sidebar-workspace-list.tsx -> src/components/sidebar/sidebar-status-list.tsx -> src/components/sidebar/sidebar-workspace-row-content.tsx -> src/components/workspace-hover-card.tsx -> src/components/sidebar-workspace-list.tsx
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/components/combined-model-selector.tsx -> src/components/model-browser.tsx -> src/agent-profiles/index.ts -> src/agent-profiles/agent-profile-editor.tsx -> src/agent-profiles/settings/agent-profile-edit-modal.tsx -> src/agent-profiles/settings/agent-profile-form-fields.tsx -> src/components/combined-model-selector.tsx
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+[metro] Web Bundled 32ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro] Web  WARN  Animated: `useNativeDriver` is not supported because the native animated module is missing. Falling back to JS-based animation. To resolve this, add `RCTAnimation` module to this app, or remove `useNativeDriver`. Make sure to run `bundle exec pod install` first. Read more about autolinking: https://github.com/react-native-community/cli/blob/master/docs/autolinking.md
+  ✓  1 [browser] › e2e/browser/codex-plan-approval.spec.ts:6:7 › Codex plan approval › shows a single actionable plan panel and removes it after implementation starts (3.5s)
+[e2e] Worker 0 daemon stopped
+[e2e] Metro stopped
+
+  1 passed (15.7s)
+
+=== Regression on unmodified base dbeb181f0 (expected failure): only new test copied into disposable worktree; npx vitest run src/server/agent/providers/acp-agent.test.ts --bail=1 -t "bridges approvals through the existing permission lifecycle" ===
+
+
+ RUN  v4.1.6 <baseline-worktree>/packages/server
+
+stdout | src/server/agent/providers/acp-agent.test.ts
+[dotenv@17.3.1] injecting env (0) from .env.test -- tip: 🔐 prevent committing .env to code: https://dotenvx.com/precommit
+[dotenv@17.3.1] injecting env (0) from ../.env -- tip: ⚡️ secrets for agents: https://dotenvx.com/as2
+
+ ❯ src/server/agent/providers/acp-agent.test.ts (175 tests | 1 failed | 174 skipped) 10ms
+     × bridges approvals through the existing permission lifecycle 9ms
+ )
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/server/agent/providers/acp-agent.test.ts > ACP Grok plan approval extension > bridges approvals through the existing permission lifecycle
+TypeError: session.extMethod is not a function
+ ❯ src/server/agent/providers/acp-agent.test.ts:76:30
+     74|     session.subscribe((event) => events.push(event));
+     75|     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+     76|     const response = session.extMethod("_x.ai/exit_plan_mode", {
+       |                              ^
+     77|       sessionId: "session-1",
+     78|       toolCallId: "exit-plan-1",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 174 skipped (175)
+   Start at  21:15:12
+   Duration  1.79s (transform 1.15s, setup 24ms, import 1.67s, tests 10ms, environment 0ms)
+
+
+=== Final transition presentation / accepted segmented layout validation ===
+Node 22.20.0; npm 10
+
+> paseo@0.18.1 format
+> oxfmt .
+
+Finished in 2378ms on 6530 files using 12 threads.
+
+ RUN  v4.1.7 <checkout>/packages/app
+
+ ✓ |unit| src/tool-calls/presentation.test.ts (23 tests) 5ms
+
+ Test Files  1 passed (1)
+      Tests  23 passed (23)
+   Start at  21:49:28
+   Duration  148ms (transform 60ms, setup 24ms, import 51ms, tests 5ms, environment 0ms)
+
+
+> paseo@0.18.1 typecheck
+> npm run typecheck --workspaces --if-present
+
+
+> @getpaseo/builtin-plugins@0.18.1 typecheck
+> tsgo -p tsconfig.json --noEmit
+
+
+> @getpaseo/expo-two-way-audio@0.18.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/highlight@0.18.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/plugin@0.18.1 typecheck
+> tsgo --noEmit && npm run typecheck:examples
+
+
+> @getpaseo/plugin@0.18.1 typecheck:examples
+> npm --prefix ../../plugin-examples/markdown-panel install --ignore-scripts --no-audit --no-fund && tsgo -p tsconfig.examples.json --noEmit
+
+
+up to date in 133ms
+
+> @getpaseo/protocol@0.18.1 pretypecheck
+> npm run generate:validators
+
+
+> @getpaseo/protocol@0.18.1 generate:validators
+> node scripts/generate-validation-aot.mjs
+
+generated src/generated/validation/ws-outbound.aot.ts: envelope + 267 session message validators; src/generated/validation/message-defaults.ts: 50 outbound + 11 inbound default tables
+
+> @getpaseo/protocol@0.18.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/client@0.18.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/server@0.18.1 typecheck
+> tsgo -p tsconfig.server.typecheck.json --noEmit
+
+
+> @getpaseo/app@0.18.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/relay@0.18.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/website@0.18.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/desktop@0.18.1 typecheck
+> tsgo --noEmit -p tsconfig.json
+
+
+> @getpaseo/cli@0.18.1 typecheck
+> tsgo --noEmit
+
+
+> paseo@0.18.1 lint
+> oxlint
+
+Found 0 warnings and 0 errors.
+Finished in 1.6s on 5994 files with 177 rules using 12 threads.

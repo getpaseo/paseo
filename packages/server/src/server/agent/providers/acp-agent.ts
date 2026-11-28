@@ -22,6 +22,7 @@ import type {
 import {
   ClientSideConnection,
   PROTOCOL_VERSION,
+  RequestError,
   type AgentCapabilities as ACPAgentCapabilities,
   type Error as ACPError,
   type AnyMessage,
@@ -144,6 +145,11 @@ import {
 import { withTimeout } from "../../../utils/promise-timeout.js";
 
 const ACP_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
+const GrokExitPlanModeParamsSchema = z.object({
+  sessionId: z.string().min(1),
+  toolCallId: z.string().min(1),
+  planContent: z.string().nullish(),
+});
 
 function assertChildWithPipes(
   child: ChildProcess,
@@ -675,6 +681,8 @@ interface PendingPermission {
   reject: (error: Error) => void;
   turnId: string | null;
   toolCallId: string;
+  resolvePlanReview?: (response: AgentPermissionResponse) => Record<string, unknown>;
+  resolveExtension?: (result: Record<string, unknown>) => void;
 }
 
 interface PendingUserMessage {
@@ -2949,23 +2957,31 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     const selectedOption = selectPermissionOption(pending.options, response);
-    if (response.selectedActionId !== undefined && !selectedOption) {
+    if (pending.resolvePlanReview) {
+      this.validatePlanReviewResponse(pending, response);
+    } else if (response.selectedActionId !== undefined && !selectedOption) {
       throw new Error(
         `ACP permission action '${response.selectedActionId}' does not exist or does not match '${response.behavior}' behavior`,
       );
     }
 
     this.pendingPermissions.delete(requestId);
-    pending.resolve(
-      selectedOption
-        ? {
-            outcome: {
-              outcome: "selected",
-              optionId: selectedOption.optionId,
-            },
-          }
-        : { outcome: { outcome: "cancelled" } },
-    );
+    if (pending.resolvePlanReview) {
+      const planResponse = pending.resolvePlanReview(response);
+      pending.resolve({ outcome: { outcome: "selected", optionId: "plan-review" } });
+      pending.resolveExtension?.(planResponse);
+    } else {
+      pending.resolve(
+        selectedOption
+          ? {
+              outcome: {
+                outcome: "selected",
+                optionId: selectedOption.optionId,
+              },
+            }
+          : { outcome: { outcome: "cancelled" } },
+      );
+    }
 
     this.pushEvent({
       type: "permission_resolved",
@@ -2978,6 +2994,27 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (response.behavior === "deny" && response.interrupt && this.connection && this.sessionId) {
       await this.connection.cancel({ sessionId: this.sessionId });
     }
+  }
+
+  private validatePlanReviewResponse(
+    pending: PendingPermission,
+    response: AgentPermissionResponse,
+  ): void {
+    if (response.behavior === "allow" && response.selectedActionId === "approve") {
+      const planText = pending.request.metadata?.planText;
+      if (typeof planText !== "string" || !planText.trim()) {
+        throw new Error("Cannot approve a plan review without plan content");
+      }
+      return;
+    }
+    if (response.behavior === "deny" && response.selectedActionId === "abandon") return;
+    if (response.behavior === "deny" && response.selectedActionId === "request_changes") {
+      if (!response.message?.trim()) {
+        throw new Error("Request changes requires nonblank feedback");
+      }
+      return;
+    }
+    throw new Error("ACP plan review requires a valid selected action");
   }
 
   describePersistence(): AgentPersistenceHandle | null {
@@ -3293,6 +3330,85 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     for (const event of events) {
       this.pushEvent(event);
     }
+  }
+
+  async extMethod(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (method !== "_x.ai/exit_plan_mode") {
+      throw RequestError.methodNotFound(method);
+    }
+
+    const parsed = GrokExitPlanModeParamsSchema.safeParse(params);
+    if (!parsed.success) {
+      throw RequestError.invalidParams(
+        parsed.error.issues,
+        "Invalid _x.ai/exit_plan_mode parameters",
+      );
+    }
+    if (!this.sessionId || parsed.data.sessionId !== this.sessionId) {
+      throw RequestError.invalidParams(
+        undefined,
+        "_x.ai/exit_plan_mode sessionId does not match this session",
+      );
+    }
+    if (
+      [...this.pendingPermissions.values()].some(
+        (pending) => pending.resolvePlanReview && pending.toolCallId === parsed.data.toolCallId,
+      )
+    ) {
+      throw RequestError.invalidParams(
+        undefined,
+        "A plan review for this toolCallId is already pending",
+      );
+    }
+
+    const requestId = randomUUID();
+    const planText = parsed.data.planContent ?? "";
+    const missingPlan = parsed.data.planContent == null;
+    const request: AgentPermissionRequest = {
+      id: requestId,
+      provider: this.provider,
+      name: "GrokPlanApproval",
+      kind: "plan",
+      title: "Review plan",
+      description: missingPlan
+        ? "Grok did not include plan content. Review the request carefully before approving."
+        : "Review the proposed plan before implementation starts.",
+      detail: { type: "plan", text: planText },
+      metadata: { planText, acpPlanReview: true, toolCallId: parsed.data.toolCallId },
+      actions: [
+        { id: "approve", label: "Approve", behavior: "allow" },
+        { id: "request_changes", label: "Request changes", behavior: "deny" },
+        { id: "abandon", label: "Abandon", behavior: "deny" },
+      ],
+    };
+
+    const response = new Promise<Record<string, unknown>>((resolve) => {
+      this.pendingPermissions.set(requestId, {
+        request,
+        options: [],
+        resolve: () => undefined,
+        reject: () => undefined,
+        turnId: this.activeForegroundTurnId,
+        toolCallId: parsed.data.toolCallId,
+        resolvePlanReview: (answer) => {
+          if (answer.behavior === "allow") return { outcome: "approved" };
+          if (answer.selectedActionId === "abandon") return { outcome: "abandoned" };
+          return { outcome: "cancelled", feedback: answer.message!.trim() };
+        },
+        resolveExtension: resolve,
+      });
+    });
+    this.pushEvent({
+      type: "permission_requested",
+      provider: this.provider,
+      request,
+      turnId: this.activeForegroundTurnId ?? undefined,
+    });
+
+    return response;
   }
 
   async extNotification(method: string, params: Record<string, unknown>): Promise<void> {
@@ -4082,6 +4198,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       if (!matches(pending)) continue;
       this.pendingPermissions.delete(requestId);
       pending.resolve({ outcome: { outcome: "cancelled" } });
+      pending.resolveExtension?.({ outcome: "cancelled" });
       this.pushEvent({
         type: "permission_resolved",
         provider: this.provider,

@@ -23,6 +23,7 @@ import {
   type MessageSubmissionRejectionOutcome,
 } from "@/composer/submission/model";
 import type { PendingPermission } from "@/types/shared";
+import { openPlanReview } from "@/agent-stream/plan-review/model";
 import type { ComposerAttachment } from "@/attachments/types";
 import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
 import type {
@@ -522,6 +523,7 @@ export interface SessionState {
 
   // Permissions
   pendingPermissions: Map<string, PendingPermission>;
+  planReviews: Map<string, ReturnType<typeof openPlanReview>>;
 
   // File explorer
   fileExplorer: Map<string, AgentFileExplorerState>;
@@ -770,6 +772,7 @@ function createInitialSessionState(
     projects: new Map(),
     restoringWorkspaces: new Map(),
     pendingPermissions: new Map(),
+    planReviews: new Map(),
     fileExplorer: new Map(),
     queuedMessages: new Map(),
   };
@@ -876,6 +879,7 @@ export const useSessionStore = create<SessionStore>()(
           if (!session) {
             return prev;
           }
+          for (const review of session.planReviews.values()) review.close();
           const nextSessions = { ...prev.sessions };
           delete nextSessions[serverId];
           let nextActivity = prev.agentLastActivity;
@@ -1927,11 +1931,24 @@ export const useSessionStore = create<SessionStore>()(
           if (session.pendingPermissions === nextPerms) {
             return prev;
           }
+          // Drafts follow the pending request across panel remounts and directory snapshots.
+          const planReviews = new Map<string, ReturnType<typeof openPlanReview>>();
+          for (const [key, permission] of nextPerms) {
+            if (permission.request.metadata?.acpPlanReview !== true) continue;
+            const plan = permission.request.metadata.planText;
+            planReviews.set(
+              key,
+              session.planReviews.get(key) ?? openPlanReview(typeof plan === "string" ? plan : ""),
+            );
+          }
+          for (const [key, review] of session.planReviews) {
+            if (!planReviews.has(key)) review.close();
+          }
           return {
             ...prev,
             sessions: {
               ...prev.sessions,
-              [serverId]: { ...session, pendingPermissions: nextPerms },
+              [serverId]: { ...session, pendingPermissions: nextPerms, planReviews },
             },
           };
         });

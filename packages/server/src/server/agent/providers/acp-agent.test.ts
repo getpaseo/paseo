@@ -67,6 +67,224 @@ import { buildStringCommandShellInvocation } from "../../../utils/string-command
 import { asInternals } from "../../test-utils/class-mocks.js";
 import * as spawnUtils from "../../../utils/spawn.js";
 
+describe("ACP Grok plan approval extension", () => {
+  test("bridges approvals through the existing permission lifecycle", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const response = session.extMethod("_x.ai/exit_plan_mode", {
+      sessionId: "session-1",
+      toolCallId: "exit-plan-1",
+      planContent: "# Safe plan\n1. Inspect\n",
+    });
+
+    const request = session.getPendingPermissions()[0];
+    expect(request).toMatchObject({
+      kind: "plan",
+      name: "GrokPlanApproval",
+      detail: { type: "plan", text: "# Safe plan\n1. Inspect\n" },
+      metadata: {
+        planText: "# Safe plan\n1. Inspect\n",
+        acpPlanReview: true,
+        toolCallId: "exit-plan-1",
+      },
+      actions: [
+        { id: "approve", label: "Approve", behavior: "allow" },
+        { id: "request_changes", label: "Request changes", behavior: "deny" },
+        { id: "abandon", label: "Abandon", behavior: "deny" },
+      ],
+    });
+    expect(events).toContainEqual(expect.objectContaining({ type: "permission_requested" }));
+    if (!request) throw new Error("Grok plan approval request was not emitted");
+
+    await session.respondToPermission(request.id, {
+      behavior: "deny",
+      selectedActionId: "request_changes",
+      message: "Keep the operation local.",
+    });
+    await expect(response).resolves.toMatchObject({
+      outcome: "cancelled",
+      feedback: "Keep the operation local.",
+    });
+  });
+
+  test("returns approved and permits explicit abandon", async () => {
+    const session = createSession();
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const approved = session.extMethod("_x.ai/exit_plan_mode", {
+      sessionId: "session-1",
+      toolCallId: "approve-plan",
+      planContent: "Plan",
+    });
+    await session.respondToPermission(session.getPendingPermissions()[0]!.id, {
+      behavior: "allow",
+      selectedActionId: "approve",
+    });
+    await expect(approved).resolves.toEqual({ outcome: "approved" });
+
+    const abandoned = session.extMethod("_x.ai/exit_plan_mode", {
+      sessionId: "session-1",
+      toolCallId: "abandon-plan",
+      planContent: "Plan",
+    });
+    await session.respondToPermission(session.getPendingPermissions()[0]!.id, {
+      behavior: "deny",
+      selectedActionId: "abandon",
+    });
+    await expect(abandoned).resolves.toEqual({ outcome: "abandoned" });
+  });
+
+  test("requires valid feedback and explains missing plan content", async () => {
+    const session = createSession();
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const response = session.extMethod("_x.ai/exit_plan_mode", {
+      sessionId: "session-1",
+      toolCallId: "missing-plan",
+      planContent: null,
+    });
+    const request = session.getPendingPermissions()[0]!;
+    expect(request).toMatchObject({
+      description: expect.stringContaining("did not include plan content"),
+      detail: { type: "plan", text: "" },
+    });
+    await expect(
+      session.respondToPermission(request.id, {
+        behavior: "allow",
+        selectedActionId: "approve",
+      }),
+    ).rejects.toThrow("Cannot approve a plan review without plan content");
+    expect(session.getPendingPermissions()).toHaveLength(1);
+    await expect(
+      session.respondToPermission(request.id, {
+        behavior: "deny",
+        selectedActionId: "request_changes",
+        message: "   ",
+      }),
+    ).rejects.toThrow("requires nonblank feedback");
+    expect(session.getPendingPermissions()).toHaveLength(1);
+    await session.respondToPermission(request.id, {
+      behavior: "deny",
+      selectedActionId: "request_changes",
+      message: "Provide a plan.",
+    });
+    await expect(response).resolves.toMatchObject({ feedback: "Provide a plan." });
+  });
+
+  test.each([undefined, null, "", " \t\n "])(
+    "rejects approval when plan content is missing or blank (%s)",
+    async (planContent) => {
+      const session = createSession();
+      asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+      const response = session.extMethod("_x.ai/exit_plan_mode", {
+        sessionId: "session-1",
+        toolCallId: `blank-plan-${String(planContent)}`,
+        planContent,
+      });
+      const request = session.getPendingPermissions()[0]!;
+      await expect(
+        session.respondToPermission(request.id, {
+          behavior: "allow",
+          selectedActionId: "approve",
+        }),
+      ).rejects.toThrow("Cannot approve a plan review without plan content");
+      expect(session.getPendingPermissions()).toHaveLength(1);
+      await session.respondToPermission(request.id, {
+        behavior: "deny",
+        selectedActionId: "abandon",
+      });
+      await expect(response).resolves.toEqual({ outcome: "abandoned" });
+    },
+  );
+
+  test("resolves a pending plan review as cancelled on lifecycle cancellation", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+    const response = session.extMethod("_x.ai/exit_plan_mode", {
+      sessionId: "session-1",
+      toolCallId: "cancel-plan",
+      planContent: "Plan",
+    });
+    const request = session.getPendingPermissions()[0]!;
+
+    asInternals<ACPSessionInternals>(session).cancelPendingPermissions();
+
+    await expect(response).resolves.toEqual({ outcome: "cancelled" });
+    expect(session.getPendingPermissions()).toEqual([]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "permission_resolved",
+        requestId: request.id,
+        resolution: { behavior: "deny", message: "Permission request canceled" },
+      }),
+    );
+  });
+
+  test("leaves plan review pending after invalid action and rejects stale responses", async () => {
+    const session = createSession();
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const firstResponse = session.extMethod("_x.ai/exit_plan_mode", {
+      sessionId: "session-1",
+      toolCallId: "stale-plan-1",
+      planContent: "Plan one",
+    });
+    const firstRequest = session.getPendingPermissions()[0]!;
+    await expect(
+      session.respondToPermission(firstRequest.id, {
+        behavior: "deny",
+        selectedActionId: "approve",
+      }),
+    ).rejects.toThrow("valid selected action");
+    expect(session.getPendingPermissions()).toEqual([firstRequest]);
+    await session.respondToPermission(firstRequest.id, {
+      behavior: "deny",
+      selectedActionId: "abandon",
+    });
+    await expect(firstResponse).resolves.toEqual({ outcome: "abandoned" });
+
+    const secondResponse = session.extMethod("_x.ai/exit_plan_mode", {
+      sessionId: "session-1",
+      toolCallId: "stale-plan-2",
+      planContent: "Plan two",
+    });
+    const secondRequest = session.getPendingPermissions()[0]!;
+    await expect(
+      session.respondToPermission(firstRequest.id, {
+        behavior: "allow",
+        selectedActionId: "approve",
+      }),
+    ).rejects.toThrow(`No pending permission request with id '${firstRequest.id}'`);
+    expect(session.getPendingPermissions()).toEqual([secondRequest]);
+    await session.respondToPermission(secondRequest.id, {
+      behavior: "allow",
+      selectedActionId: "approve",
+    });
+    await expect(secondResponse).resolves.toEqual({ outcome: "approved" });
+  });
+
+  test("rejects duplicate pending tool calls and mismatched sessions", async () => {
+    const session = createSession();
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const params = { sessionId: "session-1", toolCallId: "same-tool", planContent: "Plan" };
+    void session.extMethod("_x.ai/exit_plan_mode", params);
+    await expect(session.extMethod("_x.ai/exit_plan_mode", params)).rejects.toMatchObject({
+      code: -32602,
+    });
+    await expect(
+      session.extMethod("_x.ai/exit_plan_mode", { ...params, sessionId: "other" }),
+    ).rejects.toMatchObject({ code: -32602 });
+  });
+
+  test("rejects an unknown reverse extension method", async () => {
+    const session = createSession();
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+
+    await expect(session.extMethod("_x.ai/unknown", {})).rejects.toMatchObject({ code: -32601 });
+  });
+});
+
 describe("buildACPClientCapabilities", () => {
   test("enables terminal execution on the host while keeping filesystem operations with the agent by default", () => {
     expect(buildACPClientCapabilities()).toEqual({
@@ -99,7 +317,6 @@ describe("buildACPClientCapabilities", () => {
     });
   });
 });
-
 interface ACPSessionInternals {
   sessionId: string | null;
   connection: {
@@ -1537,6 +1754,26 @@ describe("ACPAgentSession Zed parity", () => {
     await expect(permission).resolves.toEqual({
       outcome: { outcome: "selected", optionId: "reject-once" },
     });
+  });
+
+  test("plan review bypasses auto-accept and stays pending", async () => {
+    const session = createSessionWithConfig({ providerOptions: { auto_accept: true } });
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+    const response = session.extMethod("_x.ai/exit_plan_mode", {
+      sessionId: "session-1",
+      toolCallId: "auto-accept-plan",
+      planContent: "Review before implementation",
+    });
+
+    expect(session.getPendingPermissions()).toMatchObject([{ kind: "plan" }]);
+    expect(events).toContainEqual(expect.objectContaining({ type: "permission_requested" }));
+    await session.respondToPermission(session.getPendingPermissions()[0]!.id, {
+      behavior: "deny",
+      selectedActionId: "abandon",
+    });
+    await expect(response).resolves.toEqual({ outcome: "abandoned" });
   });
 
   test("auto-accepts ACP permission requests when the shared feature is enabled", async () => {

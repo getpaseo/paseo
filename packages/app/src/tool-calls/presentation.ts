@@ -54,12 +54,36 @@ function displayDetail(detail: ToolCallDetail | undefined): ToolCallDetail {
   return detail ?? { type: "unknown", input: null, output: null };
 }
 
+function planModeTransitionLabel(input: BuildToolCallPresentationInput): string | undefined {
+  const { detail, metadata } = input;
+  // Grok emits completed mode changes as "other" calls with a path-only body.
+  if (
+    input.agentMessage ||
+    input.toolName !== "other" ||
+    input.status !== "completed" ||
+    input.error ||
+    detail?.type !== "plain_text" ||
+    metadata?.kind !== "other" ||
+    metadata.title !== detail.label ||
+    (detail.label !== "Plan mode entered" && detail.label !== "Plan mode exited") ||
+    /[\r\n]/.test(detail.text ?? "") ||
+    !/^Plan file: (?:\/|[A-Za-z]:[\\/]|\\\\)[^\r\n]+$/.test(detail.text ?? "")
+  ) {
+    return undefined;
+  }
+  return detail.label;
+}
+
 export function buildToolCallPresentation(
   input: BuildToolCallPresentationInput,
 ): ToolCallPresentation {
-  const detail = input.agentMessage
-    ? buildAgentMessageDisplay(input.agentMessage).detail
-    : input.detail;
+  const transitionLabel = planModeTransitionLabel(input);
+  let detail = input.detail;
+  if (input.agentMessage) {
+    detail = buildAgentMessageDisplay(input.agentMessage).detail;
+  } else if (transitionLabel) {
+    detail = { type: "plain_text", label: transitionLabel, text: undefined, icon: "sparkles" };
+  }
   const detailForDisplay = displayDetail(detail);
   const displayModel = buildToolCallDisplayModel({
     name: input.toolName,
@@ -76,12 +100,13 @@ export function buildToolCallPresentation(
     status: input.status,
     error: input.error,
   });
-  const hasDetails = Boolean(input.error) || hasMeaningfulToolCallDetail(detail);
+  const hasDetails =
+    !transitionLabel && (Boolean(input.error) || hasMeaningfulToolCallDetail(detail));
 
   return {
     detail,
-    displayName: displayModel.displayName,
-    summary: displayModel.summary,
+    displayName: transitionLabel ?? displayModel.displayName,
+    summary: transitionLabel ? undefined : displayModel.summary,
     errorText: displayModel.errorText,
     icon: input.resolveIcon(input.toolName, detail, input.agentMessage),
     isLoadingDetails,

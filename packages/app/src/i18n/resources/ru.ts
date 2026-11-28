@@ -2,6 +2,7 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
+  planReview: en.planReview,
   pluginCombobox: {
     searching: "Поиск…",
     empty: "Нет результатов",

@@ -9,6 +9,7 @@ const fakeIcons = {
   brain: (() => null) as ToolCallPresentationIcon,
   eye: (() => null) as ToolCallPresentationIcon,
   wrench: (() => null) as ToolCallPresentationIcon,
+  sparkles: (() => null) as ToolCallPresentationIcon,
 };
 
 function fakeResolveIcon(
@@ -18,6 +19,9 @@ function fakeResolveIcon(
 ): ToolCallPresentationIcon {
   if (agentMessage) {
     return fakeIcons.paseo;
+  }
+  if (detail?.type === "plain_text" && detail.icon === "sparkles") {
+    return fakeIcons.sparkles;
   }
   if (detail?.type === "plan") {
     return fakeIcons.brain;
@@ -32,6 +36,89 @@ function fakeResolveIcon(
 }
 
 describe("tool-call presentation", () => {
+  it.each(["Plan mode entered", "Plan mode exited"])(
+    "presents %s as a compact status without the path-only disclosure",
+    (label) => {
+      const detail: ToolCallDetail = {
+        type: "plain_text",
+        label,
+        text: "Plan file: /tmp/session/plan.md",
+        icon: "wrench",
+      };
+      const presentation = buildToolCallPresentation({
+        toolName: "other",
+        status: "completed",
+        error: null,
+        detail,
+        metadata: { kind: "other", title: label },
+        resolveIcon: fakeResolveIcon,
+      });
+      expect(presentation).toMatchObject({
+        displayName: label,
+        summary: undefined,
+        detail: { type: "plain_text", label, text: undefined, icon: "sparkles" },
+        icon: fakeIcons.sparkles,
+        hasDetails: false,
+        canOpenDetails: false,
+        isLoadingDetails: false,
+        openFilePath: null,
+        isPlan: false,
+      });
+      expect(detail.text).toBe("Plan file: /tmp/session/plan.md");
+    },
+  );
+
+  it.each<{
+    name: string;
+    patch: Partial<Parameters<typeof buildToolCallPresentation>[0]>;
+  }>([
+    { name: "failed status", patch: { status: "failed" } },
+    { name: "running status", patch: { status: "running" } },
+    { name: "error", patch: { error: "Mode switch failed" } },
+    { name: "different tool", patch: { toolName: "custom_tool" } },
+    { name: "missing metadata", patch: { metadata: undefined } },
+    { name: "different title", patch: { metadata: { kind: "other", title: "Other event" } } },
+  ])("preserves transition details for $name", ({ patch }) => {
+    const detail: ToolCallDetail = {
+      type: "plain_text",
+      label: "Plan mode entered",
+      text: "Plan file: /tmp/session/plan.md",
+      icon: "wrench",
+    };
+    const presentation = buildToolCallPresentation({
+      toolName: "other",
+      status: "completed",
+      error: null,
+      detail,
+      metadata: { kind: "other", title: detail.label },
+      resolveIcon: fakeResolveIcon,
+      ...patch,
+    });
+    expect(presentation.detail).toEqual(detail);
+    expect(presentation.hasDetails).toBe(true);
+    expect(presentation.canOpenDetails).toBe(true);
+    expect(presentation.icon).toBe(fakeIcons.wrench);
+  });
+
+  it.each([
+    "Plan file: relative/plan.md",
+    "Plan file: /tmp/plan.md\nImportant warning",
+    "Plan file: /tmp/plan.md\n",
+    "Plan mode could not be entered",
+  ])("preserves non-path-only transition output: %s", (text) => {
+    const detail: ToolCallDetail = { type: "plain_text", label: "Plan mode entered", text };
+    const presentation = buildToolCallPresentation({
+      toolName: "other",
+      status: "completed",
+      error: null,
+      detail,
+      metadata: { kind: "other", title: detail.label },
+      resolveIcon: fakeResolveIcon,
+    });
+    expect(presentation.detail).toEqual(detail);
+    expect(presentation.canOpenDetails).toBe(true);
+  });
+
   it("builds badge, detail, icon, and file-open policy in one model", () => {
     const presentation = buildToolCallPresentation({
       toolName: "read_file",

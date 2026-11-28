@@ -2,6 +2,26 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  planReview: {
+    wholePlan: "整个计划",
+    commentTarget: "留言对象",
+    comment: "针对这些行留言",
+    addComment: "添加留言",
+    lineRange: "第 {{start}}–{{end}} 行",
+    removeComment: "移除留言",
+    feedback: "其他反馈",
+    feedbackBeforeApproval: "选择“要求修改”发送留言。批准此版本前，请清空反馈。",
+    requestChanges: "要求修改",
+    approve: "批准",
+    abandon: "放弃计划",
+    submitting: "正在发送计划决定…",
+    responseFailed: "无法发送计划决定。留言已保留，请重试。",
+    invalidRange: "请在此计划内选择行（1–{{count}}）。",
+    enterComment: "请输入留言，或移除空白留言。",
+    enterFeedback: "要求修改前，请添加留言或反馈。",
+    missingPlan: "Grok 未提供计划内容。请先要求提供完整计划，再批准。",
+    updateHost: "请更新此主机以审阅 Grok 计划。",
+  },
   pluginCombobox: {
     searching: "搜索中…",
     empty: "无结果",

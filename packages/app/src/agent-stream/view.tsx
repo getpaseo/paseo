@@ -41,6 +41,7 @@ import {
   type InlinePathTarget,
 } from "@/components/message";
 import { PlanCard } from "@/components/plan-card";
+import { ACPPlanReviewCard } from "./plan-review/card";
 import { getStreamItemMessageId, type StreamItem } from "@/types/stream";
 import type { PendingMessageSubmission } from "@/composer/submission/model";
 import type { TurnPresentation } from "@/timeline/turn-liveness";
@@ -148,8 +149,10 @@ function BottomOverlayInset({ height }: { height: number }) {
 }
 
 function renderPendingPermissionsNode(input: {
+  serverId: string;
   pendingPermissions: PendingPermission[];
   client: DaemonClient | null;
+  supportsACPPlanReview: boolean;
 }): ReactNode {
   if (input.pendingPermissions.length === 0) {
     return null;
@@ -157,7 +160,13 @@ function renderPendingPermissionsNode(input: {
   return (
     <View style={stylesheet.permissionsContainer}>
       {input.pendingPermissions.map((permission) => (
-        <PermissionRequestCard key={permission.key} permission={permission} client={input.client} />
+        <PermissionRequestCard
+          key={permission.key}
+          serverId={input.serverId}
+          permission={permission}
+          client={input.client}
+          supportsACPPlanReview={input.supportsACPPlanReview}
+        />
       ))}
     </View>
   );
@@ -396,6 +405,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const transformTimelineItem = useInstalledTimelineTransform(resolvedServerId);
 
     const client = useSessionStore((state) => state.sessions[resolvedServerId]?.client ?? null);
+    const supportsACPPlanReview = useSessionStore(
+      (state) => state.sessions[resolvedServerId]?.serverInfo?.features?.acpPlanReview === true,
+    );
     const sessionStreamHead = useSessionStore((state) =>
       state.sessions[resolvedServerId]?.agentStreamHead?.get(agentId),
     );
@@ -1001,10 +1013,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const pendingPermissionsNode = useMemo(
       () =>
         renderPendingPermissionsNode({
+          serverId: resolvedServerId,
           pendingPermissions: pendingPermissionItems,
           client,
+          supportsACPPlanReview,
         }),
-      [client, pendingPermissionItems],
+      [client, pendingPermissionItems, supportsACPPlanReview, resolvedServerId],
     );
     const turnFooterNode = useMemo(
       () =>
@@ -1497,6 +1511,32 @@ function PermissionActionButton({
 }
 
 function PermissionRequestCard({
+  serverId,
+  permission,
+  client,
+  supportsACPPlanReview,
+}: {
+  permission: PendingPermission;
+  client: DaemonClient | null;
+  supportsACPPlanReview: boolean;
+  serverId: string;
+}) {
+  const { t } = useTranslation();
+  const model = useSessionStore((state) =>
+    state.sessions[serverId]?.planReviews.get(permission.key),
+  );
+  if (permission.request.metadata?.acpPlanReview === true) {
+    if (!supportsACPPlanReview) {
+      return <Text>{t("planReview.updateHost")}</Text>;
+    }
+    return model ? (
+      <ACPPlanReviewCard permission={permission} client={client} model={model} />
+    ) : null;
+  }
+  return <GenericPermissionRequestCard permission={permission} client={client} />;
+}
+
+function GenericPermissionRequestCard({
   permission,
   client,
 }: {

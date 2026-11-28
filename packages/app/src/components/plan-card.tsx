@@ -16,6 +16,7 @@ interface PlanCardProps {
   text: string;
   outcome?: PlanOutcome;
   footer?: ReactNode;
+  content?: ReactNode;
   disableOuterSpacing?: boolean;
   testID?: string;
 }
@@ -34,6 +35,7 @@ function PlanCardContent({
   text,
   outcome,
   footer,
+  content,
   disableOuterSpacing = false,
   testID,
 }: PlanCardProps) {
@@ -80,7 +82,7 @@ function PlanCardContent({
       {expanded ? (
         <View style={styles.body}>
           {description ? <Text style={styles.description}>{description}</Text> : null}
-          <MarkdownRenderer text={text} />
+          {content ?? <MarkdownRenderer text={text} />}
         </View>
       ) : null}
       {footer ? <View style={styles.footer}>{footer}</View> : null}

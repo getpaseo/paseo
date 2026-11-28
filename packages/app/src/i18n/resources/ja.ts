@@ -2,6 +2,7 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  planReview: en.planReview,
   pluginCombobox: {
     searching: "検索中…",
     empty: "結果がありません",
