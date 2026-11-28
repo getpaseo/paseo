@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import { isSyntaxThemeId, type SyntaxThemeId } from "@getpaseo/highlight";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import {
@@ -59,21 +60,34 @@ export const DEFAULT_THEME_PREFERENCE = "auto" satisfies ThemePreference;
 export const DEFAULT_TERMINAL_SCROLLBACK_LINES = 10_000;
 export const MIN_TERMINAL_SCROLLBACK_LINES = 0;
 export const MAX_TERMINAL_SCROLLBACK_LINES = 1_000_000;
-export function defaultUiBaseFontSize(native: boolean): number {
-  return native ? 15 : FONT_SIZE.base;
+const ANDROID_DEFAULT_FONT_SIZE = 13;
+
+export function defaultFontSizes(input: { os: string; native: boolean }): {
+  uiBase: number;
+  content: number;
+  code: number;
+} {
+  if (input.os === "android") {
+    return {
+      uiBase: ANDROID_DEFAULT_FONT_SIZE,
+      content: ANDROID_DEFAULT_FONT_SIZE,
+      code: ANDROID_DEFAULT_FONT_SIZE,
+    };
+  }
+  return input.native
+    ? { uiBase: 15, content: 16, code: 12 }
+    : { uiBase: FONT_SIZE.base, content: FONT_SIZE.content, code: 12 };
 }
 
-export const DEFAULT_UI_BASE_FONT_SIZE = defaultUiBaseFontSize(isNative);
+const DEFAULT_FONT_SIZES = defaultFontSizes({ os: Platform.OS, native: isNative });
+
+export const DEFAULT_UI_BASE_FONT_SIZE = DEFAULT_FONT_SIZES.uiBase;
 export const MIN_UI_BASE_FONT_SIZE = 10;
 export const MAX_UI_BASE_FONT_SIZE = 21;
-export function defaultContentFontSize(native: boolean): number {
-  return native ? 16 : FONT_SIZE.content;
-}
-
-export const DEFAULT_CONTENT_FONT_SIZE = defaultContentFontSize(isNative);
+export const DEFAULT_CONTENT_FONT_SIZE = DEFAULT_FONT_SIZES.content;
 export const MIN_CONTENT_FONT_SIZE = 10;
 export const MAX_CONTENT_FONT_SIZE = 21;
-export const DEFAULT_CODE_FONT_SIZE = 12; // == FONT_SIZE.code
+export const DEFAULT_CODE_FONT_SIZE = DEFAULT_FONT_SIZES.code;
 export const MIN_CODE_FONT_SIZE = 9;
 export const MAX_CODE_FONT_SIZE = 22; // line-height 1.5×22=33 stays safe
 export const MAX_FONT_FAMILY_LENGTH = 200;
@@ -94,9 +108,9 @@ export interface AppSettings {
   terminalScrollbackLines: number;
   uiFontFamily: string; // "" = platform default UI stack
   monoFontFamily: string; // "" = platform default mono stack
-  uiBaseFontSize: number; // clamped px, platform default 14 or 15
-  contentFontSize: number; // clamped px, platform default 15 or 16
-  codeFontSize: number; // clamped px, default 12
+  uiBaseFontSize: number; // clamped px, platform default 13, 14, or 15
+  contentFontSize: number; // clamped px, platform default 13, 15, or 16
+  codeFontSize: number; // clamped px, platform default 12 or 13
   /** Numbers preserve widths saved before presets were introduced. */
   contentWidth: ContentWidth;
   syntaxTheme: SyntaxThemeId; // default "one"
