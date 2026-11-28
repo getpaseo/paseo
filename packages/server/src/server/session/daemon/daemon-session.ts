@@ -2,7 +2,12 @@ import type { createDaemonListeners } from "../../listeners.js";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
 import type pino from "pino";
 import type { ProviderAvailability } from "../../agent/agent-manager.js";
-import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
+import type {
+  DaemonClientsSnapshot,
+  SessionInboundMessage,
+  SessionOutboundMessage,
+} from "../../messages.js";
+import type { SessionDelivery } from "../owned-subscriptions/index.js";
 import { getPidLockInfo } from "../../pid-lock.js";
 import { readUnconfirmedTerminalCleanup } from "../../../terminal/terminal-worker-reaper.js";
 import { generateLocalPairingOffer } from "../../pairing-offer.js";
@@ -26,6 +31,7 @@ export interface DaemonRuntimeConfig {
   ) =>
     | ReturnType<ReturnType<typeof createDaemonListeners>["status"]>
     | Promise<ReturnType<ReturnType<typeof createDaemonListeners>["status"]>>;
+  isTailscaleEndpoint?: (localEndpoint?: string) => boolean;
   setTailscaleEnabled?: DaemonConfigStore["setTailscaleEnabled"];
   getRelayConfig(): {
     enabled: boolean;
@@ -63,6 +69,8 @@ export interface DaemonSessionOptions {
   getTerminalsUnavailable?: () => string | null;
   getWebSocketRuntimeMetrics?: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
   getObservationMetrics?: () => Record<string, number>;
+  listConnectedClients?: (options?: { includeInternal?: boolean }) => DaemonClientsSnapshot;
+  observeConnectedClients?: (listener: () => void) => () => void;
   logger: pino.Logger;
   hubRelationships?: HubRelationshipManagement;
   reloadConfig: () => Promise<DaemonConfigReloadResult>;
@@ -89,6 +97,8 @@ export class DaemonSession {
   private readonly getTerminalsUnavailable: () => string | null;
   private readonly getWebSocketRuntimeMetrics: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
   private readonly getObservationMetrics: DaemonSessionOptions["getObservationMetrics"];
+  private readonly listConnectedClients: DaemonSessionOptions["listConnectedClients"];
+  private readonly observeConnectedClients: DaemonSessionOptions["observeConnectedClients"];
   private readonly logger: pino.Logger;
   private readonly selfUpdate: DaemonSelfUpdateSessionController;
   private readonly hubRelationships: HubRelationshipManagement | null;
@@ -108,6 +118,8 @@ export class DaemonSession {
     this.getTerminalsUnavailable = options.getTerminalsUnavailable ?? (() => null);
     this.getWebSocketRuntimeMetrics = options.getWebSocketRuntimeMetrics ?? (() => null);
     this.getObservationMetrics = options.getObservationMetrics;
+    this.listConnectedClients = options.listConnectedClients;
+    this.observeConnectedClients = options.observeConnectedClients;
     this.logger = options.logger;
     this.hubRelationships = options.hubRelationships ?? null;
     this.reloadConfig = options.reloadConfig;
@@ -195,6 +207,57 @@ export class DaemonSession {
       type: "daemon.tailscale.set.response",
       payload: { requestId: msg.requestId, ...result },
     });
+  }
+
+  async handleListClientsRequest(
+    msg: Extract<SessionInboundMessage, { type: "daemon.clients.list.request" }>,
+    delivery: SessionDelivery,
+  ): Promise<void> {
+    const readSnapshot = (): DaemonClientsSnapshot =>
+      this.listConnectedClients?.({ includeInternal: msg.includeInternal === true }) ?? {
+        clients: [],
+        inboundDaemons: [],
+      };
+    if (!msg.observe || !this.observeConnectedClients) {
+      const snapshot = readSnapshot();
+      this.host.emit({
+        type: "daemon.clients.list.response",
+        payload: {
+          requestId: msg.requestId,
+          clients: snapshot.clients,
+          inboundDaemons: snapshot.inboundDaemons,
+        },
+      });
+      return;
+    }
+    let stop = () => {};
+    const owner = delivery.begin("daemon-clients", undefined, () => stop());
+    try {
+      stop = this.observeConnectedClients(() => {
+        const snapshot = readSnapshot();
+        owner.emit({
+          type: "daemon.clients.changed",
+          payload: {
+            subscriptionId: owner.id,
+            clients: snapshot.clients,
+            inboundDaemons: snapshot.inboundDaemons,
+          },
+        });
+      });
+      const snapshot = readSnapshot();
+      this.host.emit({
+        type: "daemon.clients.list.response",
+        payload: {
+          requestId: msg.requestId,
+          subscriptionId: owner.id,
+          clients: snapshot.clients,
+          inboundDaemons: snapshot.inboundDaemons,
+        },
+      });
+    } catch (error) {
+      await owner.release();
+      throw error;
+    }
   }
 
   async handleGetStatusRequest(

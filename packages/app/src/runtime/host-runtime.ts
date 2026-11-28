@@ -43,6 +43,7 @@ import {
   shouldUseTlsForDefaultHostedRelay,
 } from "@/utils/daemon-endpoints";
 import { resolveAppVersion } from "@/utils/app-version";
+import { resolveAppClientIdentity } from "@/devices/client-info";
 import { ConnectionOfferSchema, type ConnectionOffer } from "@getpaseo/protocol/connection-offer";
 import { HostConfirmations, type HostConfirmationRequest } from "./host-confirmation";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
@@ -584,10 +585,12 @@ function createDefaultDeps(
     createClient: ({ host, connection, clientId, runtimeGeneration }) => {
       const desktopTransportFactory = createDesktopDaemonTransportFactory();
       const webSocketConfig = { webSocketFactory: createAppWebSocketFactory() };
+      const appIdentity = resolveAppClientIdentity();
       const base = {
         suppressSendErrors: true,
         clientId,
-        clientType: "mobile",
+        clientType: appIdentity.clientType,
+        clientInfo: appIdentity.clientInfo,
         appVersion: resolveAppVersion() ?? undefined,
         runtimeGeneration,
         capabilities: appCapabilities,

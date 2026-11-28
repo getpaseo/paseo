@@ -2,12 +2,19 @@ import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { View } from "react-native";
 import { isWeb } from "@/constants/platform";
 import { SettingsRowChildren } from "./row-children";
-import { SettingsRowHeader } from "./row-header";
+import { SettingsRowHeader, type SettingsRowHintStatus } from "./row-header";
 
 interface SettingsCollapsibleRowProps {
   label: string;
+  /** An icon or status indicator shown before the label. */
+  leading?: ReactNode;
+  /** A line under the label describing the row's subject. */
+  hint?: string;
+  hintStatus?: SettingsRowHintStatus;
   /** A short status shown before the chevron, so the row says something while collapsed. */
   summary?: string;
+  /** Passive trailing element (such as a pill) shown before the chevron. */
+  trailing?: ReactNode;
   defaultExpanded?: boolean;
   testID?: string;
   /** The rows revealed underneath, separated like the rows of a `SettingsCard` and laid out as nested rows. */
@@ -21,7 +28,11 @@ interface SettingsCollapsibleRowProps {
  */
 export function SettingsCollapsibleRow({
   label,
+  leading,
+  hint,
+  hintStatus,
   summary,
+  trailing,
   defaultExpanded = false,
   testID,
   children,
@@ -39,7 +50,11 @@ export function SettingsCollapsibleRow({
     <View testID={testID}>
       <SettingsRowHeader
         label={label}
+        leading={leading}
+        hint={hint}
+        hintStatus={hintStatus}
         summary={summary}
+        trailing={trailing}
         onPress={toggle}
         expanded={expanded}
         accessibilityState={accessibilityState}

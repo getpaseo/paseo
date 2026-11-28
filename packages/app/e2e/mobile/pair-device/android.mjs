@@ -13,6 +13,8 @@ function ad(...args) {
   });
 }
 
+ad("press", 'label="Pair a device"', "--settle");
+ad("wait", "text", "Relay", "10000");
 ad("press", 'label="Relay"', "--settle");
 ad("wait", "text", "Pairing QR code", "10000");
 const { data } = JSON.parse(ad("snapshot", "-i", "--json"));

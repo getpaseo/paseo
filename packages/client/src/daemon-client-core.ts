@@ -16,6 +16,7 @@ import {
 } from "@getpaseo/protocol/binary-frames/host-route";
 import { messageTooLargeError } from "./daemon-client-transport-utils.js";
 import type { HostAdd, HostUpdate, HostDirectory } from "@getpaseo/protocol/hosts";
+import type { DaemonClientsSnapshot, HelloClientInfo } from "@getpaseo/protocol/daemon-clients";
 import type { PluginListingDetail, PluginListingIndex } from "@getpaseo/protocol/plugin-registry";
 import { legacyUsageIcon } from "./legacy-usage-icons.js";
 import { subscribeTimeline, type TimelineMessage } from "./timeline-subscription/index.js";
@@ -456,6 +457,7 @@ export interface DaemonClientConfig {
   createPluginClientBundleStore?: (serverId: string) => PluginClientBundleStore;
   clientType?: "mobile" | "browser" | "cli" | "mcp" | "hub";
   appVersion?: string;
+  clientInfo?: HelloClientInfo;
   runtimeGeneration?: number | null;
   password?: string;
   localCredential?: () => string | undefined | Promise<string | undefined>;
@@ -1957,6 +1959,40 @@ export class DaemonClientCore {
       });
       if (!result.subscriptionId) throw new Error("Host omitted subscription identity");
       const snapshot = { ...result.directory, subscriptionId: result.subscriptionId };
+      accept(snapshot);
+      return snapshot;
+    });
+  }
+  async listConnectedClients(options?: {
+    includeInternal?: boolean;
+  }): Promise<DaemonClientsSnapshot> {
+    const result = await this.sendCorrelatedSessionRequest({
+      message: {
+        type: "daemon.clients.list.request",
+        ...(options?.includeInternal ? { includeInternal: true } : {}),
+      },
+      responseType: "daemon.clients.list.response",
+    });
+    return { clients: result.clients, inboundDaemons: result.inboundDaemons };
+  }
+  observeConnectedClients(options?: {
+    includeInternal?: boolean;
+  }): OwnedSubscription<DaemonClientsSnapshot> {
+    return this.owned.observe(async (accept) => {
+      const result = await this.sendCorrelatedSessionRequest({
+        message: {
+          type: "daemon.clients.list.request",
+          observe: true,
+          ...(options?.includeInternal ? { includeInternal: true } : {}),
+        },
+        responseType: "daemon.clients.list.response",
+      });
+      if (!result.subscriptionId) throw new Error("Host omitted subscription identity");
+      const snapshot = {
+        clients: result.clients,
+        inboundDaemons: result.inboundDaemons,
+        subscriptionId: result.subscriptionId,
+      };
       accept(snapshot);
       return snapshot;
     });
@@ -7651,6 +7687,7 @@ export class DaemonClientCore {
           ...this.config.capabilities,
         },
         ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),
+        ...(this.config.clientInfo ? { clientInfo: this.config.clientInfo } : {}),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to send hello message";

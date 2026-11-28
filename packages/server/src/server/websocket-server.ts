@@ -15,6 +15,12 @@ import { createToolHosts } from "./agent/host-operations/index.js";
 import { HOST_ROUTE_OPCODE } from "@getpaseo/protocol/binary-frames/index";
 import { DaemonLinkEndpoint, VirtualHostSocket } from "./connected-hosts/index.js";
 import { ConnectedHosts } from "./connected-hosts/index.js";
+import {
+  buildConnectedClientsSnapshot,
+  createConnectedClientsNotifier,
+  type ConnectedClientIdentity,
+  type ConnectedClientRecord,
+} from "./connected-clients.js";
 import type { TunnelManager } from "./tunnels/index.js";
 import { stat } from "node:fs/promises";
 import {
@@ -492,8 +498,12 @@ interface SessionConnectionBase {
   principalId: string;
   sessionKey: string;
   clientId: string;
+  clientType: WSHelloMessage["clientType"];
+  clientInfo: NonNullable<WSHelloMessage["clientInfo"]> | null;
   appVersion: string | null;
   clientCapabilities: Record<string, unknown> | null;
+  connectedAt: string;
+  lastIdentity: ConnectedClientIdentity | null;
   connectionLogger: pino.Logger;
   sockets: Set<WebSocketLike>;
 }
@@ -526,6 +536,8 @@ interface SocketSessionOptions {
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   hubExecutionAgents?: HubExecutionAgents;
   hubRelationships?: HubRelationshipManagement;
+  listConnectedClients?: SessionOptions["listConnectedClients"];
+  observeConnectedClients?: SessionOptions["observeConnectedClients"];
 }
 
 interface ClosePhysicalSocketParams {
@@ -628,6 +640,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly paseoHome: string;
   private readonly connectedHosts: ConnectedHosts;
+  private readonly connectedClientsNotifier = createConnectedClientsNotifier();
 
   toolHosts() {
     return createToolHosts(this.connectedHosts);
@@ -848,7 +861,11 @@ export class VoiceAssistantWebSocketServer {
     this.workspaceAutoName = workspaceAutoName;
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
-    this.connectedHosts = new ConnectedHosts(paseoHome, { serverId, label: getHostName() });
+    this.connectedHosts = new ConnectedHosts(paseoHome, {
+      serverId,
+      label: getHostName(),
+      version: this.daemonVersion,
+    });
     this.passwordHash = auth?.password;
     this.daemonConfigStore = daemonConfigStore;
     this.mcpBaseUrl = mcpBaseUrl;
@@ -1231,6 +1248,7 @@ export class VoiceAssistantWebSocketServer {
         );
       }
     }
+    this.connectedClientsNotifier.notify();
   }
 
   public prepareForShutdown(): void {
@@ -1246,6 +1264,7 @@ export class VoiceAssistantWebSocketServer {
   public async close(): Promise<void> {
     this.prepareForShutdown();
     this.networkTunnel.close();
+    this.connectedClientsNotifier.close();
     await this.agentMessages.close();
     await this.connectedHosts.close();
     this.unsubscribeSpeechReadiness?.();
@@ -1639,14 +1658,27 @@ export class VoiceAssistantWebSocketServer {
   private createSessionConnection(params: {
     ws: WebSocketLike;
     clientId: string;
+    clientType: WSHelloMessage["clientType"];
+    clientInfo: NonNullable<WSHelloMessage["clientInfo"]> | null;
     appVersion: string | null;
     clientCapabilities: Record<string, unknown> | null;
     connectionLogger: pino.Logger;
     lifecycle: { kind: "reconnectable" } | { kind: "ephemeral-plugin"; pluginId: string };
     admission: SessionAdmission;
+    identity: WebSocketConnectionIdentity;
   }): SessionConnection {
-    const { ws, clientId, appVersion, clientCapabilities, connectionLogger, lifecycle, admission } =
-      params;
+    const {
+      ws,
+      clientId,
+      clientType,
+      clientInfo,
+      appVersion,
+      clientCapabilities,
+      connectionLogger,
+      lifecycle,
+      admission,
+      identity,
+    } = params;
     let connection: SessionConnection | null = null;
 
     const session = this.createSocketSession({
@@ -1660,6 +1692,9 @@ export class VoiceAssistantWebSocketServer {
           ? `plugin:${lifecycle.pluginId}`
           : admission.principalId,
       connectionLogger,
+      listConnectedClients: (options) =>
+        this.listConnectedClientsForSession(connection?.session ?? null, options),
+      observeConnectedClients: (listener) => this.connectedClientsNotifier.observe(listener),
       onMessage: (msg) => {
         if (!connection) {
           return;
@@ -1713,8 +1748,12 @@ export class VoiceAssistantWebSocketServer {
       hubExecutionAgents: admission.hubExecutionAgents,
       sessionKey: sessionConnectionKey(admission.principalId, clientId),
       clientId,
+      clientType,
+      clientInfo,
       appVersion,
       clientCapabilities,
+      connectedAt: new Date().toISOString(),
+      lastIdentity: this.toConnectedClientIdentity(ws, identity),
       connectionLogger,
       sockets: new Set([ws]),
     };
@@ -1842,6 +1881,90 @@ export class VoiceAssistantWebSocketServer {
       daemonVersion: this.daemonVersion,
       daemonRuntimeConfig: this.daemonRuntimeConfig,
       getWebSocketRuntimeMetrics: () => this.lastRuntimeMetricsSnapshot,
+      listConnectedClients: options.listConnectedClients,
+      observeConnectedClients: options.observeConnectedClients,
+    });
+  }
+
+  private toConnectedClientIdentity(
+    ws: WebSocketLike,
+    identity: WebSocketConnectionIdentity | undefined,
+  ): ConnectedClientIdentity | null {
+    if (!identity) return null;
+    const localEndpoint = this.socketLocalEndpoints.get(ws);
+    return {
+      transport: identity.transport,
+      peer: identity.peer,
+      ...(identity.userAgent ? { userAgent: identity.userAgent } : {}),
+      ...(localEndpoint ? { localEndpoint } : {}),
+      ...(identity.hubDaemonId ? { hubDaemonId: identity.hubDaemonId } : {}),
+    };
+  }
+
+  private listConnectedClientsForSession(
+    callerSession: Session | null,
+    options?: { includeInternal?: boolean },
+  ) {
+    const allConnections = new Set<SessionConnection>([
+      ...this.sessions.values(),
+      ...this.externalSessionsByKey.values(),
+    ]);
+    const hubOrigin = this.hubRelationships?.status().hubOrigin ?? null;
+
+    const toRecord = (
+      connection: SessionConnection,
+      routedChildren: readonly ConnectedClientRecord[],
+      hasHostLink: boolean,
+    ): ConnectedClientRecord => {
+      let identity = connection.lastIdentity;
+      for (const socket of connection.sockets) {
+        const current = this.toConnectedClientIdentity(socket, this.socketIdentities.get(socket));
+        if (current) {
+          identity = current;
+          break;
+        }
+      }
+      return {
+        sessionId: connection.session.getSessionId(),
+        clientId: connection.clientId,
+        clientType: connection.clientType,
+        clientInfo: connection.clientInfo,
+        appVersion: connection.appVersion,
+        permissions: connection.session.getPermissions(),
+        connectedAt: connection.connectedAt,
+        socketCount: connection.sockets.size,
+        isCurrentSession: callerSession !== null && connection.session === callerSession,
+        isEphemeralPlugin: connection.lifecycle === "ephemeral-plugin",
+        pluginId: connection.lifecycle === "ephemeral-plugin" ? connection.pluginId : null,
+        isRouted: connection.session.isRouted(),
+        identity,
+        hubOrigin: connection.principalId.startsWith("hub:") ? hubOrigin : null,
+        routedChildren,
+        hasHostLink,
+      };
+    };
+
+    const records: ConnectedClientRecord[] = [];
+    for (const connection of allConnections) {
+      let hasHostLink = false;
+      const childConnections = new Set<SessionConnection>();
+      for (const socket of connection.sockets) {
+        const link = this.hostLinks.get(socket);
+        if (!link) continue;
+        hasHostLink = true;
+        for (const childSocket of link.listChannelSockets()) {
+          const child = this.sessions.get(childSocket);
+          if (child) childConnections.add(child);
+        }
+      }
+      const routedChildren = [...childConnections].map((child) => toRecord(child, [], false));
+      records.push(toRecord(connection, routedChildren, hasHostLink));
+    }
+
+    return buildConnectedClientsSnapshot(records, {
+      includeInternal: options?.includeInternal === true,
+      isTailscaleEndpoint: (localEndpoint) =>
+        this.daemonRuntimeConfig?.isTailscaleEndpoint?.(localEndpoint) === true,
     });
   }
 
@@ -1906,15 +2029,7 @@ export class VoiceAssistantWebSocketServer {
     }
 
     this.clearPendingConnection(ws);
-    let admitted = pending.admission;
-    if (!admitted) throw new Error("Admitted hello has no session admission");
-    if (message.sessionPermissions)
-      admitted = {
-        ...admitted,
-        permissions: admitted.permissions.filter((permission) =>
-          message.sessionPermissions!.includes(permission),
-        ),
-      };
+    const admitted = applySessionPermissionCeiling(pending.admission, message.sessionPermissions);
     pending.admission = admitted;
     pending.identity.clientId = clientId;
     if (message.appVersion) {
@@ -1932,11 +2047,14 @@ export class VoiceAssistantWebSocketServer {
     const connection = this.createSessionConnection({
       ws,
       clientId,
+      clientType: message.clientType,
+      clientInfo: message.clientInfo ?? null,
       appVersion: message.appVersion ?? null,
       clientCapabilities: message.capabilities ?? null,
       connectionLogger,
       lifecycle: pluginId ? { kind: "ephemeral-plugin", pluginId } : { kind: "reconnectable" },
       admission: admitted,
+      identity: pending.identity,
     });
     connection.permissionCeiling = message.sessionPermissions;
     connection.session.setRouted(message.routed === true);
@@ -1947,6 +2065,7 @@ export class VoiceAssistantWebSocketServer {
     }
     pending.identity.sessionId = connection.session.getSessionId();
     this.sendHelloResponse(ws, connection.session, message);
+    this.connectedClientsNotifier.notify();
     connection.connectionLogger.info(
       {
         ...toConnectionLogFields(pending.identity),
@@ -2060,6 +2179,9 @@ export class VoiceAssistantWebSocketServer {
       this.hostLinks.delete(socket);
     }
     existing.permissionCeiling = message.sessionPermissions;
+    existing.clientType = message.clientType;
+    if (message.clientInfo) existing.clientInfo = message.clientInfo;
+    existing.lastIdentity = this.toConnectedClientIdentity(ws, pending.identity);
     existing.session.setPermissions(pending.admission!.permissions);
     existing.session.setRouted(message.routed === true);
     this.assignHostSource(existing, message, pending.admission!.principalId);
@@ -2083,6 +2205,7 @@ export class VoiceAssistantWebSocketServer {
     this.sessions.set(ws, existing);
     pending.identity.sessionId = existing.session.getSessionId();
     this.sendHelloResponse(ws, existing.session, message);
+    this.connectedClientsNotifier.notify();
     pending.connectionLogger.info(
       {
         ...toConnectionLogFields(pending.identity),
@@ -2188,6 +2311,8 @@ export class VoiceAssistantWebSocketServer {
         ...(this.advertiseDaemonStatusRpc && this.daemonRuntimeConfig?.setTailscaleEnabled
           ? { tailscale: true }
           : {}),
+        // COMPAT(connectedClients): added in v0.19.0, remove gate after 2027-06-01.
+        connectedClients: true,
         // COMPAT(speechSettings): added in v0.12.0, remove gate after 2027-04-18.
         speechSettings: true,
         // COMPAT(relayConfig): added in v0.2.6, remove gate after 2027-01-31.
@@ -2493,6 +2618,7 @@ export class VoiceAssistantWebSocketServer {
     connection.sockets.delete(ws);
     connection.session.clearAgentTimelineSubscription(ws);
     this.socketIdentities.delete(ws);
+    this.connectedClientsNotifier.notify();
 
     if (connection.sockets.size === 0) {
       if (connection.lifecycle === "ephemeral-plugin") {
@@ -2582,6 +2708,7 @@ export class VoiceAssistantWebSocketServer {
       logMessage,
     );
     await connection.session.cleanup();
+    this.connectedClientsNotifier.notify();
   }
 
   private handleInvalidInboundMessage(args: {
@@ -2899,8 +3026,10 @@ export class VoiceAssistantWebSocketServer {
             principalId: connection.principalId,
             permissions,
           }),
+        onChannelsChanged: () => this.connectedClientsNotifier.notify(),
       });
       this.hostLinks.set(ws, link);
+      this.connectedClientsNotifier.notify();
     }
     return link;
   }
@@ -2910,8 +3039,11 @@ export class VoiceAssistantWebSocketServer {
     activeConnection: SessionConnection,
     message: Extract<WSInboundMessage, { type: "session" }>,
   ): Promise<void> {
-    const link = this.hostLink(ws, activeConnection);
-    if (link.handles(message.message)) {
+    const link =
+      message.message.type === "hosts.link.open.request" || this.hostLinks.has(ws)
+        ? this.hostLink(ws, activeConnection)
+        : null;
+    if (link?.handles(message.message)) {
       await activeConnection.session.delivery.request(ws, message.message, () =>
         link.dispatch(message.message),
       );
@@ -3450,6 +3582,20 @@ function createWebSocketConnectionIdentity(
 
 function isHandshakeMessage(message: WSInboundMessage): boolean {
   return message.type === "hello" || message.type === "tunnel_hello";
+}
+
+function applySessionPermissionCeiling(
+  admission: SessionAdmission | null,
+  sessionPermissions: readonly DaemonPermission[] | undefined,
+): SessionAdmission {
+  if (!admission) throw new Error("Admitted hello has no session admission");
+  if (!sessionPermissions) return admission;
+  return {
+    ...admission,
+    permissions: admission.permissions.filter((permission) =>
+      sessionPermissions.includes(permission),
+    ),
+  };
 }
 
 function sessionConnectionKey(principalId: string, clientId: string): string {

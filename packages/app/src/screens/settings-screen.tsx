@@ -94,6 +94,7 @@ import {
   type AppLanguage,
   type SupportedLocale,
 } from "@/i18n/locales";
+import { PairDeviceHeaderAction } from "@/devices";
 import {
   HostDevicesPage,
   HostToolsPage,
@@ -1453,11 +1454,12 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
 
   const pluginGalleryServerId =
     view.kind === "host" && view.section === "plugins" ? view.serverId : null;
-  const detailActions = useMemo(
-    () =>
-      pluginGalleryServerId ? <PluginGalleryMenu serverId={pluginGalleryServerId} /> : undefined,
-    [pluginGalleryServerId],
-  );
+  const devicesServerId = view.kind === "host" && view.section === "devices" ? view.serverId : null;
+  const detailActions = useMemo(() => {
+    if (pluginGalleryServerId) return <PluginGalleryMenu serverId={pluginGalleryServerId} />;
+    if (devicesServerId) return <PairDeviceHeaderAction serverId={devicesServerId} />;
+    return undefined;
+  }, [devicesServerId, pluginGalleryServerId]);
   // The gallery and a plugin's page share one width, so opening a plugin keeps the page edges put.
   const detailWidth = pluginGalleryServerId || pluginPage ? "wide" : "default";
 

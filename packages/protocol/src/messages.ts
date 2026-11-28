@@ -1,5 +1,17 @@
 import { AgentMessageSchema } from "./agent-message.js";
 import {
+  DAEMON_PERMISSIONS,
+  DaemonPermissionSchema,
+  type DaemonPermission,
+} from "./daemon-permissions.js";
+import {
+  HelloClientInfoSchema,
+  DaemonClientsListRequestSchema,
+  DaemonClientsListResponseSchema,
+  DaemonClientsChangedSchema,
+} from "./daemon-clients.js";
+export * from "./daemon-clients.js";
+import {
   HostsListRequestSchema,
   HostsAddRequestSchema,
   HostsUpdateRequestSchema,
@@ -174,19 +186,7 @@ export {
 // Mutable daemon config schemas (shared between server store and client)
 // ---------------------------------------------------------------------------
 
-export const DAEMON_PERMISSIONS = [
-  "daemon.read",
-  "daemon.manage",
-  "tunnel.manage",
-  "access.manage",
-  "workspace.read",
-  "workspace.write",
-  "workspace.manage",
-  "automation.manage",
-  "hub.execute",
-] as const;
-export const DaemonPermissionSchema = z.enum(DAEMON_PERMISSIONS);
-export type DaemonPermission = z.infer<typeof DaemonPermissionSchema>;
+export { DAEMON_PERMISSIONS, DaemonPermissionSchema, type DaemonPermission };
 
 export const HexColorSchema = z
   .string()
@@ -3656,6 +3656,7 @@ export const SubscriptionReleaseResponseSchema = z.object({
 });
 
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
+  DaemonClientsListRequestSchema,
   HostsListRequestSchema,
   HostsAddRequestSchema,
   HostsUpdateRequestSchema,
@@ -4138,6 +4139,8 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(daemonStatusRpc): added in v0.1.76, remove gate after 2026-11-18.
         daemonStatusRpc: z.boolean().optional(),
         tailscale: z.boolean().optional(),
+        // COMPAT(connectedClients): added in v0.19.0, remove gate after 2027-06-01.
+        connectedClients: z.boolean().optional(),
         // COMPAT(daemonConfigReload): added in v0.4.0, remove gate after 2027-02-14.
         daemonConfigReload: z.boolean().optional(),
         // COMPAT(speechSettings): added in v0.12.0, remove gate after 2027-04-18.
@@ -7875,6 +7878,8 @@ export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
 });
 
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
+  DaemonClientsListResponseSchema,
+  DaemonClientsChangedSchema,
   HostsListResponseSchema,
   HostsChangedSchema,
   HostsAddResponseSchema,
@@ -8676,6 +8681,8 @@ export const WSHelloMessageSchema = z.object({
     ])
     .optional(),
   appVersion: z.string().optional(),
+  // COMPAT(connectedClients): added in v0.19.0; older clients omit clientInfo and older daemons ignore it.
+  clientInfo: HelloClientInfoSchema.optional(),
   capabilities: z
     .object({
       voice: z.boolean().optional(),
