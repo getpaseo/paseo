@@ -474,7 +474,8 @@ configuration; `agent.open.before` contributes launch-only `env`, `tools`, `mcpS
 `packages/server/src/server/plugins/session-attachments.ts` records what each plugin contributed to
 each live session. A plugin start, stop, or reload reruns only that plugin's callback per session,
 swaps its tools in place, and reopens a session only when its launch would differ. A reopen closes
-the provider process, so a reload must not reopen agents the plugin does not change.
+the provider process, so a reload must not reopen agents the plugin does not change, and a changed
+launch waits until the agent's provider subagents and background work end.
 
 ### Launch wrap
 

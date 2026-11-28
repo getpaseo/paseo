@@ -1105,7 +1105,7 @@ export class AgentManager {
   /**
    * Reopens an idle agent whose plugin attachment changed in a way the running provider session cannot pick up:
    * env, instructions, MCP servers, or tool definitions. A plugin change that leaves the agent's launch as it was
-   * keeps the session, with its background work and subagents.
+   * keeps the session, with its background work and subagents. A changed launch waits until that work ends.
    */
   async reloadStalePluginSession(agentId: string): Promise<void> {
     if (!(await this.needsPluginSessionReload(agentId))) return;
@@ -1120,7 +1120,21 @@ export class AgentManager {
   private async needsPluginSessionReload(agentId: string): Promise<boolean> {
     const agent = this.getAgent(agentId);
     if (!agent || agent.lifecycle === "closed" || this.hasInFlightRun(agentId)) return false;
-    return (await this.refreshPluginTools(agentId)).stale;
+    if (!(await this.refreshPluginTools(agentId)).stale) return false;
+    const backgroundWorkItemCount = this.backgroundWork
+      .list(agentId)
+      .filter((item) => !isDaemonBackgroundWorkItem(item)).length;
+    const runningSubagentCount = this.providerSubagents
+      .list(agentId)
+      .filter((subagent) => subagent.status === "running").length;
+    if (backgroundWorkItemCount === 0 && runningSubagentCount === 0) return true;
+    // Reopening closes the provider process, and its shells, monitors and subagents with it. The session stays stale,
+    // so the first idle prompt after that work ends reopens it. Daemon-owned items (heartbeats) outlive the session.
+    this.logger.info(
+      { agentId, backgroundWorkItemCount, runningSubagentCount },
+      "Deferring stale plugin session reopen while background work is active",
+    );
+    return false;
   }
 
   getPluginTools(agentId: string): readonly AttachedAgentTool[] {

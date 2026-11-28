@@ -609,6 +609,10 @@ the session continues as if the plugin stopped.
   plugin instance answers the calls.
 - If the env, instructions, MCP servers, tool definitions, or the plugin that provides a tool
   differ from what the session launched with, the session reopens before its next idle prompt. A running turn continues without interruption.
+  Provider subagents, background shells, and monitors that outlive the turn also finish first: the
+  session reopens at the first idle prompt after they end. An agent that keeps a background process
+  running, such as a dev server, stays on its old launch until that process ends or you apply the
+  change immediately.
   A callback whose result depends on `reason` always differs from a `create` open. Reverting the
   change before that prompt cancels the reopen.
 - If nothing differs, the session keeps running with its background work and subagents. A plugin
