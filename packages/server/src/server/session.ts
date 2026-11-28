@@ -159,7 +159,7 @@ import {
 } from "./agent/agent-timeline-content.js";
 import { parsePluginClientId } from "./plugins/plugin-session-identity.js";
 import { buildAgentForkContextAttachment } from "./agent/activity-curator.js";
-import { buildAgentPrompt } from "./agent/prompt-attachments.js";
+import { buildAgentPrompt, resolveAgentPrompt } from "./agent/prompt-attachments.js";
 import type { StructuredGenerationDaemonConfig } from "./agent/structured-generation-providers.js";
 import {
   getAgentStreamEventTurnId,
@@ -730,12 +730,13 @@ function resolveWorkspaceLabelService(
 }
 
 function hasInitialCreationPrompt(
-  request?: Pick<AgentCreateRequest, "initialPrompt" | "images" | "attachments">,
+  request?: Pick<AgentCreateRequest, "initialPrompt" | "images" | "uploadedImages" | "attachments">,
 ): boolean {
   return Boolean(
     request &&
-    buildAgentPrompt(request.initialPrompt?.trim() ?? "", request.images, request.attachments)
-      .length,
+    ((request.uploadedImages?.length ?? 0) > 0 ||
+      buildAgentPrompt(request.initialPrompt?.trim() ?? "", request.images, request.attachments)
+        .length > 0),
   );
 }
 
@@ -5057,6 +5058,7 @@ export class Session {
       worktree,
       autoArchive,
       images,
+      uploadedImages,
       attachments,
       env,
     } = msg;
@@ -5130,6 +5132,7 @@ export class Session {
           clientMessageId,
           outputSchema,
           images,
+          uploadedImages,
           attachments,
           labels: resolvedIntent.intent.labels,
           metadata: msg.metadata,
@@ -9301,7 +9304,13 @@ export class Session {
     try {
       const agentId = resolved.agentId;
 
-      const prompt = buildAgentPrompt(msg.text, msg.images, msg.attachments);
+      const prompt = await resolveAgentPrompt({
+        paseoHome: this.paseoHome,
+        text: msg.text,
+        images: msg.images,
+        uploadedImages: msg.uploadedImages,
+        attachments: msg.attachments,
+      });
       this.sessionLogger.trace(
         {
           agentId,

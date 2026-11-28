@@ -1,10 +1,79 @@
 import { randomUUID } from "node:crypto";
-import { appendFile, mkdir, rm, writeFile } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
+import { constants } from "node:fs";
+import { appendFile, mkdir, open, realpath, rm, writeFile } from "node:fs/promises";
+import { basename, extname, isAbsolute, join, relative, sep } from "node:path";
 
 import { FileTransferOpcode, type FileTransferFrame } from "@getpaseo/protocol/binary-frames/index";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
+import type { UploadedImage } from "@getpaseo/protocol/messages";
 import type { FileUploadRequest, FileUploadResponse } from "../messages.js";
+
+export const MAX_UPLOADED_IMAGE_BYTES = 50 * 1024 * 1024;
+const READ_UPLOAD_OPEN_FLAGS =
+  process.platform === "win32" ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NOFOLLOW;
+
+export interface ResolvedUploadedImageFile {
+  bytes: Buffer;
+  resolvedPath: string;
+  size: number;
+}
+
+/**
+ * Reads an uploaded image from disk after proving its canonical realpath is strictly
+ * inside `join(paseoHome, "uploads")` and that the opened target is a bounded regular file.
+ */
+export async function readUploadedImageFile(input: {
+  paseoHome: string;
+  uploadedImage: UploadedImage;
+}): Promise<ResolvedUploadedImageFile> {
+  const uploadsRootPath = join(input.paseoHome, "uploads");
+  let uploadsRoot: string;
+  try {
+    uploadsRoot = await realpath(uploadsRootPath);
+  } catch {
+    throw new Error("Uploaded image path is outside the uploads directory.");
+  }
+
+  const candidatePath = input.uploadedImage.path.trim();
+  if (!candidatePath) {
+    throw new Error("Uploaded image path is outside the uploads directory.");
+  }
+
+  let resolvedPath: string;
+  try {
+    resolvedPath = await realpath(candidatePath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      throw new Error(`Uploaded image not found: ${input.uploadedImage.fileName}`, {
+        cause: error,
+      });
+    }
+    throw error;
+  }
+
+  const rel = relative(uploadsRoot, resolvedPath);
+  if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new Error("Uploaded image path is outside the uploads directory.");
+  }
+
+  const handle = await open(resolvedPath, READ_UPLOAD_OPEN_FLAGS);
+  try {
+    const stats = await handle.stat();
+    if (!stats.isFile()) {
+      throw new Error("Uploaded image path is not a regular file.");
+    }
+    if (stats.size > MAX_UPLOADED_IMAGE_BYTES) {
+      throw new Error(
+        `Uploaded image exceeds the ${MAX_UPLOADED_IMAGE_BYTES} byte limit (${stats.size} bytes).`,
+      );
+    }
+    const bytes = await handle.readFile();
+    return { bytes, resolvedPath, size: bytes.byteLength };
+  } finally {
+    await handle.close();
+  }
+}
 
 interface FileUploadStoreOptions {
   paseoHome: string;

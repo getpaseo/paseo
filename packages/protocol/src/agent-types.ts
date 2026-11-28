@@ -409,8 +409,22 @@ export interface AgentTaskItem {
   activeForm?: string;
 }
 
+export interface UploadedImage {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  path: string;
+}
+
 export type AgentTimelineItem =
-  | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
+  | {
+      type: "user_message";
+      text: string;
+      messageId?: string;
+      clientMessageId?: string;
+      images?: UploadedImage[];
+    }
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem

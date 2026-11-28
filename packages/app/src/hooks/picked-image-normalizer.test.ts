@@ -128,7 +128,7 @@ describe("native image attachment picker", () => {
     ]);
   });
 
-  it("downscales an oversized portrait JPEG and keeps it JPEG", async () => {
+  it("preserves a full-resolution portrait JPEG without resizing or re-encoding", async () => {
     const { render, calls } = fakeRenderer();
 
     const result = await normalizePickedImageAssetsWith(
@@ -144,16 +144,17 @@ describe("native image attachment picker", () => {
       render,
     );
 
-    expect(result[0]?.mimeType).toBe("image/jpeg");
-    expect(calls).toEqual([
+    expect(result).toEqual([
       {
-        uri: "file:///camera/photo.jpg",
-        options: { format: "jpeg", compress: 0.85, resize: { height: MAX_PICKED_IMAGE_EDGE } },
+        source: { kind: "file_uri", uri: "file:///camera/photo.jpg" },
+        mimeType: "image/jpeg",
+        fileName: "photo.jpg",
       },
     ]);
+    expect(calls).toEqual([]);
   });
 
-  it("downscales an oversized screenshot and keeps it lossless PNG", async () => {
+  it("preserves a full-resolution PNG screenshot without resizing or re-encoding", async () => {
     const { render, calls } = fakeRenderer();
 
     const result = await normalizePickedImageAssetsWith(
@@ -161,6 +162,7 @@ describe("native image attachment picker", () => {
         {
           uri: "file:///photos/screenshot.png",
           mimeType: "image/png",
+          fileName: "screenshot.png",
           width: 1290,
           height: 2796,
         },
@@ -168,19 +170,21 @@ describe("native image attachment picker", () => {
       render,
     );
 
-    expect(result[0]?.mimeType).toBe("image/png");
-    expect(calls[0]?.options).toEqual({
-      format: "png",
-      compress: 0.85,
-      resize: { height: MAX_PICKED_IMAGE_EDGE },
-    });
+    expect(result).toEqual([
+      {
+        source: { kind: "file_uri", uri: "file:///photos/screenshot.png" },
+        mimeType: "image/png",
+        fileName: "screenshot.png",
+      },
+    ]);
+    expect(calls).toEqual([]);
   });
 
-  it("converts other unsupported formats to PNG so transparency survives", async () => {
+  it("converts other unsupported formats to full-resolution PNG so transparency survives", async () => {
     const { render, calls } = fakeRenderer();
 
     const result = await normalizePickedImageAssetsWith(
-      [{ uri: "file:///photos/sticker.webp", mimeType: "image/webp", width: 512, height: 512 }],
+      [{ uri: "file:///photos/sticker.webp", mimeType: "image/webp", width: 3200, height: 2400 }],
       render,
     );
 

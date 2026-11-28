@@ -17,9 +17,8 @@ export interface ExpoImagePickerAssetLike {
 }
 
 /**
- * Longest edge, in pixels, of an image attached from a phone. Models downscale
- * larger images anyway, and full-resolution photos exceed the message size limit
- * once they are inlined in the send request.
+ * Longest edge, in pixels, applied when converting HEIC/HEIF camera photos to JPEG.
+ * Already-supported JPEG/PNG assets keep their original resolution and quality.
  */
 export const MAX_PICKED_IMAGE_EDGE = 2000;
 const JPEG_COMPRESS = 0.85;
@@ -142,8 +141,7 @@ export async function normalizePickedImageAssetsWith(
   return await Promise.all(
     assets.map(async (asset) => {
       const supportedFormat = pickedAssetSupportedFormat(asset);
-      const resize = resizeToFit(asset);
-      if (supportedFormat && !resize) {
+      if (supportedFormat) {
         return {
           source: { kind: "file_uri", uri: asset.uri },
           mimeType: supportedFormat.mimeType,
@@ -151,7 +149,8 @@ export async function normalizePickedImageAssetsWith(
         };
       }
 
-      const outputFormat = supportedFormat ?? convertedFormat(asset);
+      const outputFormat = convertedFormat(asset);
+      const resize = isHeifAsset(asset) ? resizeToFit(asset) : null;
       const renderedUri = await render(asset.uri, {
         format: outputFormat.render,
         compress: JPEG_COMPRESS,

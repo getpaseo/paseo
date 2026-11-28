@@ -24,7 +24,7 @@ import {
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
-import { encodeImages } from "@/utils/encode-images";
+import { uploadImageAttachments } from "@/attachments/service";
 import { toErrorMessage } from "@/utils/error-messages";
 import {
   resolveComposerAttachmentSubmitFormat,
@@ -123,7 +123,7 @@ function buildCreateAgentOptions({
   composerState,
   text,
   attachments,
-  encodedImages,
+  uploadedImages,
   workspaceDirectory,
   workspaceId,
   provider,
@@ -136,7 +136,7 @@ function buildCreateAgentOptions({
   };
   text: string;
   attachments: NonNullable<CreateAgentRequestOptions["attachments"]>;
-  encodedImages: NonNullable<CreateAgentRequestOptions["images"]> | null;
+  uploadedImages: NonNullable<CreateAgentRequestOptions["uploadedImages"]> | null;
   workspaceDirectory: string;
   workspaceId: string;
   provider: CreateAgentRequestOptions["provider"];
@@ -154,7 +154,7 @@ function buildCreateAgentOptions({
       ? { systemPrompt: composerState.selectedSystemPrompt }
       : {}),
     ...(text.trim() ? { initialPrompt: text.trim() } : {}),
-    ...(encodedImages && encodedImages.length > 0 ? { images: encodedImages } : {}),
+    ...(uploadedImages && uploadedImages.length > 0 ? { uploadedImages } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),
   };
 }
@@ -330,14 +330,20 @@ export function WorkspaceSetupDialog() {
             supportsForgeAttachments: supportsForgeSearch,
           }),
         });
-        const encodedImages = await encodeImages(wirePayload.images);
+        const uploadedImages =
+          wirePayload.images.length > 0
+            ? await uploadImageAttachments({
+                client: withConnectedClient(),
+                images: wirePayload.images,
+              })
+            : undefined;
         if (!pendingWorkspaceSetup) throw new Error(t("workspaceSetup.errors.pendingRequired"));
         let createdAgent: AgentSnapshotPayload | undefined;
         const { workspaceId: _workspaceId, ...agentInput } = buildCreateAgentOptions({
           composerState,
           text,
           attachments: wirePayload.attachments,
-          encodedImages: encodedImages ?? null,
+          uploadedImages: uploadedImages ?? null,
           workspaceDirectory: cwd,
           workspaceId: "",
           provider: composerState.selectedProvider,
@@ -387,6 +393,7 @@ export function WorkspaceSetupDialog() {
       navigateAfterCreation,
       serverId,
       ensureWorkspace,
+      withConnectedClient,
       t,
       toast,
       supportsForgeSearch,

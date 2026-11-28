@@ -46,6 +46,9 @@ function createTestStore(): AttachmentStore {
     async encodeBase64() {
       throw new Error("not used in this test");
     },
+    async readBytes() {
+      throw new Error("not used in this test");
+    },
     async resolvePreviewUrl() {
       throw new Error("not used in this test");
     },

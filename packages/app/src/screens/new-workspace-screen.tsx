@@ -1,7 +1,7 @@
 import { useAddHost } from "@/hosts/add-host";
 import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSnapshotPayload, CreationSnapshot } from "@getpaseo/protocol/messages";
-import { encodeImages } from "@/utils/encode-images";
+import { uploadImageAttachments } from "@/attachments/service";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -519,7 +519,10 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
   const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
     format: attachmentSubmitFormat,
   });
-  const images = await encodeImages(wirePayload.images);
+  const uploadedImages =
+    wirePayload.images.length > 0
+      ? await uploadImageAttachments({ client: input.resolveClient(), images: wirePayload.images })
+      : undefined;
   let navigated = false;
   const delivery: { outcome: SubmitOutcome } = { outcome: "background" };
   const initialAgent: NonNullable<CreateWorkspaceRequestOptions["agent"]> = {
@@ -537,7 +540,7 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
     ...(Object.keys(composerState.metadata).length > 0 ? { metadata: composerState.metadata } : {}),
     initialPrompt: text,
     clientMessageId: `${input.draftId}:initial-message`,
-    images: images?.length ? images : undefined,
+    uploadedImages: uploadedImages?.length ? uploadedImages : undefined,
     attachments: wirePayload.attachments?.length ? wirePayload.attachments : undefined,
   };
   const execute = async (): Promise<AgentSnapshotPayload> => {

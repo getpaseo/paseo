@@ -162,6 +162,17 @@ function submittedPromptText(prompt: AgentPromptInput): string {
     .trim();
 }
 
+function submittedPromptImages(
+  prompt: AgentPromptInput,
+): import("@getpaseo/protocol/agent-types").UploadedImage[] {
+  if (typeof prompt === "string") {
+    return [];
+  }
+  return prompt.flatMap((block) =>
+    block.type === "image" && block.uploadedImage ? [block.uploadedImage] : [],
+  );
+}
+
 export class AgentManagerShuttingDownError extends Error {
   constructor() {
     super("Agent manager is shutting down");
@@ -6086,10 +6097,12 @@ export class AgentManager {
     outcome: "accepted" | "rejected",
     options?: { messageId?: string; providerMessageId?: string; turnId?: string },
   ): void {
+    const images = submittedPromptImages(prompt);
     const items = projectAgentMessages({
       type: "user_message",
       text: submittedPromptText(prompt),
       clientMessageId,
+      ...(images.length > 0 ? { images } : {}),
       ...(options?.messageId ? { messageId: options.messageId } : {}),
     });
     for (const item of items) {

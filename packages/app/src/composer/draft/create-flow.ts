@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useReducer } from "react";
 import { useTranslation } from "react-i18next";
-import type { ComposerAttachment } from "@/attachments/types";
+import type { AttachmentMetadata, ComposerAttachment } from "@/attachments/types";
 import {
   resolveComposerAttachmentSubmitFormat,
   splitComposerAttachmentsForSubmit,
@@ -8,14 +8,14 @@ import {
 import { isActiveCreateFlowForDraft, useCreateFlowStore } from "@/stores/create-flow-store";
 import { handoffCreatedAgentMessageSubmission } from "@/composer/submission/writer";
 import { useSessionStore } from "@/stores/session-store";
-import { createUserMessage, type UserMessageImageAttachment } from "@/types/stream";
+import { createUserMessage } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 
 interface CreateAttempt {
   clientMessageId: string;
   text: string;
   timestamp: Date;
-  images?: UserMessageImageAttachment[];
+  images?: AttachmentMetadata[];
   attachments?: AgentAttachment[];
 }
 
@@ -82,7 +82,7 @@ interface SubmitContext {
 interface CreateRequestContext {
   attempt: CreateAttempt;
   text: string;
-  images?: UserMessageImageAttachment[];
+  images?: AttachmentMetadata[];
   attachments?: AgentAttachment[];
   cwd: string;
 }

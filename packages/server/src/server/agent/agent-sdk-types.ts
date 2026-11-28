@@ -202,8 +202,16 @@ export interface AgentPersistenceHandle {
 }
 
 export type AgentPromptContentBlock =
-  | { type: "text"; text: string }
-  | { type: "image"; data: string; mimeType: string }
+  | {
+      type: "text";
+      text: string;
+    }
+  | {
+      type: "image";
+      data: string;
+      mimeType: string;
+      uploadedImage?: import("@getpaseo/protocol/agent-types").UploadedImage;
+    }
   | AgentAttachment;
 
 export type AgentPromptInput = string | AgentPromptContentBlock[];

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { UserMessageImageAttachment } from "@/types/stream";
+import type { AttachmentMetadata } from "@/attachments/types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 
 export type CreateFlowLifecycleState = "active" | "abandoned" | "sent";
@@ -14,7 +14,7 @@ export interface PendingCreateAttempt {
   timestamp: number;
   lifecycle: CreateFlowLifecycleState;
   errorMessage?: string;
-  images?: UserMessageImageAttachment[];
+  images?: AttachmentMetadata[];
   attachments?: AgentAttachment[];
 }
 

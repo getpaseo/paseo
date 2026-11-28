@@ -10,7 +10,7 @@ import type {
   CreatePaseoWorktreeWorkflowFn,
   CreatePaseoWorktreeWorkflowResult,
 } from "../../worktree-session.js";
-import type { AgentAttachment, FirstAgentContext } from "../../messages.js";
+import type { AgentAttachment, FirstAgentContext, UploadedImage } from "../../messages.js";
 import type { AgentManager, CreateAgentOptions, ManagedAgent } from "../agent-manager.js";
 import type { AgentPromptInput, AgentRunOptions, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentStorage } from "../agent-storage.js";
@@ -18,7 +18,7 @@ import type { AgentOwner } from "../agent-owner.js";
 import type { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
 import { startCreatedAgentInitialPrompt } from "../agent-prompt.js";
 import { resolveCreateAgentTitles } from "../create-agent-title.js";
-import { buildAgentPrompt } from "../prompt-attachments.js";
+import { resolveAgentPrompt } from "../prompt-attachments.js";
 import { normalizeClientMessageId, resolveClientMessageId } from "../../client-message-id.js";
 import { resolveRequiredProviderModel, type ResolvedProviderModel } from "../mcp-shared.js";
 import {
@@ -68,6 +68,7 @@ export interface CreateAgentFromSessionInput {
   clientMessageId?: string;
   outputSchema?: Record<string, unknown>;
   images?: Array<{ data: string; mimeType: string }>;
+  uploadedImages?: UploadedImage[];
   attachments?: AgentAttachment[];
   labels: Record<string, string>;
   metadata?: CreateAgentOptions["metadata"];
@@ -249,7 +250,13 @@ async function resolveSessionCreateAgent(
     modeId: resolvedCreateConfig.modeId,
     providerOptions: resolvedCreateConfig.providerOptions,
   };
-  const prompt = buildAgentPrompt(trimmedPrompt ?? "", input.images, input.attachments);
+  const prompt = await resolveAgentPrompt({
+    paseoHome: dependencies.paseoHome,
+    text: trimmedPrompt ?? "",
+    images: input.images,
+    uploadedImages: input.uploadedImages,
+    attachments: input.attachments,
+  });
   const hasPromptContent = Array.isArray(prompt) ? prompt.length > 0 : prompt.length > 0;
   const clientMessageId = normalizeClientMessageId(input.clientMessageId);
   const runOptions: AgentRunOptions | undefined =

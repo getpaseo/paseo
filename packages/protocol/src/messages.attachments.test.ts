@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AgentCreateRequestSchema,
   AgentForkContextRequestMessageSchema,
   AgentForkContextResponseMessageSchema,
+  AgentTimelineItemPayloadSchema,
   CreateAgentRequestMessageSchema,
   CreatePaseoWorktreeRequestSchema,
   SendAgentMessageRequestSchema,
+  SendAgentMessageSchema,
+  WorkspaceInitialAgentSchema,
 } from "./messages.js";
 
 describe("shared messages attachments", () => {
@@ -450,6 +454,89 @@ describe("shared messages attachments", () => {
       action: "checkout",
       refName: "head-ref",
       githubPrNumber: 42,
+    });
+  });
+
+  it("preserves optional uploadedImages across send and create request schemas", () => {
+    const uploadedImage = {
+      id: "upload_abc",
+      fileName: "photo.jpg",
+      mimeType: "image/jpeg",
+      size: 4096,
+      path: "/home/user/.paseo/uploads/upload_abc/photo.jpg",
+    };
+
+    const sendReq = SendAgentMessageRequestSchema.parse({
+      type: "send_agent_message_request",
+      requestId: "req-img",
+      agentId: "agent-1",
+      text: "Inspect this photo",
+      uploadedImages: [uploadedImage],
+    });
+    expect(sendReq.uploadedImages).toEqual([uploadedImage]);
+
+    const legacySend = SendAgentMessageSchema.parse({
+      type: "send_agent_message",
+      agentId: "agent-1",
+      text: "Inspect this photo",
+      uploadedImages: [uploadedImage],
+    });
+    expect(legacySend.uploadedImages).toEqual([uploadedImage]);
+
+    const createReq = CreateAgentRequestMessageSchema.parse({
+      type: "create_agent_request",
+      requestId: "req-create-img",
+      config: { provider: "claude", cwd: "/tmp/repo" },
+      uploadedImages: [uploadedImage],
+    });
+    expect(createReq.uploadedImages).toEqual([uploadedImage]);
+
+    const agentCreateReq = AgentCreateRequestSchema.parse({
+      type: "agent.create.request",
+      requestId: "req-agent-create-img",
+      config: { provider: "claude", cwd: "/tmp/repo" },
+      uploadedImages: [uploadedImage],
+    });
+    expect(agentCreateReq.uploadedImages).toEqual([uploadedImage]);
+
+    const workspaceAgent = WorkspaceInitialAgentSchema.parse({
+      config: { provider: "claude", cwd: "/tmp/repo" },
+      uploadedImages: [uploadedImage],
+    });
+    expect(workspaceAgent.uploadedImages).toEqual([uploadedImage]);
+  });
+
+  it("preserves optional uploaded images on user_message timeline items and stays optional", () => {
+    const uploadedImage = {
+      id: "upload_abc",
+      fileName: "photo.jpg",
+      mimeType: "image/jpeg",
+      size: 4096,
+      path: "/home/user/.paseo/uploads/upload_abc/photo.jpg",
+    };
+
+    const withImages = AgentTimelineItemPayloadSchema.parse({
+      type: "user_message",
+      text: "Look",
+      messageId: "msg-1",
+      clientMessageId: "client-1",
+      images: [uploadedImage],
+    });
+    expect(withImages).toEqual({
+      type: "user_message",
+      text: "Look",
+      messageId: "msg-1",
+      clientMessageId: "client-1",
+      images: [uploadedImage],
+    });
+
+    const withoutImages = AgentTimelineItemPayloadSchema.parse({
+      type: "user_message",
+      text: "Plain text",
+    });
+    expect(withoutImages).toEqual({
+      type: "user_message",
+      text: "Plain text",
     });
   });
 });

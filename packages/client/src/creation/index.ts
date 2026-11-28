@@ -98,7 +98,10 @@ export class CreationClient {
     if (input.agentId) throw new Error("Update the host to use caller-selected creation IDs.");
     const { idempotencyKey: _key, ...unkeyed } = input;
     const hasPrompt = Boolean(
-      input.initialPrompt || input.images?.length || input.attachments?.length,
+      input.initialPrompt ||
+      input.images?.length ||
+      input.uploadedImages?.length ||
+      input.attachments?.length,
     );
     // COMPAT(creationLifecycle): added in v0.8.0, remove after 2027-03-11 once the daemon floor supports creationLifecycle.
     // Preserve the original create-and-prompt RPC: old hosts use its prompt for
