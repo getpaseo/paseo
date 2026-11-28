@@ -16,6 +16,8 @@ export const ActivityIndicator = createUnistylesElement(RN.ActivityIndicator);
 export const KeyboardAvoidingView = createUnistylesElement(RN.KeyboardAvoidingView);
 export const SafeAreaView = createUnistylesElement(RN.SafeAreaView);
 export const Switch = createUnistylesElement(RN.Switch);
+export const RefreshControl = createUnistylesElement(RN.RefreshControl);
+export const VirtualizedList = createUnistylesElement(RN.VirtualizedList);
 export const StatusBar = RN.StatusBar;
 export const Animated = {
   ...RN.Animated,

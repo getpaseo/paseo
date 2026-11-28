@@ -123,6 +123,28 @@ test.skipIf(!endpoint || appearanceFixture)(
   45_000,
 );
 
+test.skipIf(!endpoint || appearanceFixture)(
+  "real Paseo opens History",
+  async () => {
+    // Regression: the agent list's RefreshControl was undefined on GPUI, so History rendered
+    // "Element type is invalid" instead of the list. The daemon needs at least one agent.
+    const history = await nodeWithId("sidebar-sessions");
+    expect(await request("click", { tag: history.tag })).toEqual({ clicked: true });
+    // The list mounts after the agents load, so wait for a row, not for the search input.
+    await expect
+      .poll(
+        async () => {
+          const current = await nodes();
+          if (current.some((node) => node.testID === "root-error-boundary")) return "error screen";
+          return current.some((node) => node.testID.startsWith("agent-row-")) ? "list" : "loading";
+        },
+        { timeout: 15_000 },
+      )
+      .toBe("list");
+  },
+  30_000,
+);
+
 async function nodeWithId(testID: string) {
   await expect.poll(async () => (await nodes()).some((node) => node.testID === testID)).toBe(true);
   return (await nodes()).find((node) => node.testID === testID)!;
