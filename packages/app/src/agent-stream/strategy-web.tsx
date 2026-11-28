@@ -57,8 +57,10 @@ const AUTO_SCROLL_RESUME_THRESHOLD_PX = 1;
 const HISTORY_START_SETTLE_FRAMES = 2;
 const HISTORY_START_SLOT_HEIGHT_PX = 32;
 const CONTENT_PADDING_TOP_PX = 16;
+const CONTENT_PADDING_BOTTOM_PX = 16;
 const UPWARD_INPUT_EVIDENCE_TIMEOUT_MS = 100;
 const VIRTUALIZER_SCROLL_MARGIN_PX = HISTORY_START_SLOT_HEIGHT_PX + CONTENT_PADDING_TOP_PX;
+const MAX_SYNC_LAYOUT_PASSES = 16;
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -116,6 +118,127 @@ function isScrollContainerMeasurable(
   scrollContainer: Pick<HTMLElement, "clientHeight" | "scrollHeight">,
 ): boolean {
   return scrollContainer.clientHeight > 0 && scrollContainer.scrollHeight > 0;
+}
+
+function getUnclampedScrollTop(
+  scrollContainer: Pick<HTMLElement, "scrollTop" | "clientHeight" | "scrollHeight">,
+  lastKnownScrollTop: number,
+): number {
+  if (!isScrollContainerMeasurable(scrollContainer)) {
+    return scrollContainer.scrollTop;
+  }
+  const maxScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+  const isBrowserClamped =
+    maxScrollTop < lastKnownScrollTop - 0.5 &&
+    Math.abs(scrollContainer.scrollTop - maxScrollTop) <= 1;
+  return isBrowserClamped ? lastKnownScrollTop : scrollContainer.scrollTop;
+}
+
+interface MountedRowOffset {
+  topWithoutVirtual: number;
+  height: number;
+  mountedIndex: number;
+}
+
+interface MountedRowSnapshot {
+  firstRowId: string | null;
+  offsets: Map<string, MountedRowOffset>;
+}
+
+function findNonVirtualizedRowIndex(
+  segments: Pick<StreamRenderInput["segments"], "historyMounted" | "liveHead">,
+  rowId: string,
+): number {
+  const mountedIndex = segments.historyMounted.findIndex((row) => row.id === rowId);
+  if (mountedIndex >= 0) {
+    return mountedIndex;
+  }
+  const liveHeadIndex = segments.liveHead.findIndex((row) => row.id === rowId);
+  return liveHeadIndex >= 0 ? segments.historyMounted.length + liveHeadIndex : -1;
+}
+
+interface CommittedLayoutMetrics {
+  hasCommittedFlowHeight: boolean;
+  virtualSpacerHeight: number;
+  nonVirtualFlowHeight: number;
+  nonVirtualRowCount: number;
+}
+
+interface ProjectRangeOffsetInput {
+  container: HTMLElement;
+  virtualizer: Virtualizer<HTMLElement, Element>;
+  followOutput: boolean;
+  isJumpSettling: boolean;
+  lastClampedBaselineScrollTop: number;
+  committedLayoutMetrics: CommittedLayoutMetrics;
+  anchorId: string | null;
+  anchorIndex: number;
+  segments: Pick<StreamRenderInput["segments"], "historyMounted" | "liveHead">;
+  mountedSnapshot: MountedRowSnapshot;
+  readingAnchor: ReturnType<typeof createReadingAnchor>;
+  readingRowReplacements: StreamRenderInput["readingRowReplacements"];
+}
+
+function projectRangeOffset(input: ProjectRangeOffsetInput): number {
+  const { container, virtualizer } = input;
+  if (input.isJumpSettling) {
+    return container.scrollTop;
+  }
+  const baseScrollTop = getUnclampedScrollTop(container, input.lastClampedBaselineScrollTop);
+  if (input.followOutput && isScrollContainerMeasurable(container)) {
+    const { committedLayoutMetrics } = input;
+    const currentNonVirtualRowCount =
+      input.segments.historyMounted.length + input.segments.liveHead.length;
+    if (
+      !committedLayoutMetrics.hasCommittedFlowHeight ||
+      currentNonVirtualRowCount < committedLayoutMetrics.nonVirtualRowCount
+    ) {
+      return baseScrollTop;
+    }
+    const projectedFlowHeight =
+      committedLayoutMetrics.nonVirtualFlowHeight + virtualizer.getTotalSize();
+    return Math.max(0, projectedFlowHeight - container.clientHeight);
+  }
+  if (input.anchorIndex >= 0) {
+    const measurement = virtualizer.measurementsCache[input.anchorIndex];
+    if (!measurement) {
+      return baseScrollTop;
+    }
+    return input.readingAnchor.project(
+      baseScrollTop,
+      {
+        id: String(measurement.key),
+        top: measurement.start,
+        height: measurement.size,
+      },
+      input.readingRowReplacements,
+    );
+  }
+  if (!input.anchorId) {
+    return baseScrollTop;
+  }
+  const mountedAnchor = input.mountedSnapshot.offsets.get(input.anchorId);
+  if (!mountedAnchor) {
+    return baseScrollTop;
+  }
+  const currentMountedIndex = findNonVirtualizedRowIndex(input.segments, input.anchorId);
+  const currentFirstMountedId =
+    input.segments.historyMounted[0]?.id ?? input.segments.liveHead[0]?.id ?? null;
+  if (
+    currentMountedIndex !== mountedAnchor.mountedIndex ||
+    currentFirstMountedId !== input.mountedSnapshot.firstRowId
+  ) {
+    return baseScrollTop;
+  }
+  return input.readingAnchor.project(
+    baseScrollTop,
+    {
+      id: input.anchorId,
+      top: mountedAnchor.topWithoutVirtual + virtualizer.getTotalSize(),
+      height: mountedAnchor.height,
+    },
+    input.readingRowReplacements,
+  );
 }
 
 function isEditableEventTarget(target: EventTarget | null): boolean {
@@ -330,6 +453,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const isActive = useRetainedPanelActive();
   const { t } = useTranslation();
   const rowsHostRef = useRef<HTMLDivElement | null>(null);
+  const virtualSpacerRef = useRef<HTMLDivElement | null>(null);
   const auxiliaryRef = useRef<HTMLDivElement | null>(null);
   const isActiveRef = useRef(isActive);
   const scrollContainerRef = useRef<HTMLElement | null>(null);
@@ -341,6 +465,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     contentRef.current = node;
   }, []);
   const [followOutput, setFollowOutputr] = useState(true);
+  const [rangeProjectionEpoch, setRangeProjectionEpoch] = useState(0);
   const followOutputRef = useRef(followOutput);
   const setFollowOutput = (value: boolean) => {
     followOutputRef.current = value;
@@ -348,6 +473,10 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return value;
   };
   const lastKnownScrollTopRef = useRef(0);
+  const lastClampedBaselineScrollTopRef = useRef(0);
+  const segmentsRef = useRef(segments);
+  segmentsRef.current = segments;
+  const isJumpSettlingRef = useRef<() => boolean>(() => false);
   const mouseScrollGestureRef = useRef<
     | { kind: "scrollbar"; pointerId: number }
     | {
@@ -363,9 +492,23 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const lastTouchClientYRef = useRef<number | null>(null);
   const pendingAutoScrollFrameRef = useRef<number | null>(null);
   const pendingAutoScrollTimeoutRef = useRef<number | null>(null);
+  const deferredLayoutFrameRef = useRef<number | null>(null);
+  const lastProjectedRangeOffsetRef = useRef<number | null>(null);
+  const syncLayoutPassesRef = useRef(0);
+  const syncLayoutResetScheduledRef = useRef(false);
   const historyStartReadyRef = useRef(false);
   const readingAnchor = useMemo(createReadingAnchor, []);
   const measuredRowHeights = useRef(new Map<string, { width: number; height: number }>());
+  const mountedRowSnapshotRef = useRef<MountedRowSnapshot>({
+    firstRowId: null,
+    offsets: new Map(),
+  });
+  const committedLayoutMetricsRef = useRef<CommittedLayoutMetrics>({
+    hasCommittedFlowHeight: false,
+    virtualSpacerHeight: 0,
+    nonVirtualFlowHeight: 0,
+    nonVirtualRowCount: 0,
+  });
   const historyStartSettleSchedulerRef = useRef<HistoryStartSettleScheduler | null>(null);
   const lastActiveFollowOutputLayoutRef = useRef<ActiveFollowOutputLayout | null>(null);
   const lastObservedViewportGeometryRef = useRef<ObservedViewportGeometry | null>(null);
@@ -404,38 +547,50 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const rowVirtualizerRef = useRef<Virtualizer<HTMLElement, Element> | null>(null);
   const rangeExtractor = useCallback(
     (range: VirtualRange): number[] => {
-      const anchorIndex = segments.historyVirtualized.findIndex(
-        (row) => row.id === readingAnchor.getRowId(props.readingRowReplacements),
-      );
+      // Busts TanStack's getVirtualIndexes memo when a post-commit check detects a stale projection.
+      void rangeProjectionEpoch;
+      const anchorId = readingAnchor.getRowId(props.readingRowReplacements);
+      const anchorIndex = anchorId
+        ? segments.historyVirtualized.findIndex((row) => row.id === anchorId)
+        : -1;
       const container = scrollContainerRef.current;
       // TanStack has computed the new measurements before calling the extractor.
       // Select against the pending anchor correction, before mounting any rows at
       // the stale pre-prepend offset. The DOM correction still belongs to commit.
       const virtualizer = rowVirtualizerRef.current!;
-      const measurement = virtualizer.measurementsCache[anchorIndex];
-      const correctedOffset =
-        container && measurement
-          ? readingAnchor.project(
-              container.scrollTop,
-              {
-                id: String(measurement.key),
-                top: measurement.start,
-                height: measurement.size,
-              },
-              props.readingRowReplacements,
-            )
-          : container?.scrollTop;
+      const virtualizerOffset = virtualizer.scrollOffset ?? 0;
+      const correctedOffset = container
+        ? projectRangeOffset({
+            container,
+            virtualizer,
+            followOutput: followOutputRef.current,
+            isJumpSettling: isJumpSettlingRef.current(),
+            lastClampedBaselineScrollTop: lastClampedBaselineScrollTopRef.current,
+            committedLayoutMetrics: committedLayoutMetricsRef.current,
+            anchorId,
+            anchorIndex,
+            segments: segmentsRef.current,
+            mountedSnapshot: mountedRowSnapshotRef.current,
+            readingAnchor,
+            readingRowReplacements: props.readingRowReplacements,
+          })
+        : undefined;
       let visibleRange = range;
+      let projectedRangeOffset: number | null = null;
       if (
         container &&
         correctedOffset !== undefined &&
-        Math.abs(correctedOffset - container.scrollTop) > 0.5
+        Math.abs(correctedOffset - virtualizerOffset) > 0.5
       ) {
-        const first = virtualizer.getVirtualItemForOffset(correctedOffset);
-        const last = virtualizer.getVirtualItemForOffset(correctedOffset + container.clientHeight);
-        if (first && last)
+        const projectedOffset = Math.max(0, correctedOffset);
+        const first = virtualizer.getVirtualItemForOffset(projectedOffset);
+        const last = virtualizer.getVirtualItemForOffset(projectedOffset + container.clientHeight);
+        if (first && last) {
           visibleRange = { ...range, startIndex: first.index, endIndex: last.index };
+          projectedRangeOffset = projectedOffset;
+        }
       }
+      lastProjectedRangeOffsetRef.current = projectedRangeOffset;
       return [
         ...new Set([
           ...defaultRangeExtractor(visibleRange),
@@ -444,7 +599,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         ]),
       ].sort((left, right) => left - right);
     },
-    [chatFindRowIndexes, readingAnchor, segments.historyVirtualized, props.readingRowReplacements],
+    [
+      chatFindRowIndexes,
+      rangeProjectionEpoch,
+      readingAnchor,
+      segments.historyVirtualized,
+      props.readingRowReplacements,
+    ],
   );
   const virtualOffsetListener = useRef<((offset: number, scrolling: boolean) => void) | null>(null);
   const observeVirtualOffset = useCallback<typeof observeElementOffset>((instance, onOffset) => {
@@ -563,8 +724,10 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       "[data-history-row-id][data-index]",
     ) ?? []) {
       const index = Number(element.dataset.index);
+      const measurement = rowVirtualizer.measurementsCache[index];
+      if (!measurement) continue;
       const height = measureVirtualElement(element, undefined, rowVirtualizer);
-      if (rowVirtualizer.measurementsCache[index]?.size === height) continue;
+      if (measurement.size === height) continue;
       rowVirtualizer.resizeItem(index, height);
       resized = true;
     }
@@ -592,6 +755,22 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     [virtualRowObserver],
   );
   useEffect(() => () => virtualRowObserver.disconnect(), [virtualRowObserver]);
+
+  const cancelDeferredLayoutPass = useCallback(() => {
+    const pendingFrame = deferredLayoutFrameRef.current;
+    if (pendingFrame !== null) {
+      deferredLayoutFrameRef.current = null;
+      window.cancelAnimationFrame(pendingFrame);
+    }
+  }, []);
+
+  useEffect(
+    () => () => {
+      cancelDeferredLayoutPass();
+      syncLayoutPassesRef.current = 0;
+    },
+    [cancelDeferredLayoutPass],
+  );
 
   const cancelPendingStickToBottom = useCallback(() => {
     const pendingFrame = pendingAutoScrollFrameRef.current;
@@ -638,11 +817,20 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       return;
     }
     cancelPendingStickToBottom();
+    cancelDeferredLayoutPass();
+    lastProjectedRangeOffsetRef.current = null;
+    syncLayoutPassesRef.current = 0;
     historyStartSettleSchedulerRef.current?.cancel();
     clearMouseScrollGesture();
     clearUpwardInputEvidence();
     lastTouchClientYRef.current = null;
-  }, [cancelPendingStickToBottom, clearMouseScrollGesture, clearUpwardInputEvidence, isActive]);
+  }, [
+    cancelDeferredLayoutPass,
+    cancelPendingStickToBottom,
+    clearMouseScrollGesture,
+    clearUpwardInputEvidence,
+    isActive,
+  ]);
 
   const scrollMessagesToBottom = useCallback(
     (behavior: ScrollBehaviorLike = "auto") => {
@@ -659,6 +847,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       }
       scrollElementToBottom(scrollContainer, behavior);
       lastKnownScrollTopRef.current = scrollContainer.scrollTop;
+      lastClampedBaselineScrollTopRef.current = scrollContainer.scrollTop;
       syncNearBottom(scrollContainer, onNearBottomChange);
       evaluateHistoryStart();
     },
@@ -731,6 +920,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     setFollowOutput,
     onNearBottomChange,
   });
+  isJumpSettlingRef.current = isJumpSettling;
 
   // Row tops in content coordinates, which survive scrolling.
   const measureRows = useStableEvent(() => {
@@ -740,12 +930,87 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     const viewportTop = container.getBoundingClientRect().top;
     const scrollTop = container.scrollTop;
     const width = readContentWidth() ?? 0;
-    return Array.from(content.querySelectorAll<HTMLElement>("[data-history-row-id]"), (element) => {
-      const bounds = element.getBoundingClientRect();
-      const id = element.dataset.historyRowId!;
-      measuredRowHeights.current.set(id, { width, height: bounds.height });
-      return { id, top: bounds.top - viewportTop + scrollTop, height: bounds.height };
+    const virtualSpacerHeight = virtualSpacerRef.current?.getBoundingClientRect().height ?? 0;
+    const rowsHostHeight = rowsHostRef.current?.getBoundingClientRect().height ?? 0;
+    const auxiliaryHeight = auxiliaryRef.current?.getBoundingClientRect().height ?? 0;
+    const shouldTrackMountedOffsets = !followOutputRef.current;
+    const mountedOffsets = mountedRowSnapshotRef.current.offsets;
+    mountedOffsets.clear();
+    let firstRowId: string | null = null;
+    let mountedIndex = 0;
+    const rows = Array.from(
+      content.querySelectorAll<HTMLElement>("[data-history-row-id]"),
+      (element) => {
+        const bounds = element.getBoundingClientRect();
+        const id = element.dataset.historyRowId!;
+        const top = bounds.top - viewportTop + scrollTop;
+        measuredRowHeights.current.set(id, { width, height: bounds.height });
+        if (!element.hasAttribute("data-index")) {
+          if (shouldTrackMountedOffsets) {
+            if (firstRowId === null) {
+              firstRowId = id;
+            }
+            mountedOffsets.set(id, {
+              topWithoutVirtual: top - virtualSpacerHeight,
+              height: bounds.height,
+              mountedIndex,
+            });
+          }
+          mountedIndex += 1;
+        }
+        return { id, top, height: bounds.height };
+      },
+    );
+    mountedRowSnapshotRef.current.firstRowId = firstRowId;
+    committedLayoutMetricsRef.current = {
+      hasCommittedFlowHeight: true,
+      virtualSpacerHeight,
+      nonVirtualFlowHeight:
+        VIRTUALIZER_SCROLL_MARGIN_PX +
+        Math.max(0, rowsHostHeight - virtualSpacerHeight) +
+        auxiliaryHeight +
+        CONTENT_PADDING_BOTTOM_PX,
+      nonVirtualRowCount: mountedIndex,
+    };
+    return rows;
+  });
+
+  const scheduleDeferredLayoutPass = useStableEvent(() => {
+    if (deferredLayoutFrameRef.current !== null || !isActiveRef.current) {
+      return;
+    }
+    deferredLayoutFrameRef.current = window.requestAnimationFrame(() => {
+      deferredLayoutFrameRef.current = null;
+      syncLayoutPassesRef.current = 0;
+      if (!isActiveRef.current) {
+        return;
+      }
+      if (measureVirtualizedRows()) {
+        return;
+      }
+      reconcileReadingPosition();
+      if (followOutputRef.current && scrollContainerRef.current) {
+        reconcileProjectedRange(scrollContainerRef.current);
+      }
     });
+  });
+
+  const reconcileProjectedRange = useStableEvent((container: HTMLElement): boolean => {
+    const projectedOffset = lastProjectedRangeOffsetRef.current;
+    if (projectedOffset === null) {
+      return false;
+    }
+    if (Math.abs(container.scrollTop - projectedOffset) <= 0.5) {
+      lastProjectedRangeOffsetRef.current = null;
+      return false;
+    }
+    if (syncLayoutPassesRef.current >= MAX_SYNC_LAYOUT_PASSES) {
+      scheduleDeferredLayoutPass();
+      return true;
+    }
+    lastProjectedRangeOffsetRef.current = null;
+    setRangeProjectionEpoch((value) => value + 1);
+    return true;
   });
 
   const reconcileReadingPosition = useStableEvent(() => {
@@ -755,8 +1020,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     if (!rows) return;
     const shouldAnchor = !followOutputRef.current && !isJumpSettling();
     if (!shouldAnchor) readingAnchor.reset();
+    const anchorScrollTop = shouldAnchor
+      ? getUnclampedScrollTop(container, lastClampedBaselineScrollTopRef.current)
+      : container.scrollTop;
     const correctedTop = readingAnchor.reconcile(
-      container.scrollTop,
+      anchorScrollTop,
       rows,
       false,
       props.readingRowReplacements,
@@ -768,9 +1036,20 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     if (Math.abs(correctedTop - container.scrollTop) > 0.5) {
       container.scrollTop = correctedTop;
       lastKnownScrollTopRef.current = container.scrollTop;
+    }
+    lastClampedBaselineScrollTopRef.current = container.scrollTop;
+    const virtualizerOffset = rowVirtualizer.scrollOffset ?? 0;
+    if (virtualOffsetListener.current && Math.abs(container.scrollTop - virtualizerOffset) > 0.5) {
+      if (syncLayoutPassesRef.current >= MAX_SYNC_LAYOUT_PASSES) {
+        scheduleDeferredLayoutPass();
+        return;
+      }
       // The DOM scroll event arrives later. Fill the corrected virtual range in
       // this layout so the reader does not get a frame containing only the pin.
-      virtualOffsetListener.current?.(container.scrollTop, false);
+      virtualOffsetListener.current(container.scrollTop, false);
+    }
+    if (reconcileProjectedRange(container)) {
+      return;
     }
     // A disclosure that closes back to the end of the list rejoins the output.
     if (disclosurePendingRef.current) {
@@ -782,17 +1061,38 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   // Apply row positions and their scroll correction in the same paint, including
   // the ordinary-to-virtualized handoff and measurements of newly mounted rows.
   useLayoutEffect(() => {
+    if (!isActive) {
+      cancelDeferredLayoutPass();
+      lastProjectedRangeOffsetRef.current = null;
+      syncLayoutPassesRef.current = 0;
+      return;
+    }
+    if (syncLayoutPassesRef.current >= MAX_SYNC_LAYOUT_PASSES) {
+      scheduleDeferredLayoutPass();
+      return;
+    }
+    syncLayoutPassesRef.current += 1;
+    if (!syncLayoutResetScheduledRef.current) {
+      syncLayoutResetScheduledRef.current = true;
+      queueMicrotask(() => {
+        syncLayoutResetScheduledRef.current = false;
+        syncLayoutPassesRef.current = 0;
+      });
+    }
     // Commit positions for every resized row before accepting reading geometry.
     // Child layout can change during this commit, ahead of ResizeObserver delivery.
-    if (!isActive || measureVirtualizedRows()) return;
+    if (measureVirtualizedRows()) return;
+    cancelDeferredLayoutPass();
     reconcileReadingPosition();
   }, [
+    cancelDeferredLayoutPass,
     contentWidth,
     isActive,
     segments,
     virtualRows,
     measureVirtualizedRows,
     reconcileReadingPosition,
+    scheduleDeferredLayoutPass,
   ]);
 
   const stopFollowingOutputFromUserIntent = useStableEvent(() => {
@@ -832,6 +1132,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     }
 
     lastKnownScrollTopRef.current = currentScrollTop;
+    lastClampedBaselineScrollTopRef.current = currentScrollTop;
     if (!followOutputRef.current && !isJumpSettling() && (scrolledUp || scrolledDown)) {
       readingAnchor.scroll(currentScrollTop);
     }
@@ -925,11 +1226,15 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     if (!followOutputRef.current || resumedUnchangedLayout) return;
     cancelPendingStickToBottom();
     scrollMessagesToBottom("auto");
+    if (scrollContainerRef.current) {
+      reconcileProjectedRange(scrollContainerRef.current);
+    }
   }, [
     activationKey,
     cancelPendingStickToBottom,
     isActive,
     isActivationReady,
+    reconcileProjectedRange,
     renderLiveAuxiliary,
     scrollMessagesToBottom,
     segments.historyMounted,
@@ -997,7 +1302,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       } else {
         lastObservedViewportGeometryRef.current = nextGeometry;
       }
-      reconcileReadingPosition();
+      if (deferredLayoutFrameRef.current === null) {
+        reconcileReadingPosition();
+      }
       if (isHistoryStartSettling()) {
         scheduleHistoryStartPrependSettle();
       }
@@ -1208,6 +1515,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         setFollowOutput(false);
         const row = measureRows()?.find((candidate) => candidate.id === rowId);
         const scrollTop = scrollContainerRef.current?.scrollTop;
+        if (scrollTop !== undefined) {
+          lastClampedBaselineScrollTopRef.current = scrollTop;
+        }
         if (row && scrollTop !== undefined) readingAnchor.pin(row, triggerEdge, scrollTop);
         disclosurePendingRef.current = true;
         apply();
@@ -1243,7 +1553,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       flexDirection: "column",
       minHeight: "100%",
       paddingTop: CONTENT_PADDING_TOP_PX,
-      paddingBottom: 16,
+      paddingBottom: CONTENT_PADDING_BOTTOM_PX,
       paddingLeft,
       paddingRight,
       boxSizing: "border-box",
@@ -1375,7 +1685,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         <div ref={handleContentRef} style={contentContainerStyle}>
           {historyStartSlot}
           <div ref={rowsHostRef} style={streamRowsHostStyle}>
-            <div style={virtualRowsContainerStyle} />
+            <div ref={virtualSpacerRef} style={virtualRowsContainerStyle} />
             {[
               ...virtualRows.map((virtualRow) => {
                 const item = segments.historyVirtualized[virtualRow.index];
