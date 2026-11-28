@@ -1,6 +1,7 @@
 import { memo, useMemo, useState } from "react";
 import { EnrichedMarkdownText, type LinkPressEvent } from "react-native-enriched-markdown";
 import { withUnistyles } from "react-native-unistyles";
+import { parseAgentDeepLink } from "@getpaseo/protocol/agent-deep-link";
 import {
   useAssistantFileLinkActions,
   useAssistantFileLinkEnvironment,
@@ -10,6 +11,7 @@ import { matchCommandLink, useAgentCommandHints, type CommandHints } from "@/age
 import { useForgeShorthand } from "@/git/forge-shorthand";
 import { pluginOverviewUrl } from "@getpaseo/protocol/plugin-overview";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
 import type { Theme } from "@/styles/theme";
 import { isWeb } from "@/constants/platform";
@@ -138,6 +140,11 @@ const MarkdownPart = memo(function MarkdownPart({
     const forgeUrl = sourceType === "text" ? forgeShorthand?.resolve(url) : null;
     if (forgeUrl) {
       void openExternalUrl(forgeUrl);
+      return;
+    }
+    const agentLink = parseAgentDeepLink(url);
+    if (agentLink) {
+      navigateToAgent(agentLink);
       return;
     }
     const source = linkSource(url, sourceType);
