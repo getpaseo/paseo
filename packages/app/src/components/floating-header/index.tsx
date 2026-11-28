@@ -23,8 +23,6 @@ export function useFloatingHeaderOverlayClearance(): number {
 
 /** How far the fade runs past the header's bottom edge, so content dissolves instead of clipping. */
 const FADE_OVERHANG = 48;
-/** Share of the fade that stays opaque, so the header's title and icons keep contrast. */
-const FADE_SOLID_FRACTION = 0.57;
 
 interface FloatingHeaderLayoutProps {
   header: ReactNode;
@@ -58,15 +56,11 @@ export function FloatingHeaderLayout({ header, floating, children }: FloatingHea
       </View>
       {floating ? (
         <View style={styles.overlay} pointerEvents="box-none">
-          <EdgeFade
-            edge="top"
-            solidFraction={FADE_SOLID_FRACTION}
-            backdrop="surfaceWorkspace"
-            style={styles.fade}
-          />
+          <EdgeFade edge="top" solidFraction={0} backdrop="surfaceWorkspace" style={styles.fade} />
           <View
             testID="floating-header"
             collapsable={false}
+            style={styles.header}
             pointerEvents="box-none"
             onLayout={handleHeaderLayout}
           >
@@ -81,7 +75,7 @@ export function FloatingHeaderLayout({ header, floating, children }: FloatingHea
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   root: {
     flex: 1,
     minHeight: 0,
@@ -107,9 +101,12 @@ const styles = StyleSheet.create({
   },
   fade: {
     position: "absolute",
-    top: 0,
     left: 0,
     right: 0,
     bottom: 0,
+    height: FADE_OVERHANG,
   },
-});
+  header: {
+    backgroundColor: theme.colors.surfaceWorkspace,
+  },
+}));
