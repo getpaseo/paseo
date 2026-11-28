@@ -4505,6 +4505,88 @@ test("sends internal workspace creation and internal listings only to hosts that
   );
 });
 
+test("keeps workspace subscriptions and tab edits connected when a host sends an unsupported tab", async () => {
+  const mock = createMockTransport();
+  const logger = createMockLogger();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen({ features: { ownedSubscriptions: true, workspaceTabSync: true } });
+  await connecting;
+
+  const plugin = {
+    tabId: "details",
+    target: {
+      kind: "plugin",
+      context: "agent",
+      pluginId: "test-plugin",
+      panelId: "details",
+      agentId: "agent-1",
+    },
+  };
+  const supportedLayout = { revision: 3, tabs: [plugin], hiddenAgentIds: [], pinnedAgentIds: [] };
+  const wireLayout = {
+    ...supportedLayout,
+    tabs: [...supportedLayout.tabs, { tabId: "future", target: { kind: "future" } }],
+  };
+  const subscription = client.observeWorkspaces();
+  const listRequest = parseSentFrame(mock.sent.at(-1));
+  expect(listRequest.type).toBe("fetch_workspaces_request");
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fetch_workspaces_response",
+      payload: {
+        requestId: listRequest.requestId,
+        subscriptionId: "workspaces",
+        pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+        entries: [
+          {
+            id: "workspace-1",
+            projectId: "project-1",
+            projectDisplayName: "Project",
+            projectRootPath: "/repo",
+            workspaceDirectory: "/repo",
+            projectKind: "git",
+            workspaceKind: "local_checkout",
+            name: "Project",
+            status: "done",
+            activityAt: null,
+            tabLayout: wireLayout,
+          },
+        ],
+      },
+    }),
+  );
+  await expect(subscription.ready).resolves.toMatchObject({
+    entries: [{ id: "workspace-1", tabLayout: supportedLayout }],
+  });
+
+  const applied = client.applyWorkspaceTabLayout({
+    workspaceId: "workspace-1",
+    desktop: true,
+    operations: [],
+  });
+  const applyRequest = parseSentFrame(mock.sent.at(-1));
+  expect(applyRequest.type).toBe("workspace.tabs.apply.request");
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.tabs.apply.response",
+      payload: { requestId: applyRequest.requestId, state: wireLayout, error: null },
+    }),
+  );
+  await expect(applied).resolves.toEqual(supportedLayout);
+  expect(client.getConnectionState().status).toBe("connected");
+  expect(logger.warn.mock.calls).toEqual([
+    [{ msgType: "fetch_workspaces_response" }, "Skipped unsupported shared workspace tabs"],
+  ]);
+});
+
 test("rejects internal workspace creation and internal listings before sending on older hosts", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

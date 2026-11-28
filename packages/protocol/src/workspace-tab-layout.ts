@@ -2,10 +2,11 @@ import { z } from "zod";
 
 export const WorkspaceSplitSyncModeSchema = z.enum(["off", "desktop", "all"]);
 export type WorkspaceSplitSyncMode = z.infer<typeof WorkspaceSplitSyncModeSchema>;
+export const MAX_WORKSPACE_SHARED_TABS = 1024;
 
 const id = z.string().min(1);
-const ids = z.array(id).max(1024);
-const WorkspaceSharedTabTargetSchema = z.discriminatedUnion("kind", [
+const ids = z.array(id).max(MAX_WORKSPACE_SHARED_TABS);
+const BuiltinSharedTabTargetSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("agent"), agentId: id }),
   z.strictObject({ kind: z.literal("provider_subagent"), parentAgentId: id, subagentId: id }),
   z.strictObject({ kind: z.literal("terminal"), terminalId: id }),
@@ -15,22 +16,38 @@ const WorkspaceSharedTabTargetSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("files") }),
   z.strictObject({ kind: z.literal("pull_request") }),
   z.strictObject({ kind: z.literal("setup"), workspaceId: id }),
-  z.discriminatedUnion("context", [
-    z.strictObject({
-      kind: z.literal("plugin"),
-      pluginId: id,
-      panelId: id,
-      context: z.literal("workspace"),
-    }),
-    z.strictObject({
-      kind: z.literal("plugin"),
-      pluginId: id,
-      panelId: id,
-      context: z.literal("agent"),
-      agentId: id,
-    }),
-  ]),
 ]);
+const pluginTarget = { kind: z.literal("plugin"), pluginId: id, panelId: id };
+const PluginSharedTabTargetSchema = z.discriminatedUnion("context", [
+  z.strictObject({ ...pluginTarget, context: z.literal("workspace") }),
+  z.strictObject({ ...pluginTarget, context: z.literal("agent"), agentId: id }),
+]);
+
+// zod-aot 0.20.4 drops a discriminated union used directly as a discriminated-union option.
+const WorkspaceSharedTabTargetSchema = z.union([
+  BuiltinSharedTabTargetSchema,
+  PluginSharedTabTargetSchema,
+]);
+
+const builtinTabKinds: ReadonlySet<string> = new Set(
+  BuiltinSharedTabTargetSchema.options.map((option) => option.shape.kind.value),
+);
+const pluginTabContexts: ReadonlySet<string> = new Set(
+  PluginSharedTabTargetSchema.options.map((option) => option.shape.context.value),
+);
+
+export function isUnknownWorkspaceSharedTabTarget(target: Record<string, unknown>) {
+  if (target.kind === pluginTarget.kind.value) {
+    return (
+      typeof target.context === "string" &&
+      target.context.length > 0 &&
+      !pluginTabContexts.has(target.context)
+    );
+  }
+  return (
+    typeof target.kind === "string" && target.kind.length > 0 && !builtinTabKinds.has(target.kind)
+  );
+}
 
 const SharedTabSchema = z.strictObject({
   tabId: id,
@@ -58,7 +75,7 @@ export const WorkspaceSharedSplitSchema = z.strictObject({
 });
 
 const WorkspaceTabLayoutSchema = z.strictObject({
-  tabs: z.array(SharedTabSchema).max(1024),
+  tabs: z.array(SharedTabSchema).max(MAX_WORKSPACE_SHARED_TABS),
   hiddenAgentIds: ids,
   pinnedAgentIds: ids,
   split: WorkspaceSharedSplitSchema.optional(),

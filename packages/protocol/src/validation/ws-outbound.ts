@@ -5,6 +5,7 @@ import {
   WSOutboundEnvelope,
 } from "../generated/validation/ws-outbound.aot.js";
 import type { SessionOutboundMessage, WSOutboundMessage } from "../messages.js";
+import { omitUnsupportedWorkspaceTabs } from "./unsupported-workspace-tabs.js";
 
 type ValidationResult<T> = { success: true; data: T } | { success: false; error: z.ZodError };
 
@@ -36,13 +37,25 @@ function underMessage(issue: z.core.$ZodIssue): z.core.$ZodIssue {
   }
 }
 
-export function validateWSOutboundMessage(input: unknown): ValidationResult<WSOutboundMessage> {
+export function validateWSOutboundMessage(
+  input: unknown,
+  onUnsupportedWorkspaceTabs?: (messageType: SessionOutboundMessage["type"]) => void,
+): ValidationResult<WSOutboundMessage> {
   const envelope = envelopeValidator.safeParse(input);
   if (!envelope.success || envelope.data.type !== "session") {
     return envelope;
   }
   const message = envelope.data.message;
-  const result = sessionMessageValidators[message.type].safeParse(message);
+  const validator = sessionMessageValidators[message.type];
+  let result = validator.safeParse(message);
+  // COMPAT(workspaceTabTargets): added for tab sync; keep older clients tolerant of new kinds.
+  if (!result.success) {
+    const filtered = omitUnsupportedWorkspaceTabs(message);
+    if (filtered !== message) {
+      result = validator.safeParse(filtered);
+      if (result.success) onUnsupportedWorkspaceTabs?.(message.type);
+    }
+  }
   if (!result.success) {
     return { success: false, error: new ZodRealError(result.error.issues.map(underMessage)) };
   }

@@ -6,7 +6,9 @@ The reason is mobile performance. A captured 353 KB provider snapshot cost about
 
 ## Runtime Path
 
-`packages/protocol/src/validation/ws-outbound.ts` is the shipped boundary. It validates the envelope with a generated validator that checks only each session message's `type` tag, then runs the generated validator for that one message type and returns the validated data. Issue paths from the message validator, including nested union branches, are prefixed with `message`, so callers see the same issues as when one validator covered the whole envelope. It does not normalize, repair, or re-validate the generated result.
+`packages/protocol/src/validation/ws-outbound.ts` is the shipped boundary. It validates the envelope with a generated validator that checks only each session message's `type` tag, then runs the generated validator for that one message type and returns the validated data. Issue paths from the message validator, including nested union branches, are prefixed with `message`, so callers see the same issues as when one validator covered the whole envelope.
+
+Workspace tab sync can receive tab targets introduced by a newer daemon. If validation fails, the receive boundary drops unknown tab kinds and plugin tab contexts, removes their split references, and retries validation. The client warns once when a response is recovered this way.
 
 Keep one generated function per message type. zod-aot inlines every nested schema into the function it compiles, so compiling `WSOutboundMessageSchema` as a whole produced one 11 MB function. On V8 (daemon clients, plugin hosts, the CLI, and Electron), the Maglev tier compiled that function once it was hot, allocating about 800 MB and stalling for seconds, and compiled it again after each deoptimization. Hermes has no JIT, so mobile never showed it. `packages/protocol/tests/validation/ws-outbound.test.ts` fails if a generated function grows past 1 MB.
 

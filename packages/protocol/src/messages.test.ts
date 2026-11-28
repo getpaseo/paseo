@@ -7,8 +7,11 @@ import {
   parseServerInfoStatusPayload,
   SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
+  WSOutboundMessageSchema,
   WorkspaceProjectDescriptorPayloadSchema,
 } from "./messages.js";
+import { validateWSOutboundMessage } from "./validation/ws-outbound.js";
+import { MAX_WORKSPACE_SHARED_TABS } from "./workspace-tab-layout.js";
 
 function workspaceDescriptor(overrides: Record<string, unknown> = {}) {
   return {
@@ -93,12 +96,14 @@ describe("workspace tab layout messages", () => {
     operations: [{ kind: "move", tabId: "file_readme.md", after: "agent_a" }],
   };
 
+  const applyResponse = (layout: unknown) => ({
+    type: "workspace.tabs.apply.response",
+    payload: { requestId: "apply-1", state: layout, error: null },
+  });
+
   test("round-trips the request, acknowledgement, and optional workspace snapshot", () => {
     expect(SessionInboundMessageSchema.parse(request)).toEqual(request);
-    const response = {
-      type: "workspace.tabs.apply.response",
-      payload: { requestId: "apply-1", state, error: null },
-    };
+    const response = applyResponse(state);
     expect(SessionOutboundMessageSchema.parse(response)).toEqual(response);
     for (const layout of [undefined, state]) {
       const result = SessionOutboundMessageSchema.parse(
@@ -108,6 +113,112 @@ describe("workspace tab layout messages", () => {
         throw new Error("Expected workspace snapshot");
       expect(result.payload.entries[0]?.tabLayout).toEqual(layout);
     }
+  });
+
+  test.each([{ context: "workspace" }, { context: "agent", agentId: "agent-1" }])(
+    "generated validation matches Zod for a $context plugin tab",
+    (context) => {
+      const layout = {
+        ...state,
+        tabs: [
+          ...state.tabs,
+          {
+            tabId: "plugin-tab",
+            target: { kind: "plugin", pluginId: "test-plugin", panelId: "details", ...context },
+          },
+        ],
+      };
+      for (const message of [
+        fetchWorkspacesResponse(workspaceDescriptor({ tabLayout: layout })),
+        applyResponse(layout),
+      ]) {
+        const envelope = { type: "session", message };
+        const plain = WSOutboundMessageSchema.parse(envelope);
+        expect(validateWSOutboundMessage(envelope)).toEqual({ success: true, data: plain });
+      }
+    },
+  );
+
+  test("skips future tab kinds and plugin contexts in workspace replies and updates", () => {
+    const futureTabs = [
+      { tabId: "future", target: { kind: "future", spec: "whatever" } },
+      {
+        tabId: "new-plugin-context",
+        target: { kind: "plugin", pluginId: "test-plugin", panelId: "details", context: "file" },
+      },
+    ];
+    const layout = {
+      ...state,
+      tabs: [...futureTabs, ...state.tabs],
+      split: {
+        rootId: "pane",
+        nodes: [
+          {
+            kind: "pane",
+            id: "pane",
+            tabIds: [...futureTabs, ...state.tabs].map((tab) => tab.tabId),
+          },
+        ],
+      },
+    };
+    const filtered = {
+      ...state,
+      split: {
+        ...layout.split,
+        nodes: [{ ...layout.split.nodes[0], tabIds: state.tabs.map((tab) => tab.tabId) }],
+      },
+    };
+    const list = fetchWorkspacesResponse(workspaceDescriptor({ tabLayout: layout }));
+    list.payload.entries.push(workspaceDescriptor({ id: "ws-2" }));
+    const update = (tabLayout: unknown) => ({
+      type: "workspace_update",
+      payload: { kind: "upsert", workspace: workspaceDescriptor({ tabLayout }) },
+    });
+    const expectedList = fetchWorkspacesResponse(workspaceDescriptor({ tabLayout: filtered }));
+    expectedList.payload.entries.push(workspaceDescriptor({ id: "ws-2" }));
+
+    for (const [message, expected] of [
+      [list, expectedList],
+      [applyResponse(layout), applyResponse(filtered)],
+      [update(layout), update(filtered)],
+    ]) {
+      const warnings: string[] = [];
+      const envelope = { type: "session", message };
+      expect(WSOutboundMessageSchema.safeParse(envelope).success).toBe(false);
+      expect(validateWSOutboundMessage(envelope, (type) => warnings.push(type))).toMatchObject({
+        success: true,
+        data: WSOutboundMessageSchema.parse({ type: "session", message: expected }),
+      });
+      expect(warnings).toEqual([message.type]);
+    }
+  });
+
+  test("keeps known tab validation strict even when a future tab is present", () => {
+    const layout = {
+      ...state,
+      tabs: [
+        { tabId: "future", target: { kind: "future" } },
+        {
+          tabId: "plugin-without-agent",
+          target: { kind: "plugin", pluginId: "test-plugin", panelId: "details", context: "agent" },
+        },
+      ],
+    };
+    const envelope = { type: "session", message: applyResponse(layout) };
+    expect(WSOutboundMessageSchema.safeParse(envelope).success).toBe(false);
+    expect(validateWSOutboundMessage(envelope).success).toBe(false);
+  });
+
+  test("keeps the wire size limit when skipping future tabs", () => {
+    const layout = {
+      ...state,
+      tabs: Array.from({ length: MAX_WORKSPACE_SHARED_TABS + 1 }, (_, index) => ({
+        tabId: `future-${index}`,
+        target: { kind: "future" },
+      })),
+    };
+    const envelope = { type: "session", message: applyResponse(layout) };
+    expect(validateWSOutboundMessage(envelope).success).toBe(false);
   });
 
   test("rejects local tab kinds, per-tab state, and split focus on the wire", () => {
