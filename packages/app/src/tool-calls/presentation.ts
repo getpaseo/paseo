@@ -1,5 +1,3 @@
-import type { AgentMessage } from "@getpaseo/protocol/agent-message";
-import { buildAgentMessageDisplay } from "@getpaseo/protocol/paseo-tool-presentation/index";
 import type { PlanOutcome } from "@/components/plan-card";
 import type { ComponentType } from "react";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
@@ -15,7 +13,6 @@ type ToolCallStatus = "executing" | "running" | "completed" | "failed" | "cancel
 export type ToolCallPresentationIcon = ComponentType<{ size?: number; color?: string }>;
 
 interface BuildToolCallPresentationInput {
-  agentMessage?: AgentMessage;
   toolName: string;
   status: ToolCallStatus;
   error: unknown;
@@ -43,7 +40,6 @@ export interface ToolCallPresentation {
 export type ToolCallIconResolver = (
   toolName: string,
   detail: ToolCallDetail | undefined,
-  agentMessage: AgentMessage | undefined,
 ) => ToolCallPresentationIcon;
 
 function displayStatus(status: ToolCallStatus): ToolCallDisplayInput["status"] {
@@ -58,7 +54,6 @@ function planModeTransitionLabel(input: BuildToolCallPresentationInput): string 
   const { detail, metadata } = input;
   // Grok emits completed mode changes as "other" calls with a path-only body.
   if (
-    input.agentMessage ||
     input.toolName !== "other" ||
     input.status !== "completed" ||
     input.error ||
@@ -76,7 +71,6 @@ function planModeTransitionLabel(input: BuildToolCallPresentationInput): string 
 
 function isPlanExitResult(input: BuildToolCallPresentationInput): boolean {
   return (
-    !input.agentMessage &&
     input.toolName === "other" &&
     input.metadata?.kind === "other" &&
     input.metadata.title === "Plan: Exit" &&
@@ -90,16 +84,12 @@ export function buildToolCallPresentation(
 ): ToolCallPresentation {
   const transitionLabel = planModeTransitionLabel(input);
   const planExit = isPlanExitResult(input);
-  let detail = input.detail;
-  if (input.agentMessage) {
-    detail = buildAgentMessageDisplay(input.agentMessage).detail;
-  } else if (transitionLabel) {
-    detail = { type: "plain_text", label: transitionLabel, text: undefined, icon: "sparkles" };
-  }
+  const detail: ToolCallDetail | undefined = transitionLabel
+    ? { type: "plain_text", label: transitionLabel, text: undefined, icon: "sparkles" }
+    : input.detail;
   const detailForDisplay = displayDetail(detail);
   const displayModel = buildToolCallDisplayModel({
     name: input.toolName,
-    agentMessage: input.agentMessage,
     status: displayStatus(input.status),
     error: input.error ?? null,
     detail: detailForDisplay,
@@ -120,7 +110,7 @@ export function buildToolCallPresentation(
     displayName: transitionLabel ?? (planExit ? "Plan Exit" : displayModel.displayName),
     summary: transitionLabel || planExit ? undefined : displayModel.summary,
     errorText: displayModel.errorText,
-    icon: input.resolveIcon(input.toolName, detail, input.agentMessage),
+    icon: input.resolveIcon(input.toolName, detail),
     isLoadingDetails,
     hasDetails,
     canOpenDetails: hasDetails || isLoadingDetails,

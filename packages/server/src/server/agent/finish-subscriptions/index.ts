@@ -7,7 +7,6 @@ import type { FinishObservationResult } from "./internal/observation-buffer.js";
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
 import { getParentAddressFromLabels } from "@getpaseo/protocol/agent-labels";
 import {
-  endsSubscription,
   formatFinishNotificationBody,
   finishNotificationEvents,
   type FinishNotificationReason,
@@ -15,6 +14,7 @@ import {
 import {
   createFollowing,
   FOLLOW_LIMIT,
+  type Decision,
   type FollowOutcome,
   type Notice,
 } from "./internal/following.js";
@@ -28,8 +28,8 @@ export interface FinishSubscription {
   /** Creation subscriptions stop reporting after the child is detached. */
   requireParentOwnership?: boolean;
   /**
-   * Set once the child ended a turn while it was still working and the caller was told so.
-   * The subscription then follows the child until it settles or the follow limit passes.
+   * Set once the child ended a turn with work pending that will start its next turn. The
+   * subscription then follows the child silently until it settles or the follow limit passes.
    */
   followingSince?: string;
 }
@@ -59,7 +59,7 @@ interface Dependencies extends FinishObservation {
   serverId: string;
   logger: Logger;
   retryDelayMs?: number;
-  /** How long a child that is still working is followed before the subscription gives up. */
+  /** How long a child with pending work is followed before its last reply is reported. */
   followLimitMs?: number;
 }
 export interface FinishRegistration {
@@ -227,7 +227,8 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
           reason,
           lastAssistantMessage: result?.lastMessage ?? null,
           permissionRequest: request,
-          pendingWork: notice.work,
+          pendingWork: notice.pendingWork,
+          followLimit: notice.followLimit,
         }),
         source: {
           kind: "agent-notification",
@@ -305,9 +306,7 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
     const permissions = new Set<string>();
     let observation: FinishObservationSession | undefined;
     /** One outcome and how far it got. Retries resume it: nothing is lost or sent twice. */
-    let current:
-      | { outcome: FollowOutcome; decided: boolean; notice?: Notice; sent: boolean }
-      | undefined;
+    let current: { outcome: FollowOutcome; decision?: Decision; sent: boolean } | undefined;
     let remoteFailures = 0;
     let retries = 0;
     let warned = false;
@@ -340,7 +339,7 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
       if (!notified) recheckCallerOf(watch);
       return true;
     }
-    async function decide(outcome: FollowOutcome): Promise<Notice | undefined | "suppressed"> {
+    async function decide(outcome: FollowOutcome): Promise<Decision | "suppressed"> {
       // A queued follow-up cannot start until the current permission is answered.
       // Its pending registration must not hold the running turn's checkpoint.
       if (outcome === FOLLOW_LIMIT || outcome.status !== "permission" || watch.pending)
@@ -359,22 +358,24 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
           await delay(signal, retries++);
           return false;
         }
-        current = { outcome, decided: false, sent: false };
+        current = { outcome, sent: false };
       }
       signal.throwIfAborted();
-      if (!current.decided) {
-        const notice = await decide(current.outcome);
-        if (notice === "suppressed") return end(false);
-        current = { ...current, decided: true, notice };
+      let { decision } = current;
+      if (!decision) {
+        const decided = await decide(current.outcome);
+        if (decided === "suppressed") return end(false);
+        decision = decided;
+        current = { ...current, decision };
       }
-      const { notice } = current;
+      const { notice, done } = decision;
       if (notice && !current.sent) {
         await deliver(record, notice, permissions, signal);
         signal.throwIfAborted();
         current.sent = true;
       }
       // A removal failure retries only the commit, never the already accepted callback.
-      if (notice && endsSubscription(notice.reason)) return end(true);
+      if (done) return end(notice !== undefined);
       current = undefined;
       retries = 0;
       warned = false;

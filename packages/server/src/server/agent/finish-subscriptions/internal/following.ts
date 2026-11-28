@@ -3,7 +3,7 @@ import type { FinishSubscription, FinishSubscriptionStore, PendingWork } from ".
 import type { FinishObservationResult } from "./observation-buffer.js";
 import type { FinishNotificationReason } from "./notification.js";
 
-/** The followed child is still working when the follow limit passes. */
+/** The followed child still has pending work when the follow limit passes. */
 export const FOLLOW_LIMIT = Symbol("follow limit");
 export type FollowOutcome = FinishObservationResult | typeof FOLLOW_LIMIT;
 
@@ -11,8 +11,19 @@ export type FollowOutcome = FinishObservationResult | typeof FOLLOW_LIMIT;
 export interface Notice {
   reason: FinishNotificationReason;
   result: FinishObservationResult | null;
-  work: readonly PendingWork[];
+  /** The turn ended with this work pending; the watch keeps following the child. */
+  pendingWork?: readonly PendingWork[];
+  /** The follow limit passed while the child still had pending work; the watch ends. */
+  followLimit?: true;
 }
+
+/** What one outcome means for the watch: what to tell the caller, and whether to stop watching. */
+export interface Decision {
+  notice?: Notice;
+  done: boolean;
+}
+
+const KEEP_WATCHING: Decision = { done: false };
 
 interface Options {
   /** The watch's coalesced records; any one already following makes the watch follow. */
@@ -26,9 +37,11 @@ interface Options {
 
 /**
  * Separates "the turn ended" from "the child has stopped". A watch waits for its prompt's turn.
- * If that turn ends while the child still has pending work, the caller is told once and the
- * watch follows the child: later turn ends and work changes stay silent until the child
- * settles, which reports `finished`, or until the follow limit passes.
+ * Each turn end reports `finished` at once. When work that will start the child's next turn is
+ * still pending, the notice names that work and the watch follows the child: later turn ends
+ * report again, and the child settling with nothing pending, even without another turn, sends the
+ * final `finished` and ends the watch. When the follow limit passes first, the caller gets a final
+ * `finished` with the child's last reply.
  */
 export function createFollowing(options: Options) {
   let since = options.records
@@ -49,7 +62,7 @@ export function createFollowing(options: Options) {
 
   async function follow(): Promise<void> {
     const followingSince = new Date().toISOString();
-    // Written before the notice is sent, so a restart never repeats it.
+    // A restart keeps following instead of waiting for another turn end.
     for (const record of options.records) await options.store.put({ ...record, followingSince });
     since = followingSince;
   }
@@ -91,20 +104,22 @@ export function createFollowing(options: Options) {
       stale = true;
       wake?.();
     },
-    /** Returns nothing when the outcome is not worth telling the caller. */
-    async decide(outcome: FollowOutcome): Promise<Notice | undefined> {
+    async decide(outcome: FollowOutcome): Promise<Decision> {
       if (outcome === FOLLOW_LIMIT)
-        return { reason: "is still working", result: latest, work: options.pendingWork() };
+        return { notice: { reason: "finished", result: latest, followLimit: true }, done: true };
       latest = outcome;
       const reason = options.reasonFor(outcome);
-      if (reason !== "finished") return { reason, result: outcome, work: [] };
+      // A permission request is a checkpoint; the caller still hears how the child ends.
+      if (reason !== "finished")
+        return { notice: { reason, result: outcome }, done: reason !== "needs permission" };
       // Before the prompt's turn ends, a work change says nothing about its outcome.
-      if (outcome.workChanged && !since) return undefined;
-      const work = options.pendingWork();
-      if (!work.length) return { reason, result: outcome, work };
-      if (since) return undefined;
-      await follow();
-      return { reason: "ended its turn but is still working", result: outcome, work };
+      if (outcome.workChanged && !since) return KEEP_WATCHING;
+      const pendingWork = options.pendingWork();
+      if (!pendingWork.length) return { notice: { reason, result: outcome }, done: true };
+      if (!since) await follow();
+      // Work that changed but is still pending brings no new reply.
+      if (outcome.workChanged) return KEEP_WATCHING;
+      return { notice: { reason, result: outcome, pendingWork }, done: false };
     },
   };
 }

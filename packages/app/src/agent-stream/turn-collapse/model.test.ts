@@ -162,11 +162,12 @@ describe("collapseTurns", () => {
     create.payload.data.detail = { type: "unknown", input: { title: "Side fix" }, output: null };
     const finished = shell("finished");
     if (finished.payload.source !== "agent") throw new Error("Expected agent tool");
-    finished.payload.data.name = "agent_notification";
-    finished.payload.data.agentMessage = {
-      event: "finished",
-      sender: { id: "worker", title: "PR helper" },
+    finished.payload.data.name = "agent_finished";
+    finished.payload.data.detail = {
+      type: "plain_text",
+      label: "PR helper",
       text: "Finished",
+      icon: "bot",
     };
     const items: StreamItem[] = [
       user("u1"),
