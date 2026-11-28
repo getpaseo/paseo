@@ -1354,6 +1354,8 @@ export const zhCN: TranslationResources = {
         openNewWindowFailed: "无法打开新窗口",
         openFolder: "Open in file manager",
         openFolderFailed: "Couldn't open folder",
+        pin: "置顶",
+        unpin: "取消置顶",
         remove: "移除 project",
         removing: "正在移除...",
       },

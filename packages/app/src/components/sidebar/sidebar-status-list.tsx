@@ -35,6 +35,8 @@ import {
   CircleCheck,
   CircleDot,
   CircleX,
+  MoreVertical,
+  PinOff,
 } from "lucide-react-native";
 import { useToast } from "@/contexts/toast-context";
 import { SidebarToastClearance } from "@/components/sidebar/sidebar-toast-region";
@@ -84,6 +86,14 @@ import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pi
 import { DraggableList, type DraggableRenderItemInfo } from "@/components/draggable-list";
 import type { DraggableListDragHandleProps } from "@/components/draggable-list.types";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
+import { ProjectLeadingVisual } from "@/components/sidebar/project-leading-visual";
+import { useSidebarProjectPin } from "@/stores/sidebar-project-pins-store";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 // Themed icon wrappers
 const mutedGroupIconProps = densityIconProps("sm", (theme) => ({
@@ -110,6 +120,9 @@ const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedCircleX = withUnistyles(CircleX);
+const ThemedMoreVertical = withUnistyles(MoreVertical);
+const ThemedPinOff = withUnistyles(PinOff);
+const unpinLeadingIcon = <ThemedPinOff size={14} uniProps={mutedGroupIconProps} />;
 const EMPTY_SHORTCUT_INDEX = new Map<string, number>();
 
 function statusWorkspaceKeyExtractor(workspace: SidebarWorkspaceEntry): string {
@@ -462,6 +475,8 @@ function StatusGroupRows({
     expanded: workspacesExpanded,
     policy: STATUS_GROUP_VISIBILITY,
   });
+  const hasRowsToShowWhenExpanded = group.leading.kind !== "project" || group.rows.length > 0;
+  const isExpanded = !collapsed && hasRowsToShowWhenExpanded;
 
   function renderWorkspaceRow(workspace: SidebarWorkspaceEntry) {
     return (
@@ -483,9 +498,13 @@ function StatusGroupRows({
   }
 
   return (
-    <View style={collapsed ? undefined : styles.statusGroupBlockExpanded}>
-      <StatusGroupHeader group={group} collapsed={collapsed} />
-      {!collapsed ? (
+    <View style={isExpanded ? styles.statusGroupBlockExpanded : undefined}>
+      <StatusGroupHeader
+        group={group}
+        collapsed={collapsed}
+        projectIconByProjectViewKey={projectIconByProjectViewKey}
+      />
+      {isExpanded ? (
         <View
           style={styles.statusWorkspaceListContainer}
           testID={`sidebar-status-group-rows-${group.key}`}
@@ -531,12 +550,23 @@ function buildStatusRowProjectPresentation({
 function StatusGroupHeader({
   group,
   collapsed,
+  projectIconByProjectViewKey,
 }: {
   group: SidebarWorkspaceGroup;
   collapsed: boolean;
+  projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
 }) {
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
+  const isCompact = useIsCompactFormFactor();
+  const isProjectGroup = group.leading.kind === "project";
+  const showProjectMenu = isHovered || platformIsNative || isCompact;
+  let projectIconDataUri: string | null = null;
+  let projectViewKey: string | null = null;
+  if (group.leading.kind === "project") {
+    projectViewKey = group.leading.projectViewKey;
+    projectIconDataUri = projectIconByProjectViewKey.get(projectViewKey) ?? null;
+  }
   const toggleWorkspaceGroupCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.toggleWorkspaceGroupCollapsed,
   );
@@ -546,13 +576,25 @@ function StatusGroupHeader({
   const handleHoverIn = useCallback(() => setIsHovered(true), []);
   const handleHoverOut = useCallback(() => setIsHovered(false), []);
   const rowStyle = useMemo(
-    () => [styles.statusGroupRow, isHovered && styles.statusGroupRowHovered],
-    [isHovered],
+    () => [
+      styles.statusGroupRow,
+      isHovered && !isProjectGroup && styles.statusGroupRowHovered,
+      isProjectGroup && styles.statusGroupRowWithProjectMenuPressable,
+    ],
+    [isHovered, isProjectGroup],
   );
   const accessibilityState = useMemo(() => ({ expanded: !collapsed }), [collapsed]);
+  const backdrop = getSidebarRowBackdrop({ isHovered });
 
   return (
-    <View onPointerEnter={handleHoverIn} onPointerLeave={handleHoverOut}>
+    <View
+      onPointerEnter={handleHoverIn}
+      onPointerLeave={handleHoverOut}
+      style={[
+        isProjectGroup && styles.statusGroupHeaderWithProjectMenu,
+        isProjectGroup && isHovered && styles.statusGroupRowHovered,
+      ]}
+    >
       <Pressable
         accessibilityRole={platformIsWeb ? undefined : "button"}
         accessibilityLabel={t("sidebar.statusGroupAccessibility", { label: group.label })}
@@ -568,6 +610,9 @@ function StatusGroupHeader({
               leading={group.leading}
               collapsed={collapsed}
               showChevron={isHovered}
+              displayName={group.label}
+              iconDataUri={projectIconDataUri}
+              backdrop={backdrop}
             />
           </View>
           <View style={styles.statusGroupTitleGroup}>
@@ -577,6 +622,13 @@ function StatusGroupHeader({
           </View>
         </View>
       </Pressable>
+      {projectViewKey !== null ? (
+        <StatusProjectGroupMenu
+          groupKey={group.key}
+          projectViewKey={projectViewKey}
+          visible={showProjectMenu}
+        />
+      ) : null}
     </View>
   );
 }
@@ -585,11 +637,31 @@ function StatusGroupLeadingVisual({
   leading,
   collapsed,
   showChevron,
+  displayName,
+  iconDataUri,
+  backdrop,
 }: {
   leading: SidebarWorkspaceGroup["leading"];
   collapsed: boolean;
   showChevron: boolean;
+  displayName: string;
+  iconDataUri: string | null;
+  backdrop: SidebarSurfaceBackdrop;
 }) {
+  if (leading.kind === "project") {
+    const chevron = collapsed ? "expand" : "collapse";
+    return (
+      <ProjectLeadingVisual
+        displayName={displayName}
+        iconDataUri={iconDataUri}
+        statusBucket={null}
+        projectViewKey={leading.projectViewKey}
+        backdrop={backdrop}
+        chevron={chevron}
+        showChevron={showChevron}
+      />
+    );
+  }
   if (!showChevron) {
     return <StatusGroupIcon bucket={leading.bucket} />;
   }
@@ -597,6 +669,46 @@ function StatusGroupLeadingVisual({
     return <ThemedChevronRight uniProps={mutedGroupIconProps} />;
   }
   return <ThemedChevronDown uniProps={mutedGroupIconProps} />;
+}
+
+function StatusProjectGroupMenu({
+  groupKey,
+  projectViewKey,
+  visible,
+}: {
+  groupKey: string;
+  projectViewKey: string;
+  visible: boolean;
+}) {
+  const { t } = useTranslation();
+  const { togglePinned } = useSidebarProjectPin(projectViewKey);
+  return (
+    <View
+      style={[styles.statusGroupProjectKebabSlot, !visible && styles.statusGroupProjectKebabHidden]}
+      pointerEvents={visible ? "auto" : "none"}
+    >
+      <DropdownMenu compactMode="sheet">
+        <DropdownMenuTrigger
+          hitSlop={8}
+          style={styles.statusGroupProjectKebabTrigger}
+          accessibilityRole={platformIsWeb ? undefined : "button"}
+          accessibilityLabel={t("sidebar.project.actions.menu")}
+          testID={"sidebar-status-group-kebab-" + groupKey}
+        >
+          <ThemedMoreVertical size={14} uniProps={mutedGroupIconProps} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" width={220} sheetTitle={t("sidebar.project.actions.menu")}>
+          <DropdownMenuItem
+            leading={unpinLeadingIcon}
+            onSelect={togglePinned}
+            testID={"sidebar-status-group-menu-unpin-" + groupKey}
+          >
+            {t("sidebar.project.actions.unpin")}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </View>
+  );
 }
 
 function StatusGroupIcon({ bucket }: { bucket: StatusBucket }) {
@@ -1205,6 +1317,13 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[3],
   },
   statusWorkspaceListContainer: {},
+  statusGroupHeaderWithProjectMenu: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    marginBottom: theme.spacing[2],
+    borderRadius: theme.borderRadius.lg,
+  },
   statusGroupRow: {
     minHeight: density.rowHeight,
     paddingVertical: theme.spacing[2],
@@ -1222,6 +1341,26 @@ const styles = StyleSheet.create((theme) => ({
   },
   statusGroupRowPressed: {
     backgroundColor: theme.colors.surface2,
+  },
+  statusGroupRowWithProjectMenuPressable: {
+    flex: 1,
+    marginBottom: 0,
+  },
+  statusGroupProjectKebabSlot: {
+    width: densityIconBox("md"),
+    height: density.rowHeight,
+    flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  statusGroupProjectKebabTrigger: {
+    width: densityIconBox("md"),
+    height: densityIconBox("md"),
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  statusGroupProjectKebabHidden: {
+    opacity: 0,
   },
   statusGroupRowLeft: {
     flexDirection: "row",

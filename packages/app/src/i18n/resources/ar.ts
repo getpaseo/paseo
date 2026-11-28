@@ -1363,6 +1363,8 @@ export const ar: TranslationResources = {
         openNewWindowFailed: "Couldn't open a new window",
         openFolder: "Open in file manager",
         openFolderFailed: "Couldn't open folder",
+        pin: "تثبيت في الأعلى",
+        unpin: "إلغاء التثبيت",
         remove: "إزالة المشروع",
         removing: "جارٍ الإزالة...",
       },

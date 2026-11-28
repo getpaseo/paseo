@@ -1393,6 +1393,8 @@ export const fr: TranslationResources = {
         openNewWindowFailed: "Impossible d’ouvrir une nouvelle fenêtre",
         openFolder: "Ouvrir dans le gestionnaire de fichiers",
         openFolderFailed: "Impossible d’ouvrir le dossier",
+        pin: "Épingler en haut",
+        unpin: "Désépingler",
         remove: "Retirer le projet",
         removing: "Retrait…",
       },

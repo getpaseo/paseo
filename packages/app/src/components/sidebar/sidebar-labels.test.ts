@@ -1,7 +1,11 @@
 import { describe, expect, test } from "vitest";
-import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
+import type {
+  SidebarProjectEntry,
+  SidebarWorkspaceEntry,
+  SidebarWorkspacePlacement,
+} from "@/hooks/use-sidebar-workspaces-list";
 import { SIDEBAR_UNLABELLED_LABEL_KEY } from "@/stores/sidebar-view-store";
-import { filterWorkspacesByLabels } from "./sidebar-labels";
+import { filterWorkspacesByLabels, pinnedProjectWorkspaceGroups } from "./sidebar-labels";
 
 function workspace(
   workspaceId: string,
@@ -67,3 +71,54 @@ describe("sidebar label filtering", () => {
     ).toEqual(["blank"]);
   });
 });
+
+describe("pinned project workspace groups", () => {
+  test("keeps pinned workspaces and retains empty project headers", () => {
+    const projects = [
+      project({ viewKey: "p1", projectName: "Project 1", workspaceIds: ["first", "second"] }),
+      project({ viewKey: "p2", projectName: "Project 2", workspaceIds: [] }),
+    ];
+    const first = workspace("first", [], "2026-01-01T00:00:00Z");
+    const second = workspace("second", []);
+    const groups = pinnedProjectWorkspaceGroups(
+      projects,
+      new Map([
+        [first.workspaceKey, first],
+        [second.workspaceKey, second],
+      ]),
+    );
+
+    expect(groups.map((group) => group.key)).toEqual(["pinned-project:p1", "pinned-project:p2"]);
+    expect(groups[0]?.leading).toEqual({ kind: "project", projectViewKey: "p1" });
+    expect(groups[0]?.label).toBe("Project 1");
+    expect(groups[0]?.rows.map((entry) => entry.workspaceId)).toEqual(["first", "second"]);
+    expect(groups[1]?.rows).toEqual([]);
+  });
+});
+
+interface ProjectFixtureInput {
+  viewKey: string;
+  projectName: string;
+  workspaceIds: string[];
+}
+
+function project({ viewKey, projectName, workspaceIds }: ProjectFixtureInput): SidebarProjectEntry {
+  const workspaces: SidebarWorkspacePlacement[] = workspaceIds.map((workspaceId) => ({
+    workspaceKey: `host:${workspaceId}`,
+    serverId: "host",
+    workspaceId,
+    projectViewKey: viewKey,
+    projectName,
+    projectKind: "git",
+    workspaceKind: "worktree",
+    name: workspaceId,
+  }));
+  return {
+    viewKey,
+    projectName,
+    projectKind: "git",
+    iconWorkingDir: "",
+    hosts: [],
+    workspaces,
+  };
+}

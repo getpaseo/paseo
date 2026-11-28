@@ -1400,6 +1400,8 @@ export const es: TranslationResources = {
         openNewWindowFailed: "Couldn't open a new window",
         openFolder: "Open in file manager",
         openFolderFailed: "Couldn't open folder",
+        pin: "Anclar arriba",
+        unpin: "Desanclar",
         remove: "Eliminar proyecto",
         removing: "Eliminando...",
       },

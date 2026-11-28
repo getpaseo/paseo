@@ -1370,6 +1370,8 @@ export const ko: TranslationResources = {
         openNewWindowFailed: "새 창을 열 수 없습니다",
         openFolder: "파일 관리자에서 열기",
         openFolderFailed: "폴더를 열 수 없습니다.",
+        pin: "상단에 고정",
+        unpin: "고정 해제",
         remove: "프로젝트 제거",
         removing: "제거하는 중...",
       },

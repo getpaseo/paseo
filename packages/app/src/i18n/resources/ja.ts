@@ -1378,6 +1378,8 @@ export const ja: TranslationResources = {
         openNewWindowFailed: "新しいウィンドウを開けませんでした",
         openFolder: "Open in file manager",
         openFolderFailed: "Couldn't open folder",
+        pin: "上部に固定",
+        unpin: "固定解除",
         remove: "プロジェクトを削除",
         removing: "削除中...",
       },

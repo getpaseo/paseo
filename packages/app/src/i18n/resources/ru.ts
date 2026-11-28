@@ -1383,6 +1383,8 @@ export const ru: TranslationResources = {
         openNewWindowFailed: "Не удалось открыть новое окно",
         openFolder: "Открыть в файловом менеджере",
         openFolderFailed: "Не удалось открыть папку",
+        pin: "Закрепить вверху",
+        unpin: "Открепить",
         remove: "Удалить проект",
         removing: "Удаление...",
       },

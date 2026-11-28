@@ -1,5 +1,8 @@
 import { workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
-import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
+import type {
+  SidebarProjectEntry,
+  SidebarWorkspaceEntry,
+} from "@/hooks/use-sidebar-workspaces-list";
 import { SIDEBAR_UNLABELLED_LABEL_KEY, type SidebarLabelFilter } from "@/stores/sidebar-view-store";
 import type { StatusBucket, StatusGroup } from "@/hooks/sidebar-status-view-model";
 
@@ -7,7 +10,7 @@ export interface SidebarWorkspaceGroup {
   key: string;
   label: string;
   rows: SidebarWorkspaceEntry[];
-  leading: { kind: "status"; bucket: StatusBucket };
+  leading: { kind: "status"; bucket: StatusBucket } | { kind: "project"; projectViewKey: string };
 }
 
 export function statusWorkspaceGroups(groups: readonly StatusGroup[]): SidebarWorkspaceGroup[] {
@@ -17,6 +20,25 @@ export function statusWorkspaceGroups(groups: readonly StatusGroup[]): SidebarWo
     rows: group.rows,
     leading: { kind: "status", bucket: group.bucket },
   }));
+}
+
+export function pinnedProjectWorkspaceGroups(
+  projects: readonly SidebarProjectEntry[],
+  workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>,
+): SidebarWorkspaceGroup[] {
+  return projects.map((project) => {
+    const rows: SidebarWorkspaceEntry[] = [];
+    for (const placement of project.workspaces) {
+      const entry = workspaceEntriesByKey.get(placement.workspaceKey);
+      if (entry) rows.push(entry);
+    }
+    return {
+      key: `pinned-project:${project.viewKey}`,
+      label: project.projectName,
+      rows,
+      leading: { kind: "project", projectViewKey: project.viewKey },
+    };
+  });
 }
 
 /**
