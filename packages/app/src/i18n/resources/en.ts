@@ -1342,6 +1342,8 @@ export const en = {
       hosts: "Hosts",
       settings: "Settings",
       closeSidebar: "Close sidebar",
+      collapseMenu: "Collapse menu",
+      expandMenu: "Expand menu",
       moreActions: "More actions",
     },
     footer: {

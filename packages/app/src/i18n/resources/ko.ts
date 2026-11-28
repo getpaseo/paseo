@@ -1338,6 +1338,8 @@ export const ko: TranslationResources = {
       hosts: "호스트",
       settings: "설정",
       closeSidebar: "사이드바 닫기",
+      collapseMenu: "메뉴 접기",
+      expandMenu: "메뉴 펼치기",
       moreActions: "추가 작업",
     },
     footer: {

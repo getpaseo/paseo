@@ -33,6 +33,8 @@ interface SidebarNavRowsProps extends SidebarNavRowProps {
   style?: StyleProp<ViewStyle>;
   /** Sits to the right of the first row, which shrinks to make room. */
   firstRowTrailing?: ReactNode;
+  /** Keeps only the first row, which carries `firstRowTrailing`. */
+  collapsed?: boolean;
 }
 
 /** The top-level items the user keeps visible, in display order. */
@@ -46,7 +48,12 @@ export function useVisibleSidebarNavItems() {
  * `sidebarNavItems` preference. Renders nothing — not even the bordered group
  * wrapper — when every item is hidden and there is no `firstRowTrailing`.
  */
-export function SidebarNavRows({ style, onBeforeNavigate, firstRowTrailing }: SidebarNavRowsProps) {
+export function SidebarNavRows({
+  style,
+  onBeforeNavigate,
+  firstRowTrailing,
+  collapsed = false,
+}: SidebarNavRowsProps) {
   const visibleItems = useVisibleSidebarNavItems();
   const groupRef = useRef<View | null>(null);
 
@@ -78,7 +85,7 @@ export function SidebarNavRows({ style, onBeforeNavigate, firstRowTrailing }: Si
       ) : (
         firstRow
       )}
-      {restRows}
+      {collapsed ? null : restRows}
     </View>
   );
 }

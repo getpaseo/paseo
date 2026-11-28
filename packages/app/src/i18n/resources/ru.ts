@@ -1351,6 +1351,8 @@ export const ru: TranslationResources = {
       hosts: "Хосты",
       settings: "Настройки",
       closeSidebar: "Закрыть боковую панель",
+      collapseMenu: "Свернуть меню",
+      expandMenu: "Развернуть меню",
       moreActions: "Дополнительные действия",
     },
     footer: {

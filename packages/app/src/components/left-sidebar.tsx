@@ -42,6 +42,7 @@ import {
   WINDOW_CONTENT_DATASET,
 } from "@/components/desktop/titlebar-drag-region";
 import { SidebarCloseButton } from "@/components/headers/sidebar-close-button";
+import { SidebarNavCollapseButton } from "@/components/headers/sidebar-nav-collapse-button";
 import {
   resolveDesktopSidebarInsetLeft,
   resolveDesktopSidebarInsetTop,
@@ -97,6 +98,7 @@ import type { PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
+import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { type SidebarGroupMode, useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useHosts } from "@/runtime/host-runtime";
 import { PluginSidebarItem } from "@/plugins/sidebar-items";
@@ -154,6 +156,8 @@ interface SidebarLabels {
   searchHosts: string;
   usage: string;
   closeSidebar: string;
+  collapseMenu: string;
+  expandMenu: string;
 }
 
 interface MobileSidebarProps extends SidebarSharedProps {
@@ -248,6 +252,8 @@ export const LeftSidebar = memo(function LeftSidebar({
       searchHosts: t("sidebar.host.searchPlaceholder"),
       usage: t(builtinSidebarNavLabelKey("usage")),
       closeSidebar: t("sidebar.actions.closeSidebar"),
+      collapseMenu: t("sidebar.actions.collapseMenu"),
+      expandMenu: t("sidebar.actions.expandMenu"),
     }),
     [t],
   );
@@ -612,19 +618,6 @@ function MobileSidebar({
     closeSidebar();
   }, [closeSidebar]);
 
-  const closeButton = useMemo(
-    () => (
-      <SidebarCloseButton
-        label={labels.closeSidebar}
-        onPress={closeSidebar}
-        testID="sidebar-close"
-        nativeID="sidebar-close"
-        style={styles.mobileCloseButton(insets.right)}
-      />
-    ),
-    [labels.closeSidebar, closeSidebar, insets.right],
-  );
-
   const mobileSidebarInsetStyle = useMemo(
     () => ({
       paddingTop: insetsTop,
@@ -634,11 +627,43 @@ function MobileSidebar({
     [insetsTop, insetsBottom, theme.colors.surfaceSidebar],
   );
 
+  const navCollapsed = useSidebarCollapsedSectionsStore((state) => state.collapsedNav);
+  const toggleNavCollapsed = useSidebarCollapsedSectionsStore((state) => state.toggleNavCollapsed);
+
+  const firstRowTrailing = useMemo(
+    () => (
+      <View style={styles.mobileFirstRowActions}>
+        <SidebarNavCollapseButton
+          collapsed={navCollapsed}
+          label={navCollapsed ? labels.expandMenu : labels.collapseMenu}
+          onPress={toggleNavCollapsed}
+        />
+        <SidebarCloseButton
+          label={labels.closeSidebar}
+          onPress={closeSidebar}
+          testID="sidebar-close"
+          nativeID="sidebar-close"
+          style={styles.mobileCloseButton(insets.right)}
+        />
+      </View>
+    ),
+    [
+      navCollapsed,
+      labels.expandMenu,
+      labels.collapseMenu,
+      labels.closeSidebar,
+      toggleNavCollapsed,
+      closeSidebar,
+      insets.right,
+    ],
+  );
+
   const navRows = (
     <SidebarNavRows
       style={styles.mobileNavRowsGroup}
       onBeforeNavigate={closeSidebar}
-      firstRowTrailing={closeButton}
+      firstRowTrailing={firstRowTrailing}
+      collapsed={navCollapsed}
     />
   );
 
@@ -1020,6 +1045,10 @@ const styles = StyleSheet.create((theme) => ({
   sidebarContent: {
     flex: 1,
     minHeight: 0,
+  },
+  mobileFirstRowActions: {
+    flexDirection: "row",
+    alignItems: "center",
   },
   mobileCloseButton: (rightInset: number) => ({
     marginRight: theme.spacing[2] + rightInset,

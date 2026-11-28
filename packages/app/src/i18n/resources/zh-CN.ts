@@ -1323,6 +1323,8 @@ export const zhCN: TranslationResources = {
       hosts: "Hosts",
       settings: "设置",
       closeSidebar: "关闭侧边栏",
+      collapseMenu: "收起菜单",
+      expandMenu: "展开菜单",
       moreActions: "更多操作",
     },
     footer: {
