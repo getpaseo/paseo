@@ -358,6 +358,18 @@ it.each([true, false])(
 
 const completedToolCalls = [
   {
+    toolCallId: "planning-to-execution",
+    name: "exit_plan_mode",
+    kind: "other",
+    rawInput: { plan: "Fix the addition.\nRun the verification." },
+  },
+  {
+    toolCallId: "execution-to-planning",
+    name: "enter_plan_mode",
+    kind: "other",
+    rawInput: { reason: "The check revealed a new requirement." },
+  },
+  {
     toolCallId: "shell",
     name: "run_command",
     kind: "execute",
@@ -518,6 +530,23 @@ it.each(["live", "replay"] as const)(
         .poll(() => calls().filter((call) => call.status === "completed").length)
         .toBe(completedToolCalls.length);
       const completed = Object.fromEntries(calls().map((call) => [call.id, call]));
+      expect(
+        calls()
+          .filter((call) => call.status === "completed")
+          .map((call) => call.id),
+      ).toEqual(completedToolCalls.map((call) => call.toolCallId));
+      expect(completed["planning-to-execution"].detail).toEqual({
+        type: "plain_text",
+        label: "Start execution",
+        icon: "sparkles",
+        text: "Fix the addition.\nRun the verification.",
+      });
+      expect(completed["execution-to-planning"].detail).toEqual({
+        type: "plain_text",
+        label: "Return to planning",
+        icon: "sparkles",
+        text: "The check revealed a new requirement.",
+      });
       expect(completed.shell.detail).toEqual({
         type: "shell",
         command: "printf test; exit 7",
@@ -561,6 +590,17 @@ it.each(["live", "replay"] as const)(
         detail: { type: "unknown", input: { agentId: "agent-1" }, output: null },
       });
       if (source === "live") {
+        expect(
+          calls()
+            .filter((call) => call.status === "running")
+            .slice(0, 2),
+        ).toMatchObject([
+          { id: "planning-to-execution", detail: { type: "plain_text", label: "Start execution" } },
+          {
+            id: "execution-to-planning",
+            detail: { type: "plain_text", label: "Return to planning" },
+          },
+        ]);
         expect(calls()).toContainEqual(
           expect.objectContaining({
             id: "shell",

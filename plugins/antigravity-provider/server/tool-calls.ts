@@ -25,6 +25,10 @@ export const mapToolCall: NonNullable<AcpTransformer["toolCall"]> = (call, conte
 
 function mapNativeDetail(call: AcpToolCallSnapshot): ProviderToolCallDetail | undefined {
   switch (call.name) {
+    case "enter_plan_mode":
+      return handoffDetail(call.input, "reason", "Return to planning");
+    case "exit_plan_mode":
+      return handoffDetail(call.input, "plan", "Start execution");
     case "run_command": {
       const input = shellInput.safeParse(call.input).data;
       if (!input) break;
@@ -58,6 +62,21 @@ function mapNativeDetail(call: AcpToolCallSnapshot): ProviderToolCallDetail | un
     offset,
     limit:
       offset !== undefined && end !== undefined && end >= offset ? end - offset + 1 : undefined,
+  };
+}
+
+function handoffDetail(
+  input: AcpToolCallSnapshot["input"],
+  field: "plan" | "reason",
+  label: string,
+): ProviderToolCallDetail {
+  const description =
+    input !== null && typeof input === "object" && !Array.isArray(input) ? input[field] : undefined;
+  return {
+    type: "plain_text",
+    label,
+    icon: "sparkles",
+    text: typeof description === "string" ? description : undefined,
   };
 }
 
