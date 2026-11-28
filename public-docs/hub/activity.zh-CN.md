@@ -36,6 +36,6 @@ Hub 会记录每一次已接受的事件，无论它是否启动了运行。使�
 
 ## Webhook 与定时运行 {#webhook-and-schedule-runs}
 
-由入站 webhook 启动的运行会以 `webhook.received` 出现在 **Activity** 中。如果 HTTP `POST` 返回错误状态码（`400`、`401`、`403`、`409`、`413` 或 `429`），参见[入站 webhook](/docs/hub/triggers/webhooks#request-limits-and-responses)。
+由入站 webhook 启动的运行会以 `webhook.received` 出现在 **Activity** 中。如果 HTTP `POST` 返回错误状态码（`400`、`401`、`403`、`409`、`413`、`429` 或 `503`），参见[入站 webhook](/docs/hub/triggers/webhooks#request-limits-and-responses)。
 
 定时运行会以 `schedule.tick` 出现在 **Activity** 中。当某次定时运行仍在进行时，Hub 会跳过该触发器新到期的计划，直到当前运行完成或失败。

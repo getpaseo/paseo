@@ -95,6 +95,7 @@ curl -X POST "$WEBHOOK_URL" \
 | `409`  | 触发器已禁用。                                                |
 | `413`  | 请求体超过 32 KiB。                                           |
 | `429`  | 端点在当前 1 分钟窗口内超过了 60 次新投递。                   |
+| `503`  | Hub 的数据库暂时不可用。请在 `Retry-After` 秒后重试。         |
 
 ## 负载如何传递给 Agent {#how-the-payload-reaches-the-agent}
 
