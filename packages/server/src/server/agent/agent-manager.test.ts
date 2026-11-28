@@ -2627,6 +2627,33 @@ test("createAgent forwards request env into the spawned provider process", async
   }
 });
 
+test("normalizeConfig preserves an explicit Cursor Auto selection after another model was used", async () => {
+  const client = new TestAgentClient("cursor");
+  vi.spyOn(client, "fetchCatalog").mockResolvedValue({
+    models: [
+      { provider: "cursor", id: "gpt-5.4-mini", label: "GPT-5.4 Mini", isDefault: true },
+      { provider: "cursor", id: "default", label: "Auto" },
+    ],
+    modes: [],
+  });
+  const manager = new AgentManager({ clients: { cursor: client }, logger });
+  const config = { provider: "cursor", cwd: process.cwd() };
+  try {
+    const saved = await manager.createAgent(config, undefined, { workspaceId: undefined });
+    const auto = await manager.createAgent({ ...config, model: "default" }, undefined, {
+      workspaceId: undefined,
+    });
+    expect(saved.config.model).toBe("gpt-5.4-mini");
+    expect(auto.config.model).toBe("default");
+    expect(client.createdConfigs.map((created) => created.model)).toEqual([
+      "gpt-5.4-mini",
+      "default",
+    ]);
+  } finally {
+    await manager.flushForShutdown();
+  }
+});
+
 test("normalizeConfig strips legacy 'default' model id", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

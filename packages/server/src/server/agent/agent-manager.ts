@@ -6643,7 +6643,10 @@ export class AgentManager {
 
     if (typeof normalized.model === "string") {
       const trimmed = normalized.model.trim();
-      normalized.model = trimmed.length > 0 && trimmed !== "default" ? trimmed : undefined;
+      // Cursor advertises "default" as the selectable Auto model.
+      const legacyDefault =
+        trimmed === "default" && this.adapterOf(normalized.provider) !== "cursor";
+      normalized.model = trimmed.length > 0 && !legacyDefault ? trimmed : undefined;
     }
 
     const shouldResolveDefaultModel = options.resolveDefaultModel ?? true;
