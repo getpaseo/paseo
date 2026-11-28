@@ -17,6 +17,7 @@ import type { AgentSession, AgentStreamEvent } from "../../agent-sdk-types.js";
 import type { AgentTimelineRow } from "../../agent-manager.js";
 import { projectTimelineRows } from "../../timeline-projection.js";
 import { ClaudeAgentClient } from "./agent.js";
+import { asInternals } from "../../../test-utils/class-mocks.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 
 /**
@@ -1031,6 +1032,154 @@ test("Claude session reports a pending wakeup until the turn its background work
     expect(session.hasPendingWakeup!()).toBe(true);
     await stop([cron]);
     expect(session.hasPendingWakeup!()).toBe(false);
+  } finally {
+    await session.close();
+  }
+});
+
+/**
+ * A Claude process that never answers: nothing is pumped, so no `init`, no lifecycle and no
+ * result. `cancelAsyncMessage` is the SDK's withdraw path for a prompt Claude has not taken yet.
+ */
+function createWithdrawableQuery() {
+  let wake: (() => void) | undefined;
+  const queue: SDKMessage[] = [];
+  const channel = { closed: false };
+  const pump = (async function* () {
+    while (!channel.closed) {
+      const message = queue.shift();
+      if (!message) {
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+        continue;
+      }
+      yield message;
+    }
+  })();
+  const query = {
+    next: () => pump.next(),
+    return: async () => {
+      channel.closed = true;
+      wake?.();
+      return pump.return(undefined);
+    },
+    close: () => {
+      channel.closed = true;
+      wake?.();
+    },
+    interrupt: vi.fn(async () => undefined),
+    cancelAsyncMessage: vi.fn(async () => true),
+    setPermissionMode: vi.fn(async () => undefined),
+    setModel: vi.fn(async () => undefined),
+    supportedModels: vi.fn(async () => []),
+    supportedCommands: vi.fn(async () => []),
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+  } as unknown as Query & {
+    interrupt: ReturnType<typeof vi.fn>;
+    cancelAsyncMessage: ReturnType<typeof vi.fn>;
+  };
+  return {
+    query,
+    push: (message: unknown) => {
+      queue.push(message as SDKMessage);
+      wake?.();
+    },
+  };
+}
+
+async function createWithdrawableSession() {
+  const withdrawn = createWithdrawableQuery();
+  let nativeInput!: AsyncIterator<SDKUserMessage>;
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => "/test/claude/bin",
+    queryFactory: ({ prompt }) => {
+      if (typeof prompt === "string") throw new Error("Expected streaming input");
+      nativeInput = prompt[Symbol.asyncIterator]();
+      return withdrawn.query;
+    },
+  }).createSession({ provider: "claude", cwd: process.cwd() });
+  // The query starts on the first prompt, so the input iterator exists only from then on.
+  return { session, withdrawn, promptIterator: () => nativeInput };
+}
+
+interface SessionRuntimeInternals {
+  mainTurnInFlight: boolean;
+}
+
+test("a prompt withdrawn before Claude starts leaves the runtime stoppable", async () => {
+  const { session, withdrawn, promptIterator } = await createWithdrawableSession();
+  try {
+    await session.startTurn("hello");
+    const prompt = await promptIterator().next();
+    // Claude never sent init, so it never started this prompt: the cancel withdraws it.
+    await session.interrupt();
+
+    await vi.waitFor(() => {
+      expect(withdrawn.query.cancelAsyncMessage).toHaveBeenCalledWith(prompt.value.uuid);
+    });
+    expect(withdrawn.query.interrupt).not.toHaveBeenCalled();
+    // A process that was sent a prompt and then withdrew it owns no background work, so idle
+    // cleanup must be able to stop it.
+    await vi.waitFor(async () => {
+      expect(await session.canStopRuntime!()).toBe(true);
+    });
+  } finally {
+    await session.close();
+  }
+});
+
+test("a prompt Claude had already started keeps the runtime held after the cancel", async () => {
+  const { session, withdrawn, promptIterator } = await createWithdrawableSession();
+  try {
+    await session.startTurn("hello");
+    const prompt = await promptIterator().next();
+    withdrawn.push({
+      type: "command_lifecycle",
+      command_uuid: prompt.value.uuid,
+      state: "started",
+    });
+    await vi.waitFor(() =>
+      expect(asInternals<SessionRuntimeInternals>(session).mainTurnInFlight).toBe(true),
+    );
+
+    await session.interrupt();
+
+    // Nothing was left to withdraw, so the withdrawal must not clear the turn it never took.
+    expect(withdrawn.query.cancelAsyncMessage).not.toHaveBeenCalled();
+    expect(await session.canStopRuntime!()).toBe(false);
+  } finally {
+    await session.close();
+  }
+});
+
+test("withdrawing a queued steer during a started turn before init keeps the runtime held", async () => {
+  const { session, withdrawn, promptIterator } = await createWithdrawableSession();
+  try {
+    const { turnId } = await session.startTurn("hello");
+    const prompt = await promptIterator().next();
+    withdrawn.push({
+      type: "command_lifecycle",
+      command_uuid: prompt.value.uuid,
+      state: "started",
+    });
+    await vi.waitFor(() =>
+      expect(asInternals<SessionRuntimeInternals>(session).mainTurnInFlight).toBe(true),
+    );
+    const steer = await session.steerActiveTurn!("wait actually", { expectedTurnId: turnId });
+    expect(steer.status).toBe("accepted");
+    const steeredPrompt = await promptIterator().next();
+
+    await session.interrupt();
+
+    await vi.waitFor(() => {
+      expect(withdrawn.query.cancelAsyncMessage).toHaveBeenCalledWith(steeredPrompt.value.uuid);
+      expect(withdrawn.query.interrupt).toHaveBeenCalled();
+    });
+    expect(await session.canStopRuntime!()).toBe(false);
   } finally {
     await session.close();
   }

@@ -1,5 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import { createServer } from "http";
+import { createServer as createSocketServer, type Socket } from "net";
+import { execFileSync } from "child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
@@ -8,11 +10,16 @@ import { z } from "zod";
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { generateStructuredAgentResponse } from "./agent-response-loop.js";
+import {
+  generateStructuredAgentResponse,
+  StructuredAgentTimeoutError,
+} from "./agent-response-loop.js";
 import { AgentManager } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import { createAgentMcpServer } from "./mcp-server.js";
 import { shutdownProviders } from "./provider-registry.js";
+import { ClaudeAgentClient } from "./providers/claude/agent.js";
+import { isCommandAvailable } from "../../executable-resolution/executable-resolution.js";
 import {
   canRunRealProvider,
   createRealProviderClients,
@@ -285,4 +292,130 @@ describe("getStructuredAgentResponse (e2e)", () => {
     expect(result.message.trim().toLowerCase()).toBe("hello");
     expect(existsSync(hookMarker)).toBe(false);
   }, 180000);
+});
+
+interface SinkholeHandle {
+  port: number;
+  close: () => Promise<void>;
+}
+
+// Accepts connections and never answers them, reproducing a hung provider
+// without depending on the model choosing to request a permission.
+async function startSinkhole(): Promise<SinkholeHandle> {
+  const sockets = new Set<Socket>();
+  const server = createSocketServer((socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    socket.on("error", () => undefined);
+  });
+  server.on("error", () => undefined);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+
+  return {
+    port: typeof address === "object" && address ? address.port : 0,
+    close: async () => {
+      for (const socket of sockets) {
+        socket.destroy();
+      }
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+function providerCliPids(): Set<string> {
+  const out = execFileSync("ps", ["-eo", "pid,ppid,args"], { encoding: "utf8" });
+  const pids = new Set<string>();
+  for (const line of out.split("\n")) {
+    if (!line.includes("--output-format stream-json")) {
+      continue;
+    }
+    const [pid, ppid] = line.trim().split(/\s+/);
+    if (pid && ppid === String(process.pid)) {
+      pids.add(pid);
+    }
+  }
+  return pids;
+}
+
+describe("generateStructuredAgentResponse process cleanup (e2e)", () => {
+  const logger = pino({ level: "silent" });
+  let cwd: string;
+  let claudeInstalled = false;
+
+  beforeAll(async () => {
+    claudeInstalled = await isCommandAvailable("claude");
+  });
+
+  beforeEach(() => {
+    cwd = mkdtempSync(path.join(tmpdir(), "agent-response-loop-stall-"));
+  });
+
+  afterEach(async () => {
+    rmSync(cwd, { recursive: true, force: true });
+    await shutdownProviders(logger);
+  }, 60000);
+
+  test("reaps the provider CLI child when the run stalls", async (context) => {
+    if (!claudeInstalled || process.platform === "win32") {
+      context.skip();
+    }
+
+    const sinkhole = await startSinkhole();
+
+    const manager = new AgentManager({
+      clients: {
+        claude: new ClaudeAgentClient({
+          logger,
+          runtimeSettings: {
+            env: {
+              ANTHROPIC_BASE_URL: `http://127.0.0.1:${sinkhole.port}`,
+              ANTHROPIC_AUTH_TOKEN: "sinkhole",
+              ANTHROPIC_API_KEY: "",
+            },
+          },
+        }),
+      },
+      logger,
+    });
+
+    const before = providerCliPids();
+    const spawned = new Set<string>();
+    const watcher = setInterval(() => {
+      for (const pid of providerCliPids()) {
+        if (!before.has(pid)) {
+          spawned.add(pid);
+        }
+      }
+    }, 100);
+
+    try {
+      await expect(
+        generateStructuredAgentResponse({
+          manager,
+          agentConfig: {
+            provider: "claude",
+            model: CLAUDE_TEST_MODEL,
+            cwd,
+            title: "Stalled Generation Test",
+            internal: true,
+          },
+          persistSession: false,
+          prompt: "Return JSON with a short message.",
+          schema: z.object({ message: z.string() }),
+          maxRetries: 0,
+          timeoutMs: 20_000,
+        }),
+      ).rejects.toBeInstanceOf(StructuredAgentTimeoutError);
+    } finally {
+      clearInterval(watcher);
+      await sinkhole.close();
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    const after = providerCliPids();
+
+    expect(spawned.size).toBeGreaterThan(0);
+    expect([...spawned].filter((pid) => after.has(pid))).toEqual([]);
+  }, 120_000);
 });
