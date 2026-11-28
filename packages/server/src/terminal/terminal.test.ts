@@ -1024,6 +1024,39 @@ describe.skipIf(isPlatform("win32"))("terminal title", () => {
     unsubscribeCommandFinished();
   });
 
+  it("tracks a foreground command independently of agent activity", async () => {
+    const packageRoot = mkdtempSync(join(tmpdir(), "terminal-command-running-"));
+    temporaryDirs.push(packageRoot);
+    const scriptPath = join(packageRoot, "emit-command-lifecycle.sh");
+    writeFileSync(
+      scriptPath,
+      "#!/bin/sh\nprintf '\\033]633;B\\007'\nsleep 1\nprintf '\\033]633;D;0\\007'\n",
+    );
+    chmodSync(scriptPath, 0o755);
+
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: packageRoot,
+        shell: "/bin/sh",
+        env: { PS1: "$ " },
+      }),
+    );
+    let commandStarted = false;
+    const unsubscribeCommandStart = session.onCommandStart?.(() => {
+      commandStarted = true;
+    });
+
+    await waitForLines(session, ["$"]);
+    session.send({ type: "input", data: "./emit-command-lifecycle.sh\r" });
+
+    await waitForState(session, () => commandStarted);
+    expect(session.getCommandRunning?.()).toBe(true);
+    await waitForState(session, () => session.getCommandRunning?.() === false);
+
+    unsubscribeCommandStart?.();
+  });
+
   it("ignores malformed VS Code OSC 633 command completion payloads", async () => {
     const packageRoot = mkdtempSync(join(tmpdir(), "terminal-command-finished-malformed-"));
     temporaryDirs.push(packageRoot);

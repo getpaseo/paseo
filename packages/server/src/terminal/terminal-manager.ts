@@ -24,6 +24,7 @@ export interface TerminalListItem {
   workspaceId: string;
   title?: string;
   activity: TerminalActivity | null;
+  commandRunning?: boolean;
 }
 
 export interface TerminalsChangedEvent {
@@ -256,6 +257,7 @@ export function createTerminalManager(
       workspaceId: input.session.workspaceId,
       title: input.session.getTitle(),
       activity: input.session.getActivity(),
+      commandRunning: input.session.getCommandRunning?.() ?? true,
     };
   }
 

@@ -1718,13 +1718,13 @@ it.each([1, 4])(
     expect(manager.getTerminal(old.terminalId)).toBeUndefined();
     const workers = await workerRecords(paseoHome);
     expect(workers).toHaveLength(1);
-    expect(workers[0]!.protocolVersion).toBe(6);
+    expect(workers[0]!.protocolVersion).toBe(7);
   },
 );
 
 it("leaves a worker from a newer Paseo running, reports it incompatible, and closes it on a kill stop", async () => {
   const paseoHome = createTemporaryHome();
-  const newer = await leaveWorkerWithTerminal(paseoHome, 7);
+  const newer = await leaveWorkerWithTerminal(paseoHome, 8);
 
   manager = await startRealWorkerManager({ paseoHome });
 

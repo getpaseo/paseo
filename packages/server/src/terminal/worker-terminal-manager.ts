@@ -156,6 +156,7 @@ function cloneTerminalInfo(info: RequiredWorkerTerminalInfo): RequiredWorkerTerm
     workspaceId: info.workspaceId,
     ...(info.title ? { title: info.title } : {}),
     activity: info.activity,
+    ...(info.commandRunning !== undefined ? { commandRunning: info.commandRunning } : {}),
   };
 }
 
@@ -234,6 +235,9 @@ export function createWorkerTerminalManager(
         workspaceId: record.info.workspaceId,
         ...(record.info.title ? { title: record.info.title } : {}),
         activity: record.activity,
+        ...(record.info.commandRunning !== undefined
+          ? { commandRunning: record.info.commandRunning }
+          : {}),
       });
     }
     return terminals;
@@ -336,6 +340,9 @@ export function createWorkerTerminalManager(
       },
       getActivity(): TerminalActivity | null {
         return record.activity;
+      },
+      getCommandRunning(): boolean {
+        return record.info.commandRunning ?? true;
       },
       setActivity(state: TerminalActivityState): void {
         record.activity = { state, changedAt: Date.now() };
@@ -496,9 +503,28 @@ export function createWorkerTerminalManager(
     if (!record) {
       return;
     }
+    record.info = { ...record.info, commandRunning: false };
     for (const listener of Array.from(record.commandFinishedListeners)) {
       listener(message.info);
     }
+    emitTerminalsChanged({
+      cwd: record.info.cwd,
+      terminals: listTerminalItemsForCwd(record.info.cwd),
+    });
+  }
+
+  function handleTerminalCommandStartedEvent(
+    message: Extract<TerminalWorkerToParentMessage, { type: "terminalCommandStarted" }>,
+  ): void {
+    const record = recordsById.get(message.terminalId);
+    if (!record) {
+      return;
+    }
+    record.info = { ...record.info, commandRunning: true };
+    emitTerminalsChanged({
+      cwd: record.info.cwd,
+      terminals: listTerminalItemsForCwd(record.info.cwd),
+    });
   }
 
   function handleTerminalActivityChangeEvent(
@@ -575,6 +601,11 @@ export function createWorkerTerminalManager(
 
       case "terminalCommandFinished": {
         handleTerminalCommandFinishedEvent(message);
+        return;
+      }
+
+      case "terminalCommandStarted": {
+        handleTerminalCommandStartedEvent(message);
         return;
       }
 

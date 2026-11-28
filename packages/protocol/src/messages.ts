@@ -4062,6 +4062,8 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         workspaceLabels: z.boolean().optional(),
         terminalCollection: z.boolean().optional(),
+        // COMPAT(terminalCommandState): added after v0.16.0, remove fallback after 2027-06-01.
+        terminalCommandState: z.boolean().optional(),
         // COMPAT(workspaceBaseBranch): added after v0.11.2, remove gate after 2027-10-14.
         workspaceBaseBranch: z.boolean().optional(),
         // COMPAT(checkoutWorktreeList): added after v0.16.2, remove gate after 2027-11-19.
@@ -7276,6 +7278,7 @@ const TerminalInfoSchema = z.object({
   workspaceId: z.string().optional(),
   title: z.string().optional(),
   activity: TerminalActivitySchema.nullable().optional(),
+  commandRunning: z.boolean().optional(),
 });
 
 export const TerminalCellSchema = z.object({
