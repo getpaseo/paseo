@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
-import type { AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
+import type { AgentProfile, AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Combobox, type ComboboxOption, type ComboboxProps } from "@/components/ui/combobox";
@@ -22,6 +22,7 @@ import {
 import { useKeyboardToggle, type KeyboardToggleAction } from "@/hooks/use-keyboard-toggle";
 
 const EMPTY_COMBOBOX_OPTIONS: ComboboxOption[] = [];
+const DEFAULT_TRIGGER_DECORATION = { showCaret: true, tooltip: undefined };
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
 const foregroundMutedMapping = (theme: Theme) => ({
@@ -39,7 +40,7 @@ interface CombinedModelSelectorProps {
   profiles?: AgentProfilePicker | null;
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
-  onCreateProfile?: (seed: AgentProfileSeed) => void;
+  onCreateProfile?: (seed: AgentProfileSeed) => Promise<AgentProfile | null> | void;
   onEditProfile?: (profileId: string) => void;
   renderTrigger?: (input: {
     selectedModelLabel: string;
@@ -70,6 +71,7 @@ interface CombinedModelSelectorProps {
   toolbar?: {
     glyph: ToolbarGlyph;
     showCaret: boolean;
+    tooltip?: ReactNode;
   };
 }
 
@@ -193,12 +195,17 @@ export function CombinedModelSelector({
     onEditProfiles?.();
   }, [handleOpenChange, onEditProfiles]);
 
+  // 1-tap `+` saves the profile, selects the model immediately, and closes the picker;
+  // useAgentProfileEditor surfaces a toast with Edit and Undo actions.
   const handleCreateProfile = useCallback(
     (seed: AgentProfileSeed) => {
+      if (seed.modelId) {
+        onSelect(seed.provider, seed.modelId);
+      }
       handleOpenChange(false);
-      onCreateProfile?.(seed);
+      void onCreateProfile?.(seed);
     },
-    [handleOpenChange, onCreateProfile],
+    [handleOpenChange, onCreateProfile, onSelect],
   );
 
   const handleEditProfile = useCallback(
@@ -227,6 +234,8 @@ export function CombinedModelSelector({
       <Text style={styles.sheetLoadingText}>{t("modelSelector.loadingSelector")}</Text>
     </View>
   );
+
+  const { showCaret, tooltip } = toolbar ?? DEFAULT_TRIGGER_DECORATION;
 
   return (
     <>
@@ -266,7 +275,8 @@ export function CombinedModelSelector({
             model: browser.selectedModelLabel,
           })}
           testID="combined-model-selector"
-          chevron={toolbar?.showCaret === false ? null : undefined}
+          chevron={showCaret === false ? null : undefined}
+          tooltip={tooltip}
         >
           {selectedProvider.trim().length > 0 ? (
             <View style={toolbar ? styles.toolbarGlyph : styles.glyph}>
@@ -297,6 +307,7 @@ export function CombinedModelSelector({
         desktopFixedHeight={browser.desktopFixedHeight}
         desktopChildrenScrollEnabled={false}
         header={browser.header}
+        keyboard={browser.keyboard}
         mobileChildrenScrollEnabled={!browser.isProviderView || !isNative}
         mobileChildrenContentContainerStyle={styles.mobileBrowserContent}
       >

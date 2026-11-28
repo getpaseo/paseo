@@ -38,7 +38,9 @@ describe("Hub CLI login browser flow", () => {
     assert.equal(credential, "paseo_cli_prefix_durable-secret-value");
     assert.deepEqual(journey.waits, [5_000, 5_000, 10_000]);
     assert.deepEqual(journey.opened, ["https://hub.test/cli-login?code=ABCD-EFGH"]);
-    assert.deepEqual(journey.instructions, ["https://hub.test/cli-login ABCD-EFGH"]);
+    assert.deepEqual(journey.instructions, [
+      "Open https://hub.test/cli-login?code=ABCD-EFGH to approve CLI login (code: ABCD-EFGH)",
+    ]);
   });
 
   it("does not open a browser in noninteractive mode", async () => {
@@ -57,7 +59,9 @@ describe("Hub CLI login browser flow", () => {
     await journey.authorize();
 
     assert.deepEqual(journey.opened, []);
-    assert.equal(journey.instructions.length, 1);
+    assert.deepEqual(journey.instructions, [
+      "Open https://hub.test/cli-login?code=ABCD-EFGH to approve CLI login (code: ABCD-EFGH)",
+    ]);
   });
 });
 
@@ -95,7 +99,7 @@ class LoginJourney {
         now: () => this.now,
       },
       browser: { open: async (url) => void this.opened.push(url) },
-      instructions: (url, code) => void this.instructions.push(`${url} ${code}`),
+      instructions: (message) => void this.instructions.push(message),
       openBrowser,
     });
   }

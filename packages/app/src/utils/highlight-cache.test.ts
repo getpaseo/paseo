@@ -9,6 +9,17 @@ describe("tokenizeToLines", () => {
     expect(lines?.[0].some((token) => token.style === "keyword")).toBe(true);
   });
 
+  it.each(["diff", "patch"])("tokenizes %s fences with diff roles", (lang) => {
+    const lines = tokenizeToLines("--- a/f.ts\n+++ b/f.ts\n@@ -1 +1 @@\n-old\n+new", lang);
+    expect(lines).toEqual([
+      [{ text: "--- a/f.ts", style: "diffDeletion" }],
+      [{ text: "+++ b/f.ts", style: "diffAddition" }],
+      [{ text: "@@ -1 +1 @@", style: "meta" }],
+      [{ text: "-old", style: "diffDeletion" }],
+      [{ text: "+new", style: "diffAddition" }],
+    ]);
+  });
+
   it("returns null when there is no filename", () => {
     expect(tokenizeToLines("whatever", null)).toBeNull();
   });

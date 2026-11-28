@@ -1,9 +1,11 @@
 import type { UsageInput } from "../shared/input.js";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { z } from "zod";
 import {
   toneFromUsedPct,
@@ -27,15 +29,62 @@ function toIsoStringOrNull(timestampMs: number): string | null {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
-// Cursor desktop stores auth in VS Code's ItemTable (state.vscdb). Modern builds keep
-// the access token as a plain JWT string under `cursorAuth/accessToken`; older builds
-// kept a JSON blob under `cursorAuthStatus`. Read it with node:sqlite so we don't
-// depend on a `sqlite3` CLI, which isn't installed by default on Windows (or on many
-// Linux hosts) — a missing binary silently rendered Cursor usage unavailable.
-// Headless hosts (VPS, cursor-agent only) have no desktop db; their session lives in
-// ~/.config/cursor/auth.json instead.
+// Cursor desktop stores auth in VS Code's ItemTable (state.vscdb). Modern builds store
+// `cursorAuth/accessToken` as either a plain JWT or `cursor-safe-storage:v1:` Electron
+// safeStorage ciphertext (Cursor 3.27+ with `cursor.storage.authTokenEncryptionAtRest`).
+// Older builds kept a JSON blob under `cursorAuthStatus`. Read it with node:sqlite so we
+// don't depend on a `sqlite3` CLI, which isn't installed by default on Windows or many
+// Linux hosts. `cursor-agent` keeps its own login in the macOS Keychain by default, or in
+// a platform-specific `auth.json` file.
 const CURSOR_ACCESS_TOKEN_KEY = "cursorAuth/accessToken";
 const CURSOR_LEGACY_AUTH_KEY = "cursorAuthStatus";
+
+// Only Cursor itself can decrypt Electron safeStorage values (its Keychain key is
+// app-private and reading it would prompt the user), so encrypted values are skipped.
+const ENCRYPTED_CURSOR_TOKEN_PREFIX = "cursor-safe-storage:";
+
+// On macOS, cursor-agent stores its login in the Keychain by default (service
+// `cursor-access-token`, account `cursor-user`) unless AGENT_CLI_CREDENTIAL_STORE=file.
+const CURSOR_KEYCHAIN_SERVICE = "cursor-access-token";
+const CURSOR_KEYCHAIN_ACCOUNT = "cursor-user";
+const CURSOR_KEYCHAIN_TIMEOUT_MS = 2_000;
+
+const execFileAsync = promisify(execFile);
+
+/** Runs `security` with the given arguments; resolves to trimmed stdout, or null on failure. */
+export type SecurityCommandRunner = (args: string[]) => Promise<string | null>;
+export type CursorKeychainReader = (service: string) => Promise<string | null>;
+
+export interface CursorCredentialLookup {
+  platform?: NodeJS.Platform;
+  home?: string;
+  env?: NodeJS.ProcessEnv;
+  readKeychain?: CursorKeychainReader;
+}
+
+async function runSecurityCommand(args: string[]): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("security", args, {
+      timeout: CURSOR_KEYCHAIN_TIMEOUT_MS,
+    });
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export function readCursorAgentKeychainToken(
+  service: string = CURSOR_KEYCHAIN_SERVICE,
+  run: SecurityCommandRunner = runSecurityCommand,
+): Promise<string | null> {
+  return run(["find-generic-password", "-s", service, "-a", CURSOR_KEYCHAIN_ACCOUNT, "-w"]);
+}
+
+function usableCursorToken(value: string | null | undefined): string | null {
+  const token = value?.trim();
+  if (!token || token.startsWith(ENCRYPTED_CURSOR_TOKEN_PREFIX)) return null;
+  return token;
+}
 
 // @types/node@20 predates the node:sqlite typings; declare the slice we use.
 interface CursorStateStatement {
@@ -107,14 +156,14 @@ function readItemTableValue(db: CursorStateDatabase, key: string): string | null
 }
 
 function cursorTokenFromDb(db: CursorStateDatabase): string | null {
-  const modern = readItemTableValue(db, CURSOR_ACCESS_TOKEN_KEY)?.trim();
+  const modern = usableCursorToken(readItemTableValue(db, CURSOR_ACCESS_TOKEN_KEY));
   if (modern) return modern;
 
   const legacy = readItemTableValue(db, CURSOR_LEGACY_AUTH_KEY);
   if (legacy) {
     try {
       const parsed = CursorAuthStatusSchema.parse(JSON.parse(legacy));
-      if (parsed.accessToken) return parsed.accessToken;
+      return usableCursorToken(parsed.accessToken);
     } catch {
       // ignore a malformed legacy blob
     }
@@ -149,7 +198,7 @@ async function readCursorTokenFromAuthJson(path: string): Promise<string | null>
   if (!existsSync(path)) return null;
   try {
     const parsed = CursorAuthStatusSchema.parse(JSON.parse(await readFile(path, "utf8")));
-    return parsed.accessToken?.trim() || null;
+    return usableCursorToken(parsed.accessToken);
   } catch {
     return null;
   }
@@ -158,8 +207,9 @@ async function readCursorTokenFromAuthJson(path: string): Promise<string | null>
 export async function fetchUsage(
   input: UsageInput,
   fetchApi: typeof fetch = fetch,
+  lookup: CursorCredentialLookup = {},
 ): Promise<UsageReport> {
-  const token = await readToken(input);
+  const token = await readToken(input, lookup);
   if (!token) throw new Error("Cursor login store no longer exists");
 
   const res = await fetchApi(
@@ -229,13 +279,26 @@ export async function fetchUsage(
   };
 }
 
-async function readToken(input: UsageInput): Promise<string | undefined> {
-  if (input.store === "env") return process.env[input.locator];
-  const token =
-    input.store === "sqlite"
-      ? await readCursorTokenFromSqlite(input.locator)
-      : await readCursorTokenFromAuthJson(input.locator);
-  return token ?? undefined;
+async function readToken(
+  input: UsageInput,
+  lookup: CursorCredentialLookup = {},
+): Promise<string | undefined> {
+  const env = lookup.env ?? process.env;
+  switch (input.store) {
+    case "env":
+      return usableCursorToken(env[input.locator]) ?? undefined;
+    case "sqlite":
+      return (await readCursorTokenFromSqlite(input.locator)) ?? undefined;
+    case "file":
+      return (await readCursorTokenFromAuthJson(input.locator)) ?? undefined;
+    case "keychain": {
+      if (!lookup.readKeychain && (lookup.platform ?? process.platform) !== "darwin") {
+        return undefined;
+      }
+      const readKeychain = lookup.readKeychain ?? readCursorAgentKeychainToken;
+      return usableCursorToken(await readKeychain(input.locator)) ?? undefined;
+    }
+  }
 }
 
 const CursorIdentitySchema = z.object({ sub: z.string().min(1) });
@@ -258,62 +321,119 @@ function cursorAccount(token: string, input: UsageInput): UsageAccount {
   return { key: `store-${key}`, input };
 }
 
-export async function discover(): Promise<UsageAccount[]> {
-  const home = homedir();
-  const candidates: UsageInput[] = ["CURSOR_ACCESS_TOKEN", "CURSOR_TOKEN"].map((locator) => ({
-    store: "env",
-    locator,
-  }));
-  if (process.env.APPDATA)
-    candidates.push({
-      store: "sqlite",
-      locator: join(process.env.APPDATA, "Cursor", "User", "globalStorage", "state.vscdb"),
-    });
-  candidates.push(
-    ...[
-      join(
-        home,
-        "Library",
-        "Application Support",
-        "Cursor",
-        "User",
-        "globalStorage",
-        "state.vscdb",
-      ),
-      join(home, ".config", "Cursor", "User", "globalStorage", "state.vscdb"),
-    ].map((locator) => ({ store: "sqlite" as const, locator })),
-    { store: "file", locator: join(home, ".config", "cursor", "auth.json") },
-  );
-  for (const input of candidates) {
-    const token = await readToken(input);
-    if (token) return [cursorAccount(token, input)];
+function globalCandidates(lookup: CursorCredentialLookup): UsageInput[] {
+  const platform = lookup.platform ?? process.platform;
+  const env = lookup.env ?? process.env;
+  const home = lookup.home ?? homedir();
+  const appData =
+    env.APPDATA || (platform === "win32" ? join(home, "AppData", "Roaming") : undefined);
+
+  const candidates: UsageInput[] = [];
+  const seenLocators = new Set<string>();
+  const add = (input: UsageInput) => {
+    const id = `${input.store}:${input.locator}`;
+    if (seenLocators.has(id)) return;
+    seenLocators.add(id);
+    candidates.push(input);
+  };
+
+  for (const locator of ["CURSOR_ACCESS_TOKEN", "CURSOR_TOKEN"]) {
+    add({ store: "env", locator });
   }
-  return [];
+
+  if (appData) {
+    add({
+      store: "sqlite",
+      locator: join(appData, "Cursor", "User", "globalStorage", "state.vscdb"),
+    });
+  }
+  add({
+    store: "sqlite",
+    locator: join(
+      home,
+      "Library",
+      "Application Support",
+      "Cursor",
+      "User",
+      "globalStorage",
+      "state.vscdb",
+    ),
+  });
+  if (env.XDG_CONFIG_HOME) {
+    add({
+      store: "sqlite",
+      locator: join(env.XDG_CONFIG_HOME, "Cursor", "User", "globalStorage", "state.vscdb"),
+    });
+  }
+  add({
+    store: "sqlite",
+    locator: join(home, ".config", "Cursor", "User", "globalStorage", "state.vscdb"),
+  });
+
+  if (appData) {
+    add({ store: "file", locator: join(appData, "Cursor", "auth.json") });
+  }
+  if (env.XDG_CONFIG_HOME) {
+    add({ store: "file", locator: join(env.XDG_CONFIG_HOME, "cursor", "auth.json") });
+  }
+  add({ store: "file", locator: join(home, ".config", "cursor", "auth.json") });
+  if (platform === "darwin") {
+    add({ store: "file", locator: join(home, ".cursor", "auth.json") });
+    add({ store: "keychain", locator: CURSOR_KEYCHAIN_SERVICE });
+  }
+
+  return candidates;
+}
+
+export async function discover(lookup: CursorCredentialLookup = {}): Promise<UsageAccount[]> {
+  const accounts: UsageAccount[] = [];
+  const seenTokens = new Set<string>();
+  for (const input of globalCandidates(lookup)) {
+    const token = await readToken(input, lookup);
+    if (!token || seenTokens.has(token)) continue;
+    seenTokens.add(token);
+    accounts.push(cursorAccount(token, input));
+  }
+  return accounts;
 }
 
 // Account identity joins global and session logins without merging different users.
 export async function discoverSession(
   scope: Extract<UsageScope, { kind: "session" }>,
   platform: NodeJS.Platform = process.platform,
+  readKeychain: CursorKeychainReader = readCursorAgentKeychainToken,
 ): Promise<UsageAccount[]> {
   if (scope.provider !== "cursor") return [];
-  const locator = cursorAgentAuthPath(scope.env, platform);
-  if (!locator) return [];
-  const input: UsageInput = { store: "file", locator };
-  const token = await readToken(input);
+  const input = cursorAgentLogin(scope.env, platform);
+  if (!input) return [];
+  const token = await readToken(input, { platform, env: scope.env, readKeychain });
   return token ? [cursorAccount(token, input)] : [];
 }
 
 // Mirrors cursor-agent's credential store. Env credentials win over the stored login and
 // can't be named by an input. AGENT_CLI_CREDENTIAL_STORE picks "file" or "memory"; by
 // default macOS keeps the login in the Keychain and other platforms in auth.json.
-function cursorAgentAuthPath(env: Record<string, string>, platform: NodeJS.Platform) {
+function cursorAgentLogin(
+  env: Record<string, string>,
+  platform: NodeJS.Platform,
+): UsageInput | null {
   if (env.CURSOR_API_KEY || env.CURSOR_AUTH_TOKEN) return null;
   const store = env.AGENT_CLI_CREDENTIAL_STORE;
-  if (store === "memory" || (platform === "darwin" && store !== "file")) return null;
+  if (store === "memory") return null;
   const home = env.HOME || env.USERPROFILE || homedir();
-  if (platform === "win32")
-    return join(env.APPDATA || join(home, "AppData", "Roaming"), "Cursor", "auth.json");
-  if (platform === "darwin") return join(home, ".cursor", "auth.json");
-  return join(env.XDG_CONFIG_HOME || join(home, ".config"), "cursor", "auth.json");
+  if (platform === "darwin") {
+    return store === "file"
+      ? { store: "file", locator: join(home, ".cursor", "auth.json") }
+      : { store: "keychain", locator: CURSOR_KEYCHAIN_SERVICE };
+  }
+  if (platform === "win32") {
+    return {
+      store: "file",
+      locator: join(env.APPDATA || join(home, "AppData", "Roaming"), "Cursor", "auth.json"),
+    };
+  }
+  return {
+    store: "file",
+    locator: join(env.XDG_CONFIG_HOME || join(home, ".config"), "cursor", "auth.json"),
+  };
 }

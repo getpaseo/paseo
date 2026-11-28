@@ -2,7 +2,10 @@ import { useDisclosureHold } from "@/agent-stream/disclosure";
 import { MessagePreview, MessageSender } from "@/components/user-message";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
+import type { AttachmentMetadata } from "@/attachments/types";
+import { useDaemonUploadedImage } from "@/attachments/use-daemon-uploaded-image";
 import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assistant-fork-menu";
+import { TurnMetricsButton } from "@/components/turn-metrics";
 import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
 import {
   AttachmentFrame,
@@ -25,7 +28,12 @@ import { useRevealedText, type MarkdownPhase } from "@/hooks/use-revealed-text";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
-import type { TaskActivity, TodoEntry, UserMessageImageAttachment } from "@/types/stream";
+import type {
+  DaemonUploadedImageAttachment,
+  TaskActivity,
+  TodoEntry,
+  UserMessageImageAttachment,
+} from "@/types/stream";
 import { setAssistantMessageHeight } from "@/utils/assistant-message-height-estimate";
 import { isRenderProfileEnabled } from "@/utils/render-profiler";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
@@ -36,7 +44,11 @@ import { useToolCallExpanded } from "@/tool-calls/expansion-context";
 import { useTargetAgentTitle } from "@/tool-calls/use-target-agent-title";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
-import type { AgentCapabilityFlags, ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentCapabilityFlags,
+  AgentMetric,
+  ToolCallDetail,
+} from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
@@ -350,6 +362,11 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   imagePreviewSpacing: {
     marginBottom: theme.spacing[2],
   },
+  daemonImagePlaceholder: {
+    width: 48,
+    height: 48,
+    backgroundColor: theme.colors.surface1,
+  },
   copyButton: {
     alignSelf: "center",
     padding: theme.spacing[1],
@@ -377,13 +394,17 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
-interface UserMessageImagePillProps {
-  image: UserMessageImageAttachment;
-  onOpen: (image: UserMessageImageAttachment) => void;
+interface LocalUserMessageImagePillProps {
+  image: AttachmentMetadata;
+  onOpen: (image: AttachmentMetadata) => void;
   accessibilityLabel: string;
 }
 
-function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessageImagePillProps) {
+function LocalUserMessageImagePill({
+  image,
+  onOpen,
+  accessibilityLabel,
+}: LocalUserMessageImagePillProps) {
   const handlePress = useCallback(() => {
     onOpen(image);
   }, [onOpen, image]);
@@ -391,6 +412,76 @@ function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessage
     <AttachmentFrame onPress={handlePress} accessibilityLabel={accessibilityLabel}>
       <AttachmentThumbnail metadata={image} />
     </AttachmentFrame>
+  );
+}
+
+interface DaemonUserMessageImagePillProps {
+  image: DaemonUploadedImageAttachment;
+  client?: DaemonClient | null;
+  serverId?: string;
+  onOpen: (image: AttachmentMetadata) => void;
+  accessibilityLabel: string;
+}
+
+function DaemonUserMessageImagePill({
+  image,
+  client,
+  serverId,
+  onOpen,
+  accessibilityLabel,
+}: DaemonUserMessageImagePillProps) {
+  const resolved = useDaemonUploadedImage({ image, client, serverId });
+  const handlePress = useCallback(() => {
+    if (resolved) {
+      onOpen(resolved);
+    }
+  }, [onOpen, resolved]);
+  if (!resolved) {
+    return (
+      <AttachmentFrame accessibilityLabel={accessibilityLabel}>
+        <View style={userMessageStylesheet.daemonImagePlaceholder} />
+      </AttachmentFrame>
+    );
+  }
+  return (
+    <AttachmentFrame onPress={handlePress} accessibilityLabel={accessibilityLabel}>
+      <AttachmentThumbnail metadata={resolved} />
+    </AttachmentFrame>
+  );
+}
+
+interface UserMessageImagePillProps {
+  image: UserMessageImageAttachment;
+  client?: DaemonClient | null;
+  serverId?: string;
+  onOpen: (image: AttachmentMetadata) => void;
+  accessibilityLabel: string;
+}
+
+function UserMessageImagePill({
+  image,
+  client,
+  serverId,
+  onOpen,
+  accessibilityLabel,
+}: UserMessageImagePillProps) {
+  if (image.storageType === "daemon-upload") {
+    return (
+      <DaemonUserMessageImagePill
+        image={image}
+        client={client}
+        serverId={serverId}
+        onOpen={onOpen}
+        accessibilityLabel={accessibilityLabel}
+      />
+    );
+  }
+  return (
+    <LocalUserMessageImagePill
+      image={image}
+      onOpen={onOpen}
+      accessibilityLabel={accessibilityLabel}
+    />
   );
 }
 
@@ -416,7 +507,7 @@ export const UserMessage = memo(function UserMessage({
   const isCompact = useIsCompactFormFactor();
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
-  const [lightboxMetadata, setLightboxMetadata] = useState<UserMessageImageAttachment | null>(null);
+  const [lightboxMetadata, setLightboxMetadata] = useState<AttachmentMetadata | null>(null);
   const handleLightboxClose = useCallback(() => setLightboxMetadata(null), []);
   const lightboxSource = useMemo<ImageLightboxSource | null>(
     () => (lightboxMetadata ? { type: "attachment", metadata: lightboxMetadata } : null),
@@ -494,6 +585,8 @@ export const UserMessage = memo(function UserMessage({
                   <UserMessageImagePill
                     key={image.id}
                     image={image}
+                    client={client}
+                    serverId={serverId}
                     onOpen={setLightboxMetadata}
                     accessibilityLabel={t("composer.attachments.openImage")}
                   />
@@ -560,6 +653,8 @@ interface AssistantTurnFooterProps {
   completedAt?: Date;
   durationMs?: number | null;
   onFork?: (target: AssistantForkTarget) => Promise<void> | void;
+  /** What the provider reported about the turn. Without any, the footer has no stats button. */
+  metrics?: AgentMetric[];
 }
 
 const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
@@ -596,6 +691,8 @@ const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
     flexShrink: 0,
     color: theme.colors.foregroundMuted,
     fontSize: STREAM_METADATA_FONT_SIZE,
+    // React Native Web preserves trailing spaces at line wraps by default.
+    ...(isWeb ? { whiteSpace: "normal" } : {}),
   },
   overlappingLabel: {
     marginLeft: "-100%",
@@ -617,6 +714,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   completedAt,
   durationMs,
   onFork,
+  metrics,
 }: AssistantTurnFooterProps) {
   const { t } = useTranslation();
   const [hovered, setHovered] = useState(false);
@@ -666,10 +764,11 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
     [onFork],
   );
   const canFork = Boolean(onFork);
+  const hasMetrics = metrics !== undefined && metrics.length > 0;
 
   return (
     <View style={assistantTurnFooterStylesheet.container}>
-      {getContent || canFork ? (
+      {getContent || canFork || hasMetrics ? (
         <View style={assistantTurnFooterStylesheet.actions}>
           {getContent ? (
             <TurnCopyButton
@@ -678,6 +777,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
             />
           ) : null}
           {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
+          {hasMetrics ? <TurnMetricsButton metrics={metrics} /> : null}
         </View>
       ) : null}
       {primaryLabel ? (

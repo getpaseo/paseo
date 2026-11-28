@@ -1,3 +1,4 @@
+import { isAgentRunning } from "@getpaseo/protocol/agent-state-bucket";
 import type { Agent } from "@/stores/session-store";
 import type { ConfirmDialogInput } from "@/utils/confirm-dialog";
 
@@ -25,13 +26,18 @@ export function resolveArchiveSubagentDialog(
   input: ResolveArchiveSubagentDialogInput,
 ): ConfirmDialogInput {
   const subagentLabel = resolveSubagentLabel(input.title) ?? "this subagent";
-  const isRunning = input.status === "running" || (input.backgroundWork?.count ?? 0) > 0;
+  const isRunning = isAgentRunning(input);
+
+  let message = `Remove ${subagentLabel} from the track. The subagent will be archived.`;
+  if (isRunning) {
+    message = `${subagentLabel} is still running. Archiving it will stop the subagent and remove it from the track.`;
+  } else if (input.backgroundWork?.count) {
+    message = `Archiving ${subagentLabel} will stop its background work and remove it from the track.`;
+  }
 
   return {
     title: isRunning ? "Archive running subagent?" : "Archive subagent?",
-    message: isRunning
-      ? `${subagentLabel} is still running. Archiving it will stop the subagent and remove it from the track.`
-      : `Remove ${subagentLabel} from the track. The subagent will be archived.`,
+    message,
     confirmLabel: "Archive",
     cancelLabel: "Cancel",
     destructive: true,

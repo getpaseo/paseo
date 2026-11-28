@@ -1,69 +1,89 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import Constants from "expo-constants";
-import * as Notifications from "expo-notifications";
-import { Platform } from "react-native";
-import { z } from "zod";
-import { readValidatedString } from "@/storage/validated-storage";
+import { parseServerInfoStatusPayload } from "@getpaseo/protocol/messages";
+import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  normalizeNotificationPreferences,
+  type NotificationPreferences,
+} from "@getpaseo/protocol/notification-preferences";
+import type { QueryClient } from "@tanstack/react-query";
+import { queryClient as appQueryClient } from "@/data/query-client";
+import {
+  APP_SETTINGS_QUERY_KEY,
+  loadAppSettingsFromStorage as loadAppSettingsFromStoragePure,
+  type AppSettings,
+  type SettingsDeps,
+} from "@/hooks/use-settings/storage";
 import type { RevokePushNotificationsInput, StartPushNotificationsInput } from "./types";
 
-const STORAGE_PREFIX = "@paseo:expo-push-token:";
-const ExpoPushTokenSchema = z.string().trim().min(1);
-
-function storageKey(serverId: string): string {
-  return `${STORAGE_PREFIX}${serverId}`;
+async function defaultResolveToken(serverId: string): Promise<string | null> {
+  const { resolveExpoPushToken } = await import("./expo-token");
+  return resolveExpoPushToken(serverId);
 }
 
-function getExpoProjectId(): string | null {
-  const fromEas = ExpoPushTokenSchema.safeParse(Constants.easConfig?.projectId);
-  if (fromEas.success) return fromEas.data;
-  const fromExtra = ExpoPushTokenSchema.safeParse(Constants.expoConfig?.extra?.eas?.projectId);
-  return fromExtra.success ? fromExtra.data : null;
+async function loadInitialAppSettings(settingsDeps?: SettingsDeps): Promise<AppSettings> {
+  if (settingsDeps) {
+    return loadAppSettingsFromStoragePure(settingsDeps);
+  }
+  const { loadAppSettingsFromStorage } = await import("@/hooks/use-settings");
+  return loadAppSettingsFromStorage();
 }
 
-async function ensurePushPermission(): Promise<boolean> {
-  const existing = await Notifications.getPermissionsAsync();
-  if (existing.status === Notifications.PermissionStatus.GRANTED) return true;
-  if (!existing.canAskAgain) return false;
-  const requested = await Notifications.requestPermissionsAsync();
-  return requested.status === Notifications.PermissionStatus.GRANTED;
-}
-
-async function resolveToken(serverId: string): Promise<string | null> {
-  const key = storageKey(serverId);
-  const cached = await readValidatedString(AsyncStorage, key, ExpoPushTokenSchema);
-  if (!(await ensurePushPermission())) {
-    await AsyncStorage.removeItem(key);
+function readCachedPreferences(queryClient: QueryClient): NotificationPreferences | null {
+  const cached = queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY);
+  if (!cached) {
     return null;
   }
-
-  if (Platform.OS === "android") {
-    await Notifications.setNotificationChannelAsync("default", {
-      name: "default",
-      importance: Notifications.AndroidImportance.DEFAULT,
-    });
-  }
-
-  const projectId = getExpoProjectId();
-  if (!projectId) {
-    console.warn("[PushNotifications] Missing EAS projectId; cannot fetch Expo push token");
-    return cached;
-  }
-
-  const result = await Notifications.getExpoPushTokenAsync({ projectId });
-  const token = result.data.trim();
-  if (!token) return cached;
-  await AsyncStorage.setItem(key, token);
-  return token;
+  return normalizeNotificationPreferences(cached.notifications);
 }
 
 export function startSubscription(input: StartPushNotificationsInput): () => void {
   let stopped = false;
   let token: string | null = null;
-  const register = () => {
-    if (!stopped && token && input.client.isConnected) {
+  let lastRegisteredSignature: string | null = null;
+  const queryClient = input.queryClient ?? appQueryClient;
+  const resolveToken = input.resolveToken ?? defaultResolveToken;
+
+  const initialCached = readCachedPreferences(queryClient);
+  let preferences: NotificationPreferences = initialCached ?? DEFAULT_NOTIFICATION_PREFERENCES;
+  let preferencesReady = initialCached !== null;
+
+  const register = (force = false) => {
+    if (stopped || !token || !preferencesReady || !input.client.isConnected) {
+      return;
+    }
+    // COMPAT(pushNotificationPreferences): added in v0.18.0, remove gate after 2027-06-01.
+    const supportsPreferences =
+      input.client.getLastServerInfoMessage()?.features?.pushNotificationPreferences === true;
+    const signature = supportsPreferences
+      ? `${token}:${JSON.stringify(preferences)}`
+      : `${token}:legacy`;
+    if (!force && signature === lastRegisteredSignature) {
+      return;
+    }
+    lastRegisteredSignature = signature;
+    if (supportsPreferences) {
+      input.client.registerPushToken(token, preferences);
+    } else {
       input.client.registerPushToken(token);
     }
   };
+
+  if (!preferencesReady) {
+    void loadInitialAppSettings(input.settingsDeps)
+      .then((loaded) => {
+        if (stopped) return undefined;
+        const latestCached = readCachedPreferences(queryClient);
+        preferences = latestCached ?? normalizeNotificationPreferences(loaded.notifications);
+        preferencesReady = true;
+        register();
+        return undefined;
+      })
+      .catch(() => {
+        if (stopped) return undefined;
+        preferencesReady = true;
+        register();
+        return undefined;
+      });
+  }
 
   void resolveToken(input.serverId)
     .then((resolved) => {
@@ -74,19 +94,46 @@ export function startSubscription(input: StartPushNotificationsInput): () => voi
     })
     .catch((error) => console.warn("[PushNotifications] Failed to register push token", error));
 
-  const unsubscribe = input.client.subscribeConnectionStatus((state) => {
-    if (state.status === "connected") register();
+  const unsubscribeConnection = input.client.subscribeConnectionStatus((state) => {
+    if (state.status === "connected") {
+      lastRegisteredSignature = null;
+      register(true);
+    } else {
+      lastRegisteredSignature = null;
+    }
+  });
+
+  const unsubscribeStatus =
+    input.client.on?.("status", (message) => {
+      if (message.type === "status" && parseServerInfoStatusPayload(message.payload)) {
+        register();
+      }
+    }) ?? (() => undefined);
+
+  const unsubscribeQueryCache = queryClient.getQueryCache().subscribe((event) => {
+    if (event.query.queryKey[0] !== APP_SETTINGS_QUERY_KEY[0]) {
+      return;
+    }
+    const nextPreferences = readCachedPreferences(queryClient);
+    if (!nextPreferences) {
+      return;
+    }
+    preferences = nextPreferences;
+    preferencesReady = true;
+    register();
   });
 
   return () => {
     stopped = true;
-    unsubscribe();
+    unsubscribeConnection();
+    unsubscribeStatus();
+    unsubscribeQueryCache();
   };
 }
 
 export async function revokeSubscription(input: RevokePushNotificationsInput): Promise<void> {
-  const key = storageKey(input.serverId);
-  const token = await readValidatedString(AsyncStorage, key, ExpoPushTokenSchema);
+  const { readCachedExpoPushToken, removeCachedExpoPushToken } = await import("./expo-token");
+  const token = await readCachedExpoPushToken(input.serverId);
   if (
     token &&
     input.client?.isConnected &&
@@ -98,5 +145,5 @@ export async function revokeSubscription(input: RevokePushNotificationsInput): P
       console.warn("[PushNotifications] Failed to revoke push token", error);
     }
   }
-  await AsyncStorage.removeItem(key);
+  await removeCachedExpoPushToken(input.serverId);
 }

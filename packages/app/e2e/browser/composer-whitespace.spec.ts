@@ -18,6 +18,7 @@ import {
   expectComposerFullscreenControls,
   sendComposerWithButton,
   queueComposerWithButton,
+  fillComposerDraft,
   configureComposerQueueSend,
   activateRetainedComposerTab,
   switchComposerTabWithKeyboard,
@@ -445,6 +446,32 @@ test("fullscreen Send keeps the configured queue behavior while an agent runs", 
     await expect(composerLocator(page)).toHaveValue("");
     await expectWorkspaceHeaderVisible(page);
     await expectQueuedMessageButton(page);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("editing a queued draft restores its original height with the focus hint visible", async ({
+  page,
+}) => {
+  await configureComposerQueueSend(page);
+  await resizeComposerViewport(page, "portrait");
+  const agent = await startRunningMockAgent(page, {
+    prefix: "composer-queued-draft-height-",
+    model: "one-minute-stream",
+    prompt: "Stay running while a draft is queued.",
+  });
+  try {
+    const draft = "Please review the latest changes.\nPlease review the latest changes.";
+    await fillComposerDraft(page, draft);
+    const originalHeight = await composerHeight(page);
+    await queueComposerWithButton(page);
+    await expect(composerLocator(page)).toHaveValue("");
+    await composerLocator(page).blur();
+    await expect(page.getByText(/ to focus$/)).toBeVisible();
+    await page.getByRole("button", { name: "Edit queued message", exact: true }).click();
+    await expect(composerLocator(page)).toHaveValue(draft);
+    await expectComposerHeight(page, originalHeight);
   } finally {
     await agent.cleanup();
   }

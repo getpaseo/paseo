@@ -4,6 +4,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { DiffStat } from "@/components/diff-stat";
 import {
   TreeChevron,
+  TreeIndentGuides,
   treeRowPaddingLeft,
   workspaceTreeRowStyles,
   WORKSPACE_TREE_ICON_LABEL_GAP,
@@ -150,6 +151,7 @@ export function DiffFolderRow({
           aria-selected={isSelected}
           testID={testID ? `${testID}-toggle` : undefined}
         >
+          <TreeIndentGuides depth={depth} />
           <View style={leftStyle}>
             <View style={styles.chevronSlot}>
               <TreeChevron expanded={!collapsed} />

@@ -208,6 +208,8 @@ export type DiffHit =
       kind: "cell";
       target: ReviewableDiffTarget | null;
       position: DiffCharacterPosition;
+      /** The grapheme under the pointer, which word gestures select from. */
+      graphemeOffset: number;
     };
 
 export interface DiffSelection {

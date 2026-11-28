@@ -165,6 +165,16 @@ export function createIndexedDbAttachmentStore(): AttachmentStore {
       }
     },
 
+    async readBytes({ attachment }): Promise<Uint8Array> {
+      const db = await openAttachmentDb();
+      try {
+        const blob = await loadBlob(db, attachment.storageKey);
+        return new Uint8Array(await blob.arrayBuffer());
+      } finally {
+        db.close();
+      }
+    },
+
     async resolvePreviewUrl({ attachment }): Promise<string> {
       const db = await openAttachmentDb();
       try {

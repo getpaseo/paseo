@@ -1,3 +1,4 @@
+import type { createDaemonListeners } from "./listeners.js";
 import {
   loadPersistedConfig,
   savePersistedConfigAsync,
@@ -34,7 +35,7 @@ interface SupportedMutableConfigPatch {
   browserTools?: { enabled?: boolean };
   providers?: MutableDaemonConfig["providers"];
   removeProviders?: string[];
-  metadataGeneration?: MutableDaemonConfig["metadataGeneration"];
+  metadataGeneration?: Partial<MutableDaemonConfig["metadataGeneration"]>;
   autoArchiveAfterMerge?: boolean;
   enableTerminalAgentHooks?: boolean;
   idleRuntimeCleanup?: boolean;
@@ -69,6 +70,7 @@ export interface DaemonConfigReloadResult {
 export interface DaemonConfigReloadSource {
   resolve(persisted: PersistedConfig): {
     mutable: MutableDaemonConfig;
+    listen?: string;
     overrideControlledPaths: readonly string[];
   };
 }
@@ -160,6 +162,22 @@ function omitMetadataGenerationProvidersFromConfig<
   } as T;
 }
 
+function normalizeMetadataGeneration<
+  T extends { metadataGeneration?: { providers?: unknown[]; instructions?: string } },
+>(config: T): T {
+  const metadataGeneration = config.metadataGeneration;
+  if (!metadataGeneration || metadataGeneration.instructions === undefined) {
+    return config;
+  }
+
+  const trimmed = metadataGeneration.instructions.trim();
+  const { instructions: _ignored, ...rest } = metadataGeneration;
+  return {
+    ...config,
+    metadataGeneration: trimmed.length > 0 ? { ...rest, instructions: trimmed } : rest,
+  };
+}
+
 function omitProvidersFromOverrides(
   overrides: Record<string, ProviderOverride> | undefined,
   providers: readonly string[],
@@ -174,6 +192,25 @@ function omitProvidersFromOverrides(
   }
 
   return Object.keys(nextOverrides).length > 0 ? nextOverrides : undefined;
+}
+
+// COMPAT(agentProfileSystemPrompt): added in v0.17.6, remove after 2027-06-01.
+// Apps predating `systemPrompt` omit the key when saving an edited profile; preserve
+// the stored prompt unless the write explicitly sends `systemPrompt` (empty clears it).
+function foldProfileSystemPrompt(
+  profile: AgentProfile,
+  stored: AgentProfile | undefined,
+  source: "stored" | "client write",
+): AgentProfile {
+  if (profile.systemPrompt === undefined) {
+    if (source === "client write" && stored?.systemPrompt) {
+      return { ...profile, systemPrompt: stored.systemPrompt };
+    }
+    return profile;
+  }
+  const trimmed = profile.systemPrompt.trim();
+  const { systemPrompt: _ignored, ...rest } = profile;
+  return trimmed.length > 0 ? { ...rest, systemPrompt: trimmed } : rest;
 }
 
 /**
@@ -196,11 +233,12 @@ function foldConfigProfiles<T extends { agentProfiles?: AgentProfile[] }>(input:
     });
   const identity = (_provider: string, options: Record<string, unknown> | undefined) => options;
   const foldWith = (profile: AgentProfile, convertWith: typeof convert) => {
+    const stored = held.find((candidate) => candidate.id === profile.id);
     const folded = foldProfileFeatureValues<
       Pick<AgentProfile, "provider" | "options" | "featureValues">
     >({
       profile,
-      stored: held.find((candidate) => candidate.id === profile.id),
+      stored,
       source,
       convert: convertWith,
     });
@@ -208,7 +246,11 @@ function foldConfigProfiles<T extends { agentProfiles?: AgentProfile[] }>(input:
       { ...folded, thinkingOptionId: profile.thinkingOptionId, providerOptions: folded.options },
       resolveAdapter({ provider: profile.provider, extendsOf: (id) => providers?.[id]?.extends }),
     );
-    return { ...converted, options: providerOptions };
+    return foldProfileSystemPrompt(
+      { ...(converted as AgentProfile), options: providerOptions },
+      stored,
+      source,
+    );
   };
   return {
     ...config,
@@ -345,6 +387,20 @@ function pickRelayPatch(
   return Object.keys(picked).length > 0 ? { relay: picked } : {};
 }
 
+function pickMetadataGenerationPatch(
+  metadataGeneration: MutableDaemonConfigPatch["metadataGeneration"],
+): Pick<SupportedMutableConfigPatch, "metadataGeneration"> {
+  const picked: NonNullable<SupportedMutableConfigPatch["metadataGeneration"]> = {
+    ...(metadataGeneration?.providers !== undefined
+      ? { providers: metadataGeneration.providers }
+      : {}),
+    ...(metadataGeneration?.instructions !== undefined
+      ? { instructions: metadataGeneration.instructions }
+      : {}),
+  };
+  return Object.keys(picked).length > 0 ? { metadataGeneration: picked } : {};
+}
+
 function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMutableConfigPatch {
   return {
     ...pickRelayPatch(patch.relay),
@@ -357,9 +413,7 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
       : {}),
     ...(patch.providers !== undefined ? { providers: patch.providers } : {}),
     ...(patch.removeProviders !== undefined ? { removeProviders: patch.removeProviders } : {}),
-    ...(patch.metadataGeneration?.providers !== undefined
-      ? { metadataGeneration: { providers: patch.metadataGeneration.providers } }
-      : {}),
+    ...pickMetadataGenerationPatch(patch.metadataGeneration),
     ...(patch.autoArchiveAfterMerge !== undefined
       ? { autoArchiveAfterMerge: patch.autoArchiveAfterMerge }
       : {}),
@@ -423,6 +477,7 @@ export class DaemonConfigStore {
   private readonly reloadSource: DaemonConfigReloadSource | undefined;
   private readonly startupPersisted: PersistedConfig;
   private readonly speechOwner: SpeechSettingsOwner | undefined;
+  private listeners?: ReturnType<typeof createDaemonListeners>;
   private lastKnownPersisted: PersistedConfig;
 
   constructor(
@@ -505,9 +560,11 @@ export class DaemonConfigStore {
     }
     if (parsedPatch.plugins !== undefined) merged.plugins = parsedPatch.plugins;
     const next = MutableDaemonConfigSchema.parse(
-      omitMetadataGenerationProvidersFromConfig(
-        omitProvidersFromConfig(merged, removedProviders),
-        removedProviders,
+      normalizeMetadataGeneration(
+        omitMetadataGenerationProvidersFromConfig(
+          omitProvidersFromConfig(merged, removedProviders),
+          removedProviders,
+        ),
       ),
     );
 
@@ -567,6 +624,41 @@ export class DaemonConfigStore {
     );
   }
 
+  public attachListeners(listeners: ReturnType<typeof createDaemonListeners>) {
+    this.listeners = listeners;
+  }
+
+  public setTailscaleEnabled(
+    enabled: boolean,
+    localEndpoint: string | undefined,
+    confirmed: boolean,
+  ) {
+    return this.enqueue(async () => {
+      const listeners = this.listeners;
+      if (!listeners) throw new Error("Tailscale is unavailable");
+      const persisted = await loadPersistedConfigAsync(this.paseoHome, this.logger);
+      const change = listeners.prepareTailscaleChange(
+        persisted.daemon?.listen,
+        enabled,
+        localEndpoint,
+        confirmed,
+      );
+      if (change.confirmationRequired) {
+        return { confirmationRequired: true, ...listeners.status(localEndpoint) };
+      }
+      await savePersistedConfigAsync(
+        this.paseoHome,
+        {
+          ...persisted,
+          daemon: { ...persisted.daemon, listen: change.listen },
+        },
+        this.logger,
+      );
+      await change.apply();
+      return { confirmationRequired: false, ...listeners.status(localEndpoint) };
+    });
+  }
+
   public reload(): Promise<DaemonConfigReloadResult> {
     return this.enqueue(() => this.reloadPersisted());
   }
@@ -609,8 +701,11 @@ export class DaemonConfigStore {
         )
       );
     });
+    const listenChange = await this.listeners?.apply(resolved.listen ?? persisted.daemon?.listen);
+    if (listenChange?.applied) appliedPaths.push("daemon.listen");
     const restartRequiredPaths = compactOwnedPaths(
       diffPaths(this.startupPersisted, persisted).filter((path) => {
+        if (path === "daemon.listen" && listenChange) return false;
         if (path === "$schema" || path === "version") return false;
         if (RELOADABLE_PATHS.some((owner) => pathBelongsTo(path, owner))) return false;
         if (this.speechOwner && SPEECH_PERSISTED_PATHS.some((owner) => pathBelongsTo(path, owner)))
@@ -619,6 +714,11 @@ export class DaemonConfigStore {
       }),
       [],
     );
+
+    if (listenChange?.restartRequired) {
+      restartRequiredPaths.push("daemon.listen");
+      restartRequiredPaths.sort();
+    }
 
     const removedProviders = Object.keys(this.current.providers).filter(
       (provider) => !(provider in desired.providers),
@@ -823,16 +923,13 @@ function mergeMutableAgentPatch(
   if (providerOverrides) next["providers"] = providerOverrides;
   else delete next["providers"];
 
-  if (patch.metadataGeneration?.providers !== undefined) {
-    next["metadataGeneration"] = { providers: patch.metadataGeneration.providers };
-  } else if (removeProviders.length > 0 && persistedAgents?.metadataGeneration?.providers) {
-    const removed = new Set(removeProviders);
-    next["metadataGeneration"] = {
-      providers: persistedAgents.metadataGeneration.providers.filter(
-        (entry) => !removed.has(entry.provider),
-      ),
-    };
-  }
+  const nextMetadataGeneration = mergeMetadataGenerationPatch(
+    persistedAgents?.metadataGeneration,
+    patch.metadataGeneration,
+    removeProviders,
+  );
+  if (nextMetadataGeneration) next["metadataGeneration"] = nextMetadataGeneration;
+  else delete next["metadataGeneration"];
 
   if (patch.skills?.selection !== undefined) {
     next["skills"] = { selection: patch.skills.selection };
@@ -874,6 +971,37 @@ function mergeMutableDaemonPatch(
   if (patch.appendSystemPrompt !== undefined) next.appendSystemPrompt = patch.appendSystemPrompt;
   if (patch.terminalProfiles !== undefined) next.terminalProfiles = patch.terminalProfiles;
   if (patch.agentProfiles !== undefined) next.agentProfiles = patch.agentProfiles;
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function mergeMetadataGenerationPatch(
+  persisted: NonNullable<PersistedConfig["agents"]>["metadataGeneration"],
+  patch: SupportedMutableConfigPatch["metadataGeneration"],
+  removeProviders: readonly string[],
+): NonNullable<PersistedConfig["agents"]>["metadataGeneration"] {
+  if (patch === undefined && removeProviders.length === 0) {
+    return persisted;
+  }
+
+  const next: NonNullable<NonNullable<PersistedConfig["agents"]>["metadataGeneration"]> = {
+    ...persisted,
+  };
+  if (patch?.providers !== undefined) {
+    next.providers = patch.providers;
+  } else if (removeProviders.length > 0 && persisted?.providers) {
+    const removed = new Set(removeProviders);
+    next.providers = persisted.providers.filter((entry) => !removed.has(entry.provider));
+  }
+
+  if (patch?.instructions !== undefined) {
+    const trimmed = patch.instructions.trim();
+    if (trimmed.length > 0) {
+      next.instructions = trimmed;
+    } else {
+      delete next.instructions;
+    }
+  }
+
   return Object.keys(next).length > 0 ? next : undefined;
 }
 

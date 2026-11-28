@@ -87,6 +87,7 @@ export class HubExecutionController {
     try {
       issues = await this.validateAgentConfiguration({
         provider: message.provider,
+        cwd: message.cwd,
         model: message.model,
         modeId: message.modeId,
         thinkingOptionId: message.thinkingOptionId,

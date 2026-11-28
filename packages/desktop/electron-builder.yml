@@ -43,7 +43,8 @@ mac:
   artifactName: "Paseo-${version}-${arch}.${ext}"
   minimumSystemVersion: "13.0.0"
   category: public.app-category.developer-tools
-  icon: assets/icon.icns
+  # An Icon Composer document, compiled by Xcode's actool (26 or later) at build time.
+  icon: assets/icon.icon
   hardenedRuntime: true
   notarize: true
   entitlements: build/entitlements.mac.plist
@@ -56,6 +57,9 @@ mac:
   target:
     - dmg
     - zip
+dmg:
+  # actool also derives an .icns from the document, but only up to 256 px.
+  icon: assets/icon.icns
 linux:
   category: Development
   icon: assets

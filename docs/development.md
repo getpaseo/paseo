@@ -575,8 +575,9 @@ where the overrides apply; workspace scripts still find the binary through the r
 
 ## Dependency signature audit
 
-The `quality` CI job runs `npm audit signatures`. It verifies every lockfile package's registry
-signature and, for packages published with provenance, fetches
+The [pre-release dependency checks](release.md#pre-release-dependency-checks) include
+`npm audit signatures`. The command verifies registry signatures and, for packages published
+with provenance, fetches
 `/-/npm/v1/attestations/<name>@<version>` from the registry. Cloudflare caches that document
 for a year. An edge that cached it in the seconds before the registry attached the publish
 attestation keeps serving a document with only the provenance bundle, and npm fails with:
@@ -587,11 +588,10 @@ npm error <name>@<version> has attestations but no corresponding public key(s) c
 ```
 
 The same package's registry signature verified a moment earlier with the same keys, so the
-key list is intact. The failure names one package, repeats only for that package, and depends
-on the Azure region the runner landed in, because each region maps to one Cloudflare colo. A
-rerun passes only by landing elsewhere.
+key list is intact. The failure names one package and depends on which Cloudflare edge serves
+the cached attestation.
 
-To confirm, fetch the URL from several runners and compare `content-length`, the `cf-ray` colo
+To confirm, fetch the URL from several regions and compare `content-length`, the `cf-ray` colo
 suffix, and the number of `attestations` entries (#7730 has the probe). To fix, remove or
 replace that version in the lockfile. If the dependent’s range cannot be changed, pin a clean
 version in root `overrides`. Report the URL to npm so they purge it.

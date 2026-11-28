@@ -18,6 +18,7 @@ import { Check, CheckCircle } from "lucide-react-native";
 import { AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import { MenuDepthProvider, useMenuContext } from "./menu-context";
 import { MENU_ITEM_HEIGHT } from "./menu-geometry";
@@ -221,6 +222,36 @@ function resolveItemLabel(input: {
   return children;
 }
 
+function resolveTrailingContent(input: {
+  trailing: ReactElement | null | undefined;
+  showSelectedCheck: boolean;
+  selected: boolean | undefined;
+}): ReactElement | null {
+  if (input.trailing !== undefined) return input.trailing;
+  if (!input.showSelectedCheck && input.selected) {
+    return <ThemedCheck size={16} uniProps={mutedMapping} />;
+  }
+  return null;
+}
+
+function useSheetSpaceKeyProps(
+  enabled: boolean,
+  onPress: () => void,
+): { onKeyDown?: (event: { key?: string; preventDefault?: () => void }) => void } {
+  return useMemo(() => {
+    if (!isWeb || !enabled) return {};
+    return {
+      // React Native Web's Pressable activates Space only for role="button", not menuitem/checkbox.
+      onKeyDown: (event: { key?: string; preventDefault?: () => void }) => {
+        if (event.key === " " || event.key === "Spacebar") {
+          event.preventDefault?.();
+          onPress();
+        }
+      },
+    };
+  }, [enabled, onPress]);
+}
+
 export interface MenuItemProps {
   description?: string;
   onSelect?: () => void;
@@ -253,7 +284,37 @@ export interface MenuItemProps {
   tooltip?: string;
 }
 
-export function MenuItem({
+export function MenuItem(props: PropsWithChildren<MenuItemProps>): ReactElement {
+  return <MenuRow {...props} accessibilityRole="menuitem" />;
+}
+
+export interface MenuCheckboxItemProps extends Omit<MenuItemProps, "selected" | "onSelect"> {
+  checked: boolean;
+  onToggle: () => void;
+}
+
+/**
+ * A toggleable menu row that stays open on press by default and exposes `checkbox` semantics so
+ * screen readers announce its checked state.
+ */
+export function MenuCheckboxItem({
+  checked,
+  onToggle,
+  closeOnSelect = false,
+  ...rest
+}: PropsWithChildren<MenuCheckboxItemProps>): ReactElement {
+  return (
+    <MenuRow
+      {...rest}
+      selected={checked}
+      onSelect={onToggle}
+      closeOnSelect={closeOnSelect}
+      accessibilityRole="checkbox"
+    />
+  );
+}
+
+function MenuRow({
   children,
   description,
   onSelect,
@@ -272,8 +333,11 @@ export function MenuItem({
   closeOnSelect = true,
   testID,
   tooltip,
-}: PropsWithChildren<MenuItemProps>): ReactElement {
-  const { selectItem } = useMenuContext("MenuItem");
+  accessibilityRole,
+}: PropsWithChildren<
+  MenuItemProps & { accessibilityRole: "menuitem" | "checkbox" }
+>): ReactElement {
+  const { selectItem, presentation } = useMenuContext("MenuItem");
   const isPending = status === "pending" || loading;
   const isSuccess = status === "success";
   const isDisabled = disabled || isPending || isSuccess;
@@ -286,14 +350,14 @@ export function MenuItem({
 
   const label = resolveItemLabel({ children, isPending, isSuccess, pendingLabel, successLabel });
 
-  const trailingContent =
-    trailing ??
-    (!showSelectedCheck && selected ? <ThemedCheck size={16} uniProps={mutedMapping} /> : null);
+  const trailingContent = resolveTrailingContent({ trailing, showSelectedCheck, selected });
 
   const handleItemPress = useCallback(() => {
     if (isDisabled) return;
     selectItem(onSelect, closeOnSelect);
   }, [isDisabled, selectItem, onSelect, closeOnSelect]);
+  const isSheet = presentation === "sheet";
+  const sheetKeyProps = useSheetSpaceKeyProps(isSheet, handleItemPress);
 
   // A row that draws a check has to say so as well: a multi-select page is a list of things that
   // are on or off, and the check is the only thing telling a sighted user which. Rows that answer
@@ -336,11 +400,13 @@ export function MenuItem({
 
   const content = (
     <Pressable
+      {...sheetKeyProps}
       testID={testID}
-      accessibilityRole="menuitem"
+      accessibilityRole={accessibilityRole}
       accessibilityState={accessibilityState}
       aria-checked={selected}
-      tabIndex={-1}
+      // Popovers manage focus via arrow keys; compact sheets rely on the browser's Tab order.
+      tabIndex={isSheet ? 0 : -1}
       dataSet={itemDataSet}
       disabled={isDisabled}
       onPress={handleItemPress}

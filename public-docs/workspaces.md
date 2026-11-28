@@ -39,12 +39,13 @@ In Paseo, the workspace is the stable container. The sessions are what you run i
 
 ## Choose the isolation
 
-Every workspace has an isolation mode:
+When you create a workspace, **Isolation** sets the directory it works in:
 
-- **Local** uses an existing directory, such as your main checkout. Use it when sessions should share the files already on disk.
-- **Worktree** creates or opens a managed git worktree. Use it when a task needs its own directory and branch.
+- **Project directory** uses the project's own directory, such as your main checkout. Use it when sessions should share the files already on disk.
+- **New worktree** creates a git worktree with its own directory and branch. Use it when a task needs its own copy of the files.
+- **Existing worktree** uses a git worktree that is already on disk, on the branch it has checked out. Use it to continue work on a branch without a second copy. The list shows every git worktree of the repository, including the ones that Paseo did not create.
 
-The workspace is the product concept; a git worktree is one way to isolate its files. More than one workspace can refer to the same managed worktree, and Paseo removes that worktree after its last workspace is archived.
+The workspace is the product concept; a git worktree is one way to isolate its files. More than one workspace can use the same worktree. Paseo removes a worktree that it created after the last workspace that uses it is archived. Paseo does not remove a worktree that it did not create.
 
 ## Creating a workspace
 

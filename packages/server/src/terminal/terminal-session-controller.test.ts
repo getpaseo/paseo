@@ -728,6 +728,74 @@ describe("terminal-session-controller workspace-scoped subscriptions", () => {
   });
 });
 
+describe("terminal-session-controller script ownership", () => {
+  test("reports a terminal as a script when its runtime registers right after the creation snapshot", async () => {
+    const cwd = "/work/repo";
+    const terminal = listSession({ id: "script", name: "sleeper", cwd, workspaceId: "ws-a" });
+    const scriptTerminalIds = new Set<string>();
+    let changedListener: ((event: TerminalsChangedEvent) => void) | null = null;
+    let metadataListener: (() => void) | null = null;
+    const terminalManager: TerminalManager = {
+      getTerminals: vi.fn(async () => [terminal]),
+      createTerminal: vi.fn(),
+      registerCwdEnv: vi.fn(),
+      validateTerminalActivityToken: vi.fn(() => "unknown"),
+      getTerminal: vi.fn(),
+      replayTerminal: async () => null,
+      setTerminalTitle: vi.fn(),
+      setTerminalActivity: vi.fn(),
+      killTerminal: vi.fn(),
+      killTerminalAndWait: vi.fn(),
+      captureTerminal: vi.fn(),
+      listDirectories: vi.fn(() => [cwd]),
+      killAll: vi.fn(),
+      subscribeTerminalsChanged: vi.fn((listener) => {
+        changedListener = listener;
+        return vi.fn();
+      }),
+      subscribeTerminalActivity: vi.fn(() => vi.fn()),
+      subscribeTerminalWorkspaceContributionChanged: vi.fn(() => vi.fn()),
+    };
+    const reported: boolean[] = [];
+    let registerAfterNextSnapshot = false;
+    const controller = createController({
+      terminalManager,
+      emit: (message) => {
+        if (message.type !== "terminals_changed") return;
+        reported.push(message.payload.terminals.some((item) => item.isScript));
+        if (!registerAfterNextSnapshot) return;
+        registerAfterNextSnapshot = false;
+        // The script service registers its runtime in a continuation that runs right after the
+        // snapshot for the new terminal goes out, before that snapshot's refresh has settled.
+        queueMicrotask(() => {
+          scriptTerminalIds.add(terminal.id);
+          metadataListener?.();
+        });
+      },
+      emitBinary: vi.fn(),
+      hasBinaryChannel: () => true,
+      isPathWithinRoot: isSameOrDescendantPath,
+      sessionLogger: createLogger(),
+      isScriptTerminal: (item) => scriptTerminalIds.has(item.id),
+      subscribeTerminalMetadata: (listener) => {
+        metadataListener = listener;
+        return () => {
+          metadataListener = null;
+        };
+      },
+    });
+    controller.dispatch({ type: "subscribe_terminals_request", cwd, workspaceId: "ws-a" });
+    await flushMicrotasks();
+    reported.length = 0;
+
+    registerAfterNextSnapshot = true;
+    changedListener?.({ cwd, terminals: [{ id: terminal.id, name: terminal.name, cwd }] });
+    await flushMicrotasks();
+
+    expect(reported.at(-1)).toBe(true);
+  });
+});
+
 describe("terminal-session-controller backpressure snapshot fallback", () => {
   async function setup(
     getClientBufferedAmount: () => number | null,

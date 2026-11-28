@@ -6,7 +6,19 @@ nav: Claude Code
 
 # Claude Code {#claude-code}
 
-Paseo 通过官方的 `claude` CLI，借助 Claude Agent SDK 运行 Claude Code。
+Paseo 通过官方的 `claude` CLI 和 Claude Agent SDK 运行 Claude Code。它使用你的本地安装和现有的 Claude 账号。
+
+## 开始使用 {#getting-started}
+
+Claude Code 内置于 Paseo 且默认启用。
+
+1. 在 daemon 主机上安装 [Claude Code CLI](https://code.claude.com/docs/en/setup#install-claude-code)。
+2. 在终端中运行 `claude` 并登录。
+3. 在 Paseo 中启动 Agent 时选择 **Claude**。
+
+如果 `claude` 不在 daemon 的 PATH 中，请使用[命令覆盖](/docs/custom-providers#custom-binary)。
+
+如果 Claude 登录过期，请在 Claude Code CLI 中重新登录，然后在 Paseo 中启动新的会话。正在运行的会话会保留启动时的认证状态，重新登录不会更新已有的活跃会话。
 
 ## 在 Paseo 中使用 Claude Code 需要额外付费吗？ {#does-claude-code-cost-extra-in-paseo}
 
@@ -14,15 +26,9 @@ Paseo 通过官方的 `claude` CLI，借助 Claude Agent SDK 运行 Claude Code�
 
 你仍然需要一个包含 Claude Code 的 Claude 套餐，套餐原有的用量限制同样适用。
 
-## 开始使用 {#getting-started}
-
-在运行 Paseo 的机器上安装并登录 Claude Code CLI。你启动 Claude Code Agent 时，Paseo 会使用这份现有的安装和账号。
-
-如果 Claude 登录过期，请用 Claude Code CLI 重新认证，然后在 Paseo 中启动新的 Claude Code 会话。已有的 Paseo 会话保留启动时的认证，因此重新认证不会更新已经在运行的会话。
-
 ## 在 Paseo 终端中使用 Claude Code {#use-claude-code-in-the-paseo-terminal}
 
-Claude Code 在 Paseo 终端里也很好用。如果你更喜欢标准的 CLI 体验，在工作区中打开终端，像平常一样运行 `claude` 即可。
+Claude Code 也可以在 Paseo 终端中运行。在工作区中打开终端并运行 `claude`，即可获得标准的 CLI 体验。
 
 你可以在 Paseo 的桌面端、网页端或移动端使用终端，同时保留对工作区、git 改动和其他 Paseo 工具的访问。
 

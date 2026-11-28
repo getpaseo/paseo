@@ -1,4 +1,3 @@
-import { parentPort } from "node:worker_threads";
 import type { ZodIssue } from "zod";
 import { compilePlugin, compileDirectoryPlugin } from "./compiler-build.js";
 import { runPluginBuild } from "./preparation-build.js";
@@ -16,12 +15,15 @@ export type CompilerReply =
       warnings?: unknown[];
     };
 
-const port = parentPort!;
-// The compiler owner serializes requests; the port queues the first request
-// until this entrypoint has loaded, including in source/tsx development.
-port.on("message", (task: CompilerTask) => {
+// The compiler owner serializes requests. IPC holds the process open between
+// tasks and lets it exit when the daemon retires it or exits.
+process.on("message", (task: CompilerTask) => {
   void run(task);
 });
+
+function reply(message: CompilerReply): void {
+  if (process.connected) process.send!(message);
+}
 
 async function run(task: CompilerTask): Promise<void> {
   try {
@@ -38,17 +40,16 @@ async function run(task: CompilerTask): Promise<void> {
           task.directory,
           task.commands,
           {
-            info: (data, message) =>
-              port.postMessage({ kind: "log", data, message } satisfies CompilerReply),
+            info: (data, message) => reply({ kind: "log", data, message }),
           },
           task.environment,
         );
         break;
     }
-    port.postMessage({ kind: "result", value } satisfies CompilerReply);
+    reply({ kind: "result", value });
   } catch (cause) {
     const error = cause instanceof Error ? cause : new Error(String(cause));
-    port.postMessage({
+    reply({
       kind: "error",
       error,
       // Error cloning drops own metadata such as filesystem code/path. Zod's
@@ -57,6 +58,6 @@ async function run(task: CompilerTask): Promise<void> {
       ...("issues" in error ? { issues: error.issues as ZodIssue[] } : {}),
       ...("errors" in error ? { errors: error.errors as unknown[] } : {}),
       ...("warnings" in error ? { warnings: error.warnings as unknown[] } : {}),
-    } satisfies CompilerReply);
+    });
   }
 }

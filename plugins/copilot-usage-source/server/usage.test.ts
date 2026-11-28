@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { discover, fetchUsage } from "./usage.js";
+import { discover, discoverSession, fetchUsage } from "./usage.js";
 import type { UsageReport } from "@getpaseo/plugin/server/usage";
 
 function mockFetch(handlers: Map<string, () => Response>): typeof fetch {
@@ -258,3 +258,36 @@ async function fetchPremiumQuota(
     rmSync(directory, { recursive: true, force: true });
   }
 }
+
+describe("session discovery", () => {
+  it.each(["github-copilot/gpt-4o", "github-copilot-enterprise/gpt-4o"])(
+    "discovers Copilot accounts for OpenCode model %s",
+    async (model) => {
+      const dir = mkdtempSync(join(tmpdir(), "copilot-session-"));
+      const previous = process.env["COPILOT_TOKEN"];
+      try {
+        process.env["COPILOT_TOKEN"] = "session-copilot-token";
+        expect(
+          await discoverSession({
+            kind: "session",
+            provider: "opencode",
+            model,
+            env: { HOME: dir, COPILOT_TOKEN: "session-copilot-token" },
+          }),
+        ).toEqual([{ key: "default", input: { store: "env", locator: "COPILOT_TOKEN" } }]);
+        expect(
+          await discoverSession({
+            kind: "session",
+            provider: "opencode",
+            model: "openai/gpt-5.4",
+            env: { HOME: dir, COPILOT_TOKEN: "session-copilot-token" },
+          }),
+        ).toEqual([]);
+      } finally {
+        if (previous === undefined) delete process.env["COPILOT_TOKEN"];
+        else process.env["COPILOT_TOKEN"] = previous;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+});

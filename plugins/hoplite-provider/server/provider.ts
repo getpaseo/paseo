@@ -1,5 +1,6 @@
 import { runAcpProvider } from "@getpaseo/plugin/server/acp";
 import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
+import { createHopliteInstallation } from "./installation.js";
 import { runPhaseTransformer } from "./run-phase.js";
 
 export function createHopliteProvider(): ProviderRegistration {
@@ -14,5 +15,7 @@ export function createHopliteProvider(): ProviderRegistration {
       acpOptions: { workspaceOnlyCatalog: true },
       transformers: [runPhaseTransformer],
     }),
+    docsUrl: "https://paseo.sh/docs/supported-providers/hoplite",
+    installation: createHopliteInstallation(),
   };
 }

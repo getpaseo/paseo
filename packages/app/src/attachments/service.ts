@@ -1,6 +1,9 @@
+import type { UploadedFileAttachment } from "@getpaseo/protocol/messages";
 import { collectRetainedAttachmentIds } from "@/attachments/gc-retention";
 import { getAttachmentStore } from "@/attachments/store";
 import type { AttachmentMetadata, SaveAttachmentInput } from "@/attachments/types";
+import { FILE_UPLOAD_MAX_BYTES } from "@/attachments/upload-limit";
+import { i18n } from "@/i18n/i18next";
 
 const activePersistence = new Set<Promise<AttachmentMetadata>>();
 const persistedDuringGarbageCollection = new Set<string>();
@@ -122,6 +125,75 @@ export async function encodeAttachmentsForSend(
     (entry): entry is { data: string; mimeType: string } => entry !== null,
   );
   return valid.length > 0 ? valid : undefined;
+}
+
+const DEFAULT_UPLOAD_EXTENSION_BY_MIME: Record<string, string> = {
+  "image/jpeg": ".jpg",
+  "image/jpg": ".jpg",
+  "image/png": ".png",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
+};
+
+function resolveUploadedImageFileName(attachment: AttachmentMetadata): string {
+  const existing = attachment.fileName?.trim();
+  if (existing) {
+    return existing;
+  }
+  const ext = DEFAULT_UPLOAD_EXTENSION_BY_MIME[attachment.mimeType.toLowerCase()] ?? ".img";
+  return `${attachment.id}${ext}`;
+}
+
+export interface ImageUploadClient {
+  uploadFile: (input: { fileName: string; mimeType: string; bytes: Uint8Array }) => Promise<{
+    requestId: string;
+    file: UploadedFileAttachment | null;
+    error: string | null;
+  }>;
+}
+
+export async function readAttachmentBytes(attachment: AttachmentMetadata): Promise<Uint8Array> {
+  const store = await getAttachmentStore();
+  return await store.readBytes({ attachment });
+}
+
+/**
+ * Uploads persisted image attachments sequentially via `file.upload.request` so multi-photo
+ * batches drain cleanly between files instead of queueing concurrently on mobile sockets.
+ * Each uploaded image is marked with `role: "image"` inside `uploaded_file` so current daemons
+ * resolve it into a native vision block + timeline thumbnail, while older daemons (v0.1.91-v0.18.1)
+ * strip the unknown `role` field and still deliver the uploaded file path instead of dropping it.
+ */
+export async function uploadImageAttachments(input: {
+  client: ImageUploadClient;
+  images: readonly AttachmentMetadata[] | undefined;
+}): Promise<UploadedFileAttachment[] | undefined> {
+  if (!input.images || input.images.length === 0) {
+    return undefined;
+  }
+
+  const uploaded: UploadedFileAttachment[] = [];
+  for (const attachment of input.images) {
+    const fileName = resolveUploadedImageFileName(attachment);
+    const bytes = await readAttachmentBytes(attachment);
+    if (bytes.byteLength > FILE_UPLOAD_MAX_BYTES) {
+      throw new Error(i18n.t("composer.errors.fileTooLarge", { size: "50MB", fileName }));
+    }
+    const response = await input.client.uploadFile({
+      fileName,
+      mimeType: attachment.mimeType,
+      bytes,
+    });
+    if (response.error || !response.file) {
+      throw new Error(response.error ?? "Upload failed.");
+    }
+    uploaded.push({
+      ...response.file,
+      role: "image",
+    });
+  }
+
+  return uploaded;
 }
 
 export async function resolveAttachmentPreviewUrl(attachment: AttachmentMetadata): Promise<string> {

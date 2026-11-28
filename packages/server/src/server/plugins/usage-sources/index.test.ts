@@ -4,10 +4,120 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  discover as discoverClaude,
+  fetchUsage as fetchClaudeUsage,
+} from "../../../../../../plugins/claude-usage-source/server/usage.js";
+import { inputSchema as claudeInputSchema } from "../../../../../../plugins/claude-usage-source/shared/input.js";
+import {
+  discover as discoverCursor,
   discoverSession as discoverCursorSession,
   fetchUsage as fetchCursorUsage,
 } from "../../../../../../plugins/cursor-usage-source/server/usage.js";
 import { inputSchema as cursorInputSchema } from "../../../../../../plugins/cursor-usage-source/shared/input.js";
+
+test("switching a shared Claude home replaces the account without borrowing its usage", async () => {
+  const root = await mkdtemp(join(tmpdir(), "claude-accounts-"));
+  try {
+    const defaultHome = join(root, "default");
+    const otherHome = join(root, "other");
+    await Promise.all([mkdir(defaultHome), mkdir(otherHome)]);
+    const login = (home: string, token: string) =>
+      writeFile(
+        join(home, ".credentials.json"),
+        JSON.stringify({ claudeAiOauth: { accessToken: token } }),
+      );
+    await login(defaultHome, "old");
+
+    const sessions = new Map([
+      [
+        "default",
+        {
+          sessionKey: "first",
+          provider: "claude",
+          env: { HOME: root, CLAUDE_CONFIG_DIR: defaultHome },
+        },
+      ],
+    ]);
+    const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+      hasAgent: (id) => sessions.has(id),
+      usageSession: (id) => sessions.get(id) ?? null,
+    });
+    const usageTokens: string[] = [];
+    const fetchApi: typeof fetch = async (url, init) => {
+      const token = new Headers(init?.headers).get("Authorization")?.split(" ")[1];
+      if (!token) throw new Error("Missing fixture token");
+      const account = token === "rotated" ? "old" : token;
+      if (String(url).endsWith("/profile")) {
+        return Response.json({
+          account: { uuid: account, email: account + "@example.com" },
+          organization: { uuid: "org" },
+        });
+      }
+      usageTokens.push(token);
+      return Response.json({ five_hour: { utilization: account === "old" ? 100 : 17 } });
+    };
+    registry.register({
+      id: "claude",
+      label: "Claude",
+      discover: (scope) =>
+        discoverClaude(
+          scope,
+          {
+            home: root,
+            env: { CLAUDE_CONFIG_DIR: defaultHome },
+            platform: "linux",
+          },
+          fetchApi,
+        ),
+      fetch: (input) => fetchClaudeUsage(claudeInputSchema.parse(input), fetchApi),
+    });
+    const usage = (reports: Awaited<ReturnType<typeof registry.listReports>>) =>
+      Object.fromEntries(
+        reports.map((entry) => [entry.account.label, entry.report.windows?.[0]?.usedPct]),
+      );
+
+    expect(usage(await registry.listReports({ agentId: "default" }))).toEqual({
+      "old@example.com": 100,
+    });
+    await login(defaultHome, "rotated");
+    expect(
+      usage(await registry.listReports({ reportIds: ["claude:old.org"], forceRefresh: true })),
+    ).toEqual({ "old@example.com": 100 });
+    expect(usageTokens).toContain("rotated");
+    await login(defaultHome, "new");
+    usageTokens.length = 0;
+    const [stale] = await registry.listReports({
+      reportIds: ["claude:old.org"],
+      forceRefresh: true,
+    });
+    expect.soft(stale?.report).toEqual({
+      status: "error",
+      error: "This Claude login now belongs to a different account. Refresh the usage list.",
+    });
+    expect.soft(stale?.lastSuccessful?.report.windows[0]?.usedPct).toBe(100);
+    expect.soft(usageTokens).toEqual([]);
+
+    const host = await registry.listReports({ forceRefresh: true });
+    expect.soft(usage(host)).toEqual({ "new@example.com": 17 });
+    expect
+      .soft(usage(await registry.listReports({ agentId: "default" })))
+      .toEqual({ "new@example.com": 17 });
+
+    await login(otherHome, "old");
+    sessions.set("other", {
+      sessionKey: "second",
+      provider: "claude",
+      env: { HOME: root, CLAUDE_CONFIG_DIR: otherHome },
+    });
+    await registry.listReports({ agentId: "other" });
+    expect(usage(await registry.listReports({ forceRefresh: true }))).toEqual({
+      "new@example.com": 17,
+      "old@example.com": 100,
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("#7142: host usage retains distinct Cursor accounts after their individual details are read", async () => {
   const root = await mkdtemp(join(tmpdir(), "cursor-accounts-"));
@@ -70,12 +180,16 @@ test("#7142: host usage retains distinct Cursor accounts after their individual 
 
 function source(input: {
   id: string;
-  discover?: () => Promise<Array<{ key: string; label?: string; input: unknown }>>;
+  providers?: readonly string[];
+  discover?: () => Promise<
+    Array<{ key: string; label?: string; harness?: string; provider?: string; input: unknown }>
+  >;
   fetch?: (value: unknown) => Promise<unknown>;
 }) {
   return {
     id: input.id,
     label: input.id,
+    ...(input.providers ? { providers: input.providers } : {}),
     discover: input.discover ?? (async () => []),
     fetch: input.fetch ?? (async () => ({ status: "available", windows: [] })),
   };
@@ -373,7 +487,7 @@ test("failed fallbacks preserve the final problem", async () => {
   });
 });
 
-test("session discovery reuses accounts, separates launches, and retains live agent reports globally", async () => {
+test("session discovery rechecks logins, reuses cached usage, and includes live agent reports globally", async () => {
   const sessions = new Map([
     ["one", { provider: "claude", env: { HOME: "/one" }, sessionKey: "launch-1" }],
     ["two", { provider: "claude", env: { HOME: "/two" }, sessionKey: "launch-2" }],
@@ -404,7 +518,7 @@ test("session discovery reuses accounts, separates launches, and retains live ag
   ]);
   await registry.listReports({ agentId: "one" });
   await registry.listReports({ agentId: "two" });
-  expect(discoveries).toEqual(["/one", "/two"]);
+  expect(discoveries).toEqual(["/one", "/one", "/two"]);
   expect(fetches).toBe(2);
   expect((await registry.listReports()).map((r) => r.id)).toEqual([
     "claude:default",
@@ -827,4 +941,297 @@ test("failed discovery preserves history until discovery confirms account remova
   expect(await registry.listReports()).toEqual([]);
   present = true;
   expect((await registry.listReports())[0]?.lastSuccessful).toBeUndefined();
+});
+
+test("uses provider activity as a defaultEnabled hint without blocking discovery", async () => {
+  const activeProviders = new Set(["claude"]);
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => false,
+    usageSession: () => null,
+    isProviderActive: async (provider) => activeProviders.has(provider),
+  });
+  registry.register(
+    source({
+      id: "claude",
+      providers: ["claude", "pi"],
+      discover: async () => [
+        { key: "cli", provider: "claude", input: "cli" },
+        { key: "pi-only", provider: "pi", input: "pi" },
+      ],
+    }),
+  );
+  registry.register(
+    source({
+      id: "copilot",
+      providers: ["copilot"],
+      discover: async () => [{ key: "default", input: {} }],
+    }),
+  );
+  registry.register(
+    source({
+      id: "openrouter",
+      discover: async () => [{ key: "default", input: {} }],
+    }),
+  );
+
+  const byId = (reports: Awaited<ReturnType<typeof registry.listReports>>) =>
+    Object.fromEntries(reports.map((entry) => [entry.id, entry.defaultEnabled]));
+
+  expect(byId(await registry.listReports())).toEqual({
+    "claude:cli": undefined,
+    "claude:pi-only": false,
+    "copilot:default": false,
+    "openrouter:default": undefined,
+  });
+
+  // Enabling a provider updates defaultEnabled on the next read without waiting for fetch cache expiry.
+  activeProviders.add("copilot");
+  expect(byId(await registry.listReports())).toEqual({
+    "claude:cli": undefined,
+    "claude:pi-only": false,
+    "copilot:default": undefined,
+    "openrouter:default": undefined,
+  });
+});
+
+test("streams unrelated usage reports without waiting on a slow provider check and forwards forceRefresh", async () => {
+  let resolveSlowCheck: ((active: boolean) => void) | undefined;
+  const forceRefreshSeen: Array<{ provider: string; forceRefresh?: boolean }> = [];
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => false,
+    usageSession: () => null,
+    isProviderActive: (provider, options) => {
+      forceRefreshSeen.push({ provider, forceRefresh: options?.forceRefresh });
+      if (provider === "slow") {
+        return new Promise<boolean>((resolve) => {
+          resolveSlowCheck = resolve;
+        });
+      }
+      return Promise.resolve(true);
+    },
+  });
+  registry.register(
+    source({
+      id: "slow-source",
+      providers: ["slow"],
+      discover: async () => [{ key: "default", input: {} }],
+    }),
+  );
+  registry.register(
+    source({
+      id: "fast-source",
+      providers: ["fast"],
+      discover: async () => [{ key: "default", input: {} }],
+    }),
+  );
+  registry.register(
+    source({
+      id: "unhinted",
+      discover: async () => [{ key: "default", input: {} }],
+    }),
+  );
+
+  const streamed: string[] = [];
+  let fastStreamed!: () => void;
+  const bothFastStreamed = new Promise<void>((resolve) => {
+    fastStreamed = resolve;
+  });
+  const pending = registry.listReports({
+    forceRefresh: true,
+    onReport: (report) => {
+      streamed.push(report.id);
+      if (streamed.includes("fast-source:default") && streamed.includes("unhinted:default")) {
+        fastStreamed();
+      }
+    },
+  });
+
+  await bothFastStreamed;
+  expect(streamed).not.toContain("slow-source:default");
+  expect(forceRefreshSeen).toContainEqual({ provider: "slow", forceRefresh: true });
+  expect(forceRefreshSeen).toContainEqual({ provider: "fast", forceRefresh: true });
+
+  resolveSlowCheck?.(false);
+  const reports = await pending;
+  expect(reports.find((entry) => entry.id === "slow-source:default")?.defaultEnabled).toBe(false);
+  expect(
+    reports.find((entry) => entry.id === "fast-source:default")?.defaultEnabled,
+  ).toBeUndefined();
+});
+
+test("Cursor multi-candidate discovery recovers from a 401 via fetchWithFallback", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cursor-fallback-"));
+  const { createRequire } = await import("node:module");
+  const testRequire = createRequire(import.meta.url);
+  try {
+    const appData = join(root, "AppData", "Roaming");
+    const dbDir = join(appData, "Cursor", "User", "globalStorage");
+    await mkdir(dbDir, { recursive: true });
+    const staleToken = `e30.${Buffer.from(JSON.stringify({ sub: "user-same", nonce: "stale" })).toString("base64url")}.sig`;
+    const freshToken = `e30.${Buffer.from(JSON.stringify({ sub: "user-same", nonce: "fresh" })).toString("base64url")}.sig`;
+
+    const { DatabaseSync } = testRequire("node:sqlite") as {
+      DatabaseSync: new (path: string) => {
+        exec(sql: string): void;
+        prepare(sql: string): { run(...params: unknown[]): void };
+        close(): void;
+      };
+    };
+    const db = new DatabaseSync(join(dbDir, "state.vscdb"));
+    db.exec(
+      "CREATE TABLE IF NOT EXISTS ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)",
+    );
+    db.prepare("INSERT INTO ItemTable (key, value) VALUES (?, ?)").run(
+      "cursorAuth/accessToken",
+      staleToken,
+    );
+    db.close();
+
+    await writeFile(
+      join(appData, "Cursor", "auth.json"),
+      JSON.stringify({ accessToken: freshToken }),
+    );
+
+    const seenAuth: string[] = [];
+    const fetchApi: typeof fetch = async (_url, init) => {
+      const auth = new Headers(init?.headers).get("Authorization") ?? "";
+      seenAuth.push(auth);
+      if (auth === `Bearer ${staleToken}`) {
+        return new Response(null, { status: 401 });
+      }
+      if (auth === `Bearer ${freshToken}`) {
+        return Response.json({
+          planUsage: {
+            totalPercentUsed: 31.18,
+            autoPercentUsed: 18.5,
+            apiPercentUsed: 44.2,
+          },
+          billingCycleStart: "2026-11-01T00:00:00.000Z",
+          billingCycleEnd: "2026-12-01T00:00:00.000Z",
+        });
+      }
+      throw new Error("Unexpected token");
+    };
+
+    const discoveredStores: string[] = [];
+    const registry = new UsageSourceRegistry();
+    registry.register({
+      id: "cursor",
+      label: "Cursor",
+      discover: async (scope) => {
+        if (scope.kind !== "global") return [];
+        const accounts = await discoverCursor({
+          platform: "win32",
+          home: root,
+          env: { APPDATA: appData },
+          readKeychain: async () => null,
+        });
+        discoveredStores.push(
+          ...accounts.map((account) => cursorInputSchema.parse(account.input).store),
+        );
+        return accounts;
+      },
+      fetch: (input) => fetchCursorUsage(cursorInputSchema.parse(input), fetchApi),
+    });
+
+    const reports = await registry.listReports();
+    expect(discoveredStores).toEqual(["sqlite", "file"]);
+    expect(reports).toHaveLength(1);
+    expect(new Set(seenAuth)).toEqual(new Set([`Bearer ${staleToken}`, `Bearer ${freshToken}`]));
+    expect(reports[0]?.report).toMatchObject({
+      status: "available",
+      windows: [
+        expect.objectContaining({ id: "plan_usage", usedPct: 31.18 }),
+        expect.objectContaining({ id: "cursor_usage", usedPct: 18.5 }),
+        expect.objectContaining({ id: "third_party_usage", usedPct: 44.2 }),
+      ],
+    });
+    expect(reports[0]?.loginErrors).toBeUndefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Cursor macOS discovery recovers from a stale desktop 401 via Keychain fallback", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cursor-mac-fallback-"));
+  const { createRequire } = await import("node:module");
+  const testRequire = createRequire(import.meta.url);
+  try {
+    const dbDir = join(root, "Library", "Application Support", "Cursor", "User", "globalStorage");
+    await mkdir(dbDir, { recursive: true });
+    const staleToken = `e30.${Buffer.from(JSON.stringify({ sub: "user-mac", nonce: "stale" })).toString("base64url")}.sig`;
+    const keychainToken = `e30.${Buffer.from(JSON.stringify({ sub: "user-mac", nonce: "keychain" })).toString("base64url")}.sig`;
+
+    const { DatabaseSync } = testRequire("node:sqlite") as {
+      DatabaseSync: new (path: string) => {
+        exec(sql: string): void;
+        prepare(sql: string): { run(...params: unknown[]): void };
+        close(): void;
+      };
+    };
+    const db = new DatabaseSync(join(dbDir, "state.vscdb"));
+    db.exec(
+      "CREATE TABLE IF NOT EXISTS ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)",
+    );
+    db.prepare("INSERT INTO ItemTable (key, value) VALUES (?, ?)").run(
+      "cursorAuth/accessToken",
+      staleToken,
+    );
+    db.close();
+
+    const readKeychain = async () => keychainToken;
+    const seenAuth: string[] = [];
+    const fetchApi: typeof fetch = async (_url, init) => {
+      const auth = new Headers(init?.headers).get("Authorization") ?? "";
+      seenAuth.push(auth);
+      if (auth === `Bearer ${staleToken}`) return new Response(null, { status: 401 });
+      if (auth === `Bearer ${keychainToken}`) {
+        return Response.json({
+          planUsage: { totalPercentUsed: 19.7, autoPercentUsed: 18.9, apiPercentUsed: 42.2 },
+        });
+      }
+      throw new Error("Unexpected token");
+    };
+
+    const discoveredStores: string[] = [];
+    const registry = new UsageSourceRegistry();
+    registry.register({
+      id: "cursor",
+      label: "Cursor",
+      discover: async (scope) => {
+        if (scope.kind !== "global") return [];
+        const accounts = await discoverCursor({
+          platform: "darwin",
+          home: root,
+          env: {},
+          readKeychain,
+        });
+        discoveredStores.push(
+          ...accounts.map((account) => cursorInputSchema.parse(account.input).store),
+        );
+        return accounts;
+      },
+      fetch: (input) =>
+        fetchCursorUsage(cursorInputSchema.parse(input), fetchApi, {
+          platform: "darwin",
+          readKeychain,
+        }),
+    });
+
+    const reports = await registry.listReports();
+    expect(discoveredStores).toEqual(["sqlite", "keychain"]);
+    expect(reports).toHaveLength(1);
+    expect(new Set(seenAuth)).toEqual(new Set([`Bearer ${staleToken}`, `Bearer ${keychainToken}`]));
+    expect(reports[0]?.report).toMatchObject({
+      status: "available",
+      windows: [
+        expect.objectContaining({ id: "plan_usage", usedPct: 19.7 }),
+        expect.objectContaining({ id: "cursor_usage", usedPct: 18.9 }),
+        expect.objectContaining({ id: "third_party_usage", usedPct: 42.2 }),
+      ],
+    });
+    expect(reports[0]?.loginErrors).toBeUndefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

@@ -20,6 +20,14 @@ input focused while its scrollable list lives in a Portal. There is no shared
 "floating panel" primitive yet — when a fifth use case shows up we can revisit;
 until then prefer copying the closest file and trimming.
 
+## Picker trigger tooltips
+
+Keep the picker surface outside `TooltipTrigger`. React focus events bubble
+through portals, so putting the surface inside the trigger makes focus in its
+search field look like focus on the button when a shortcut opens the picker.
+For new `ComboboxTrigger` buttons, pass the hint through the `tooltip` prop. An
+explicit `TooltipTrigger` wrapper is also safe when it wraps only the button.
+
 ## Popover width contract
 
 Combobox desktop popovers are never narrower than their trigger, and they grow
@@ -137,6 +145,22 @@ quietly relying on:
   This is why app-wide providers wrap `PortalProvider` rather than the reverse.
 
 The fix for transforms is Gotcha 3. The fix for context is Gotcha 7.
+
+### The portal patch
+
+`patches/@gorhom+portal+1.0.14.patch` moves portal state out of the provider's
+context value and into a store each `PortalHost` subscribes to. Upstream keeps
+every host's portals in one context value at the app root, so each portal mount,
+update and unmount changed that value and React searched every mounted fiber
+for consumers. That cost grows with the retained panels: a hover card took
+about 3 ms of it in a fresh window and 16 ms after a few hours. With the store,
+a portal change renders only its own host.
+
+Do not put per-overlay state in a context that wraps the app for the same
+reason. Give the consumers a store to subscribe to.
+
+The patch also keys each portal in its host (upstream PR #62). Without the key,
+closing one overlay remounted every later overlay in the same host.
 
 ## Gotcha 3 — Keyboard layout and portal anchors
 
@@ -435,18 +459,29 @@ Wrapping providers _around_ the modal does nothing. They land on the wrong side.
 
 ## Gotcha 8 — Read safe-area insets where the overlay draws
 
-A compact sheet tab's body (`SheetBottomInset` in `adaptive-modal-sheet.tsx`) pads the bottom
-inset and gives its content a bottom inset of 0, so the composer dock sits the same in a sheet as
-in a tab. An overlay opened from that content and calling `useSafeAreaInsets()` at its call site
-gets that 0 and draws over the navigation bar.
+Two containers spend an inset and give their content 0 for that edge:
+
+- A compact sheet tab's body (`SheetBottomInset` in `adaptive-modal-sheet.tsx`) pads the bottom
+  inset, so the composer dock sits the same in a sheet as in a tab.
+- `WindowLayoutSurface` on a wide web layout pads the top inset, the status bar of an iOS Home
+  Screen web app (`docs/design.md`, section 9).
+
+An overlay opened from that content and calling `useSafeAreaInsets()` at its call site gets that 0
+and draws over the navigation bar or under the status bar. Read the inset where the overlay draws:
 
 - A Gorhom sheet reads the inset inside its children, which render in the app's sheet host. See
-  `CompactSheetBody`, `MenuSheetScrollView` and `ComboboxSheetFrame`.
+  `SheetVisibleFrame` (used by `CompactSheetBody` and `ComboboxSheetFrame`) and `MenuSheetScrollView`.
 - An RN `Modal` passes the call site's context straight through, so wrap its content in
   `WindowSafeArea` from `@/window-layout` and read the inset below that. It provides the insets of
   the whole window, published by `WindowLayoutProvider`. Do not put a `SafeAreaProvider` inside the
   modal: on Android it measures the dialog window, whose bottom inset reads 24, then 0, then 24
-  again over the first frames, and everything padded by it jumps. See `attachment-lightbox.tsx`.
+  again over the first frames, and everything padded by it jumps. See `attachment-lightbox.tsx`
+  and the Mermaid fullscreen viewer.
+- A panel in a `FloatingPanelPortalHost` reads `useSafeAreaInsets()` inside the portal, where it
+  resolves at the host's position (Gotcha 2): the root host sits outside the layout surface and
+  gets the window's inset, a workspace host inside it gets 0. See the autocomplete `PopoverFrame`.
+- An absolutely positioned view that covers the surface's padding, such as the overlay left
+  sidebar, reads the window's insets with `useWindowSafeAreaInsets()`.
 
 ## Recipe for a new anchored panel
 

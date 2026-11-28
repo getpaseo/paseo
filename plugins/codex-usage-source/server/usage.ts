@@ -1,4 +1,12 @@
-import { discoverOmp, piAuthPath, readHarness, readJson, type StoreLookup } from "./stores.js";
+import {
+  discoverOmp,
+  opencodeStorePaths,
+  piAuthPath,
+  readHarness,
+  readJson,
+  readOpencodeOauth,
+  type StoreLookup,
+} from "./stores.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -34,6 +42,15 @@ const rateLimitSchema = z.object({
   primary_window: windowSchema.nullish(),
   secondary_window: windowSchema.nullish(),
 });
+const spendControlSchema = z.object({
+  individual_limit: z
+    .object({
+      used_percent: number.nullish(),
+      remaining_percent: number.nullish(),
+      reset_at: number.nullish(),
+    })
+    .nullish(),
+});
 const responseSchema = z.object({
   plan_type: z.string().optional(),
   email: z.string().optional(),
@@ -48,6 +65,7 @@ const responseSchema = z.object({
     )
     .nullish(),
   code_review_rate_limit: rateLimitSchema.nullish(),
+  spend_control: spendControlSchema.nullish(),
   credits: z.object({ balance: number.optional() }).nullish(),
 });
 
@@ -73,7 +91,12 @@ export async function discover(
   for (const input of candidates) {
     const auth = await readAuth(input, lookup);
     if (auth)
-      present.push({ ...accountIdentity(auth, input), harness: harnessLabel(input), input });
+      present.push({
+        ...accountIdentity(auth, input),
+        harness: harnessLabel(input),
+        provider: providerId(input.route.store),
+        input,
+      });
   }
   return present;
 }
@@ -88,17 +111,31 @@ function globalRoutes(lookup: StoreLookup): CodexUsageInput[] {
   const candidates: CodexUsageInput[] = [...new Set(paths)].map((path) => ({
     route: { store: "codex", path },
   }));
+  candidates.push(...opencodeRoutes(env, home, lookup));
   candidates.push(
-    {
-      route: {
-        store: "opencode",
-        path: join(env.XDG_DATA_HOME || join(home, ".local", "share"), "opencode", "auth.json"),
-      },
-    },
     { route: { store: "pi", path: piAuthPath(lookup) } },
     ...discoverOmp(lookup).map((route) => ({ route })),
   );
   return candidates;
+}
+
+/**
+ * OpenCode v2 stores its logins in a database and leaves the v1 credential file
+ * untouched, so a file login can be stale while the database login is current.
+ * The database wins whenever it holds an OpenAI login; the file stays the
+ * source for v1 installations that have no such database.
+ */
+function opencodeRoutes(
+  env: NodeJS.ProcessEnv,
+  home: string,
+  lookup: StoreLookup,
+): CodexUsageInput[] {
+  const { file, database } = opencodeStorePaths(env, home);
+  const logins = readOpencodeOauth(database, lookup);
+  if (!logins.length) return [{ route: { store: "opencode", path: file } }];
+  return logins.map((login) => ({
+    route: { store: "opencode-db", path: database, credentialId: login.id },
+  }));
 }
 
 function sessionRoutes(
@@ -119,14 +156,7 @@ function sessionRoutes(
   if (scope.provider === "pi") return [{ route: { store: "pi", path: piAuthPath(lookup) } }];
   if (scope.provider === "omp") return discoverOmp(lookup).map((route) => ({ route }));
   if (scope.provider === "opencode")
-    return [
-      {
-        route: {
-          store: "opencode",
-          path: join(env.XDG_DATA_HOME || join(home, ".local", "share"), "opencode", "auth.json"),
-        },
-      },
-    ];
+    return opencodeRoutes(scope.env, lookup.home ?? homedir(), lookup);
   return [];
 }
 
@@ -135,6 +165,14 @@ export async function readAuth(
   lookup: StoreLookup = {},
 ): Promise<Auth | null> {
   const route = input.route;
+  if (route.store === "opencode-db") {
+    const login = readOpencodeOauth(route.path, lookup).find(
+      (candidate) => candidate.id === route.credentialId,
+    );
+    return login
+      ? { token: login.access, accountId: login.accountId, expires: login.expires }
+      : null;
+  }
   if (route.store !== "codex") {
     const oauth = await readHarness(route, lookup);
     return oauth
@@ -191,7 +229,7 @@ export async function fetchUsage(
 ): Promise<UsageReport> {
   const auth = await readAuth(input, lookup);
   if (!auth) throw new Error("Codex login store no longer exists");
-  const refreshedBy = input.route.store;
+  const refreshedBy = providerId(input.route.store);
   if (auth.expires !== undefined && auth.expires <= (lookup.now ?? Date.now)())
     return unavailable({
       kind: "expired",
@@ -227,6 +265,27 @@ export async function fetchUsage(
         },
       });
     }),
+    ...(usage.spend_control?.individual_limit
+      ? (() => {
+          const limit = usage.spend_control.individual_limit;
+          const usedPct =
+            limit.used_percent ??
+            (limit.remaining_percent != null ? 100 - limit.remaining_percent : undefined);
+          if (usedPct === undefined) return [];
+          return [
+            {
+              id: "individual_limit",
+              label: "Individual spend limit",
+              summary: true,
+              usedPct,
+              remainingPct: limit.remaining_percent ?? Math.max(0, 100 - usedPct),
+              resetsAt:
+                limit.reset_at != null ? new Date(limit.reset_at * 1000).toISOString() : null,
+              tone: toneFromUsedPct(usedPct),
+            },
+          ];
+        })()
+      : []),
     ...usageWindows({
       rateLimit: usage.code_review_rate_limit,
       scope: { id: "code_review", label: "Code review" },
@@ -297,6 +356,17 @@ function accountIdentity(auth: Auth, input: CodexUsageInput): { key: string; lab
 }
 
 function harnessLabel(input: CodexUsageInput): string {
-  const labels = { codex: "Codex", opencode: "OpenCode", pi: "Pi", omp: "OMP" };
+  const labels = {
+    codex: "Codex",
+    opencode: "OpenCode",
+    "opencode-db": "OpenCode",
+    pi: "Pi",
+    omp: "OMP",
+  };
   return labels[input.route.store];
+}
+
+/** The canonical provider and CLI behind each credential store. */
+function providerId(store: CodexUsageInput["route"]["store"]): string {
+  return store === "opencode-db" ? "opencode" : store;
 }

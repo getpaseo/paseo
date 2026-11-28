@@ -32,7 +32,11 @@ export function FileHtmlPreview({ html, testID }: { html: string; testID?: strin
     [html],
   );
   return (
+    // Each document loads in a new frame. The Source view keeps this preview mounted and hidden,
+    // and it gets a changed document in the same render that shows it again. Chromium can leave a
+    // reused frame blank when it navigates at that moment.
     <iframe
+      key={source}
       data-testid={testID}
       title={t("panels.file.filePanels.builtin.html")}
       src={source}

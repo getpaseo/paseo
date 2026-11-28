@@ -267,6 +267,11 @@ function WebHoverCard({
   );
 }
 
+/** Whether the enclosing card is open, so its trigger can look active while it is. */
+export function useHoverCardOpen(): boolean {
+  return useContext(HoverCardContext)?.open ?? false;
+}
+
 export function HoverCardTrigger({
   children,
   focusable = false,

@@ -31,7 +31,7 @@ function keyboardState() {
   return {
     shown: /^  mInputShown=true$/m.test(state),
     // The native object identity survives layout/flag changes but not a remount.
-    input: view.match(/ReactEditText\{(\w+)/)?.[1] ?? null,
+    input: view.match(/PaseoTerminalInputView\{(\w+)/)?.[1] ?? null,
   };
 }
 async function waitForKeyboard(shown) {

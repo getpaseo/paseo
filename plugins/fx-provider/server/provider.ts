@@ -13,5 +13,6 @@ export function createFxProvider(): ProviderRegistration {
       command: ["fx", "acp"],
       transformers: [fileToolTransformer],
     }),
+    docsUrl: "https://paseo.sh/docs/supported-providers/fx",
   };
 }

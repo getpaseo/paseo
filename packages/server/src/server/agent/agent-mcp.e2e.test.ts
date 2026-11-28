@@ -1,3 +1,4 @@
+import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -6,6 +7,11 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { describe, expect, test } from "vitest";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {
+  Client as StandardMcpClient,
+  StreamableHTTPClientTransport as StandardMcpHttpTransport,
+  type VersionNegotiationMode,
+} from "@modelcontextprotocol/client";
 import pino from "pino";
 
 import { withTimeout } from "../../utils/promise-timeout.js";
@@ -89,12 +95,12 @@ async function createMcpClient(url: string, authToken?: string): Promise<McpClie
   return { callTool: boundCallTool, close: () => rawClient.close() };
 }
 
-interface OfflineMcpDaemon {
-  client: McpClient;
+interface OfflineDaemon {
+  mcpUrl: string;
   stop: () => Promise<void>;
 }
 
-async function startOfflineMcpDaemon(): Promise<OfflineMcpDaemon> {
+async function startOfflineDaemon(logger = pino({ level: "silent" })): Promise<OfflineDaemon> {
   const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
   const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
   const removeDirectories = async () => {
@@ -114,26 +120,89 @@ async function startOfflineMcpDaemon(): Promise<OfflineMcpDaemon> {
       agentClients: createTestAgentClients(),
       agentStoragePath: path.join(paseoHome, "agents"),
     },
-    pino({ level: "silent" }),
+    logger,
   ).catch(async (error: unknown) => {
     await removeDirectories();
     throw error;
   });
+  const stop = async () => {
+    await daemon.stop();
+    await removeDirectories();
+  };
   try {
     await daemon.start();
-    const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
+  } catch (error) {
+    await stop();
+    throw error;
+  }
+  return { mcpUrl: `http://127.0.0.1:${port}/mcp/agents`, stop };
+}
+
+interface OfflineMcpDaemon {
+  client: McpClient;
+  stop: () => Promise<void>;
+}
+
+async function startOfflineMcpDaemon(): Promise<OfflineMcpDaemon> {
+  const daemon = await startOfflineDaemon();
+  try {
+    const client = await createMcpClient(daemon.mcpUrl);
     return {
       client,
       stop: async () => {
         await client.close();
         await daemon.stop();
-        await removeDirectories();
       },
     };
   } catch (error) {
     await daemon.stop();
-    await removeDirectories();
     throw error;
+  }
+}
+
+interface CapturedLog {
+  level: number;
+  msg?: string;
+}
+
+function createCapturingLogger(): { logger: pino.Logger; logs: CapturedLog[] } {
+  const logs: CapturedLog[] = [];
+  const logger = pino(
+    { level: "warn" },
+    {
+      write: (line: string) => {
+        logs.push(JSON.parse(line) as CapturedLog);
+      },
+    },
+  );
+  return { logger, logs };
+}
+
+interface StandardMcpSession {
+  negotiatedProtocolVersion: string | undefined;
+  toolNames: string[];
+  listWorkspacesResult: unknown;
+}
+
+async function runStandardMcpSession(
+  mcpUrl: string,
+  mode: VersionNegotiationMode,
+): Promise<StandardMcpSession> {
+  const client = new StandardMcpClient(
+    { name: "agent-mcp-e2e", version: "0.0.0" },
+    { versionNegotiation: { mode } },
+  );
+  await client.connect(new StandardMcpHttpTransport(new URL(mcpUrl)));
+  try {
+    const tools = await client.listTools();
+    const workspaces = await client.callTool({ name: "list_workspaces", arguments: {} });
+    return {
+      negotiatedProtocolVersion: client.getNegotiatedProtocolVersion(),
+      toolNames: tools.tools.map((tool) => tool.name),
+      listWorkspacesResult: workspaces.structuredContent,
+    };
+  } finally {
+    await client.close();
   }
 }
 
@@ -560,6 +629,187 @@ describe("agent MCP end-to-end (offline)", () => {
     }
   }, 30_000);
 
+  test.skipIf(process.platform === "win32")(
+    "Unix-socket daemon serves MCP and terminal activity on a dedicated loopback endpoint and closes it on stop",
+    async () => {
+      const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-u-"));
+      const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+      const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-"));
+      const socketPath = path.join(paseoHome, "d.sock");
+      const recorder: LaunchRecorder = { recordedLaunches: [] };
+
+      const daemon = await createPaseoDaemon(
+        {
+          listen: `unix://${socketPath}`,
+          paseoHome,
+          corsAllowedOrigins: [],
+          hostnames: true,
+          mcpEnabled: true,
+          staticDir,
+          mcpDebug: false,
+          agentClients: createMcpRecordingAgentClients(recorder),
+          agentStoragePath: path.join(paseoHome, "agents"),
+          auth: { password: hashDaemonPassword("daemon-secret") },
+        },
+        pino({ level: "silent" }),
+      );
+      await daemon.start();
+
+      let mcpClient: McpClient | null = null;
+      let loopbackPort: number | null = null;
+      let agentId: string | null = null;
+      let terminalId: string | null = null;
+      try {
+        expect(daemon.getListenTarget()).toEqual({ type: "socket", path: socketPath });
+
+        const agent = await daemon.agentManager.createAgent(
+          {
+            provider: "claude",
+            cwd: agentCwd,
+            model: "claude-test-model",
+            modeId: "bypassPermissions",
+            title: "Unix MCP agent",
+          },
+          undefined,
+          {},
+        );
+        agentId = agent.id;
+
+        const injectedMcp = recorder.recordedLaunches.at(-1)?.mcpServers?.paseo;
+        expect(injectedMcp).toBeDefined();
+        expect(injectedMcp?.type).toBe("http");
+        if (!injectedMcp || injectedMcp.type !== "http") {
+          throw new Error("Expected injected HTTP Paseo MCP server");
+        }
+
+        const mcpUrl = new URL(injectedMcp.url);
+        expect(mcpUrl.hostname).toBe("127.0.0.1");
+        expect(mcpUrl.pathname).toBe("/mcp/agents");
+        expect(mcpUrl.searchParams.get("callerAgentId")).toBe(agentId);
+        loopbackPort = Number(mcpUrl.port);
+        expect(loopbackPort).toBeGreaterThan(0);
+
+        // Capability token auth is enforced on the internal loopback endpoint.
+        const unauthorized = await fetch(`http://127.0.0.1:${loopbackPort}/mcp/agents`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+        expect(unauthorized.status).toBe(401);
+
+        // Non-agent daemon routes are not exposed on the internal loopback server.
+        const statusResponse = await fetch(`http://127.0.0.1:${loopbackPort}/api/status`);
+        expect(statusResponse.status).toBe(404);
+
+        // Non-loopback Host headers are rejected (DNS rebinding protection).
+        const badHostStatus = await new Promise<number>((resolve, reject) => {
+          const req = http.request(
+            {
+              host: "127.0.0.1",
+              port: loopbackPort!,
+              path: "/mcp/agents",
+              method: "POST",
+              headers: {
+                host: `evil.example:${loopbackPort!}`,
+                "content-type": "application/json",
+              },
+            },
+            (res) => {
+              res.resume();
+              resolve(res.statusCode ?? 0);
+            },
+          );
+          req.once("error", reject);
+          req.end("{}");
+        });
+        expect(badHostStatus).toBe(403);
+
+        // Authenticated MCP calls work end-to-end against the loopback endpoint.
+        const capabilityToken = daemon.agentManager.getMcpAuthToken();
+        expect(typeof capabilityToken).toBe("string");
+        expect(injectedMcp.headers?.Authorization).toBe(`Bearer ${capabilityToken!}`);
+        mcpClient = await createMcpClient(injectedMcp.url, capabilityToken!);
+        expect(await listWorkspaces(mcpClient)).toEqual([]);
+        const createdWorkspace = await createLocalWorkspace(mcpClient, agentCwd);
+        if (
+          !("workspaceId" in createdWorkspace) ||
+          typeof createdWorkspace.workspaceId !== "string"
+        ) {
+          throw new Error("Expected create_workspace over loopback MCP to return a workspaceId");
+        }
+
+        // Terminal activity URL points to the same loopback endpoint and accepts reports.
+        const envPath = path.join(agentCwd, "terminal-activity-env.json");
+        const terminal = await daemon.terminalManager.createTerminal({
+          workspaceId: createdWorkspace.workspaceId,
+          cwd: agentCwd,
+          command: process.execPath,
+          args: [
+            "-e",
+            `
+              const fs = require("node:fs");
+              const envPath = ${JSON.stringify(envPath)};
+              fs.writeFileSync(envPath + ".tmp", JSON.stringify({
+                terminalId: process.env.PASEO_TERMINAL_ID,
+                token: process.env.PASEO_ACTIVITY_TOKEN,
+                url: process.env.PASEO_TERMINAL_ACTIVITY_URL,
+              }));
+              fs.renameSync(envPath + ".tmp", envPath);
+              setInterval(() => {}, 1000);
+            `,
+          ],
+        });
+        terminalId = terminal.id;
+        await waitForPathExists({ targetPath: envPath, timeoutMs: 10_000 });
+        const terminalEnv = JSON.parse(await readFile(envPath, "utf8")) as {
+          terminalId: string;
+          token: string;
+          url: string;
+        };
+        expect(terminalEnv.url).toBe(`http://127.0.0.1:${loopbackPort}/api/terminal-activity`);
+
+        const activityResponse = await fetch(terminalEnv.url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            terminalId: terminalEnv.terminalId,
+            token: terminalEnv.token,
+            state: "running",
+          }),
+        });
+        expect(activityResponse.status).toBe(204);
+        await expect.poll(() => terminal.getActivity()?.state, { timeout: 5_000 }).toBe("working");
+      } finally {
+        if (terminalId) {
+          await daemon.terminalManager.killTerminalAndWait(terminalId).catch(() => undefined);
+        }
+        if (agentId) {
+          await daemon.agentManager.closeAgent(agentId).catch(() => undefined);
+        }
+        await mcpClient?.close().catch(() => undefined);
+        await daemon.stop();
+        await rm(paseoHome, { recursive: true, force: true });
+        await rm(staticDir, { recursive: true, force: true });
+        await rm(agentCwd, { recursive: true, force: true });
+      }
+
+      // After daemon.stop(), the dedicated loopback listener is closed.
+      if (loopbackPort !== null) {
+        await expect(
+          new Promise<void>((resolve, reject) => {
+            const socket = net.createConnection({ host: "127.0.0.1", port: loopbackPort! });
+            socket.once("connect", () => {
+              socket.destroy();
+              resolve();
+            });
+            socket.once("error", reject);
+          }),
+        ).rejects.toThrow();
+      }
+    },
+    30_000,
+  );
+
   test("create_agent with background initialPrompt reflects running state once the first turn starts", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
     const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
@@ -898,4 +1148,43 @@ describe("agent MCP end-to-end (offline)", () => {
       await rm(repoRoot, { recursive: true, force: true });
     }
   }, 60_000);
+});
+
+describe("agent MCP protocol negotiation", () => {
+  test("a client pinned to 2026-07-28 lists and calls tools", async () => {
+    const daemon = await startOfflineDaemon();
+    try {
+      const session = await runStandardMcpSession(daemon.mcpUrl, { pin: "2026-07-28" });
+      expect(session.negotiatedProtocolVersion).toBe("2026-07-28");
+      expect(session.toolNames).toEqual(expect.arrayContaining(["create_agent", "update_agent"]));
+      expect(session.listWorkspacesResult).toMatchObject({ workspaces: [] });
+    } finally {
+      await daemon.stop();
+    }
+  }, 30_000);
+
+  test("an auto-negotiating client settles on 2026-07-28 without transport errors", async () => {
+    const { logger, logs } = createCapturingLogger();
+    const daemon = await startOfflineDaemon(logger);
+    try {
+      const session = await runStandardMcpSession(daemon.mcpUrl, "auto");
+      expect(session.negotiatedProtocolVersion).toBe("2026-07-28");
+      expect(session.listWorkspacesResult).toMatchObject({ workspaces: [] });
+      expect(logs.filter((log) => log.msg === "Agent MCP transport error")).toEqual([]);
+    } finally {
+      await daemon.stop();
+    }
+  }, 30_000);
+
+  test("a legacy client still initializes over a 2025 protocol version", async () => {
+    const daemon = await startOfflineDaemon();
+    try {
+      const session = await runStandardMcpSession(daemon.mcpUrl, "legacy");
+      expect(session.negotiatedProtocolVersion).toMatch(/^2025-/);
+      expect(session.toolNames).toEqual(expect.arrayContaining(["create_agent", "update_agent"]));
+      expect(session.listWorkspacesResult).toMatchObject({ workspaces: [] });
+    } finally {
+      await daemon.stop();
+    }
+  }, 30_000);
 });

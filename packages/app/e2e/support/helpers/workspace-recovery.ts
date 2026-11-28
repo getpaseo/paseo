@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { openChangesPanel } from "./branch-switcher";
 
 export async function restoreArchivedWorkspace(page: Page): Promise<void> {
@@ -32,7 +32,11 @@ export async function expectCommittedFile(page: Page, filename: string): Promise
 }
 
 export async function expectCommittedFileAfterReload(page: Page, filename: string): Promise<void> {
-  await expectCommittedFile(page, filename);
-  await page.reload();
-  await expectCommittedFile(page, filename);
+  await test.step("See the committed file immediately after Restore", async () => {
+    await expectCommittedFile(page, filename);
+  });
+  await test.step("Reload and see the same committed file", async () => {
+    await page.reload();
+    await expectCommittedFile(page, filename);
+  });
 }

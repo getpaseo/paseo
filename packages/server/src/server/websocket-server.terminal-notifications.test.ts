@@ -1,3 +1,10 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  type NotificationKind,
+} from "@getpaseo/protocol/notification-preferences";
 import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { SessionDelivery } from "./session/owned-subscriptions/index.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,7 +24,11 @@ import type {
 import type { PersistedWorkspaceRecord, WorkspaceRegistry } from "./workspace-registry.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
-import type { PushNotificationSender, PushPayload } from "./push/index.js";
+import {
+  createPushNotifications,
+  type PushNotificationSender,
+  type PushPayload,
+} from "./push/index.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
 
 const wsModuleMock = vi.hoisted(() => {
@@ -51,9 +62,11 @@ import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 
 class RecordingPushNotificationSender implements PushNotificationSender {
   readonly sent: PushPayload[] = [];
+  readonly sentWithKind: Array<{ payload: PushPayload; kind?: NotificationKind }> = [];
 
-  async send(payload: PushPayload): Promise<void> {
+  async send(payload: PushPayload, kind?: NotificationKind): Promise<void> {
     this.sent.push(payload);
+    this.sentWithKind.push({ payload, kind });
   }
 }
 
@@ -115,11 +128,17 @@ function createWorkspaceRegistry(records: PersistedWorkspaceRecord[]): Workspace
   });
 }
 
-function createServer(terminalManager: TerminalManager, workspaceRegistry?: WorkspaceRegistry) {
+function createServer(
+  terminalManager: TerminalManager,
+  workspaceRegistry?: WorkspaceRegistry,
+  customPushSender?: PushNotificationSender,
+) {
   const pushNotifications = new RecordingPushNotificationSender();
+  const sender = customPushSender ?? pushNotifications;
   const agentManager = {
     setAgentAttentionCallback: vi.fn(),
     subscribe: vi.fn(() => () => {}),
+    onStop: () => () => {},
     getAgent: vi.fn(() => null),
     getLastAssistantMessage: vi.fn(async () => null),
     getMetricsSnapshot: vi.fn(() => ({
@@ -178,7 +197,7 @@ function createServer(terminalManager: TerminalManager, workspaceRegistry?: Work
     undefined,
     undefined,
     undefined,
-    pushNotifications,
+    sender,
     createProviderSnapshotManagerStub().manager,
   );
 
@@ -501,5 +520,67 @@ describe("VoiceAssistantWebSocketServer terminal attention notifications", () =>
       terminalId: "term-1",
       workspaceId: "ws-1",
     });
+    expect(pushNotifications.sentWithKind[0]?.kind).toEqual({
+      kind: "terminal",
+      reason: "finished",
+    });
+  });
+
+  it("filters terminal needs_input and finished pushes per token preferences", async () => {
+    const home = mkdtempSync(path.join(tmpdir(), "paseo-ws-terminal-prefs-"));
+    try {
+      const deliveries: Array<{ tokens: string[]; title: string }> = [];
+      const realPush = createPushNotifications({
+        logger: createStub<pino.Logger>(createLogger()),
+        filePath: path.join(home, "push-tokens.json"),
+        deliver: async (tokens, payload) => {
+          deliveries.push({ tokens, title: payload.title });
+        },
+      });
+      // Token with explicit default preferences: terminalNeedsInput: true, terminalFinished: false
+      realPush.renew("ExponentPushToken[phone-default]", DEFAULT_NOTIFICATION_PREFERENCES);
+      // Token with terminalFinished: true, terminalNeedsInput: false
+      realPush.renew("ExponentPushToken[phone-terminal-finished]", {
+        ...DEFAULT_NOTIFICATION_PREFERENCES,
+        events: {
+          ...DEFAULT_NOTIFICATION_PREFERENCES.events,
+          terminalNeedsInput: false,
+          terminalFinished: true,
+        },
+      });
+
+      const { manager, emit } = createTerminalManager();
+      createServer(manager, createWorkspaceRegistry([workspaceRecord()]), realPush);
+
+      emit(
+        transition({
+          previousState: "working",
+          previousChangedAt: 0,
+          state: "attention",
+          changedAt: 15_000,
+        }),
+      );
+      await flushAsync();
+
+      emit(
+        transition({
+          previousState: "working",
+          previousChangedAt: 15_000,
+          state: "idle",
+          changedAt: 30_000,
+        }),
+      );
+      await flushAsync();
+
+      expect(deliveries).toEqual([
+        { tokens: ["ExponentPushToken[phone-default]"], title: "Terminal needs input" },
+        {
+          tokens: ["ExponentPushToken[phone-terminal-finished]"],
+          title: "Terminal finished",
+        },
+      ]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

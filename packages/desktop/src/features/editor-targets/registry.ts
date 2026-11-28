@@ -96,31 +96,31 @@ export function getEditorTarget(
   return target;
 }
 
+// Assistant replies name paths like `~/Downloads/x`; expand them before the absolute-path guard.
+function resolveLocalPath(path: string, label: string, runtime: EditorTargetRuntime): string {
+  const expanded = runtime.expandHomePath(path);
+  if (!runtime.isAbsolutePath(expanded)) {
+    throw new Error(`${label} must be an absolute local path`);
+  }
+  if (!runtime.pathExists(expanded)) {
+    throw new Error(`Path does not exist: ${expanded}`);
+  }
+  return expanded;
+}
+
 export async function openEditorTarget(
   request: EditorTargetLaunchInput & { editorId: string },
   runtime: EditorTargetRuntime,
   targets: readonly EditorTarget[] = EDITOR_TARGETS,
 ): Promise<void> {
-  // Assistant replies name folders like `~/Downloads/x`; expand them before the absolute-path guard.
   const input = {
     ...request,
-    workspacePath: runtime.expandHomePath(request.workspacePath),
-    filePath: request.filePath === undefined ? undefined : runtime.expandHomePath(request.filePath),
+    workspacePath: resolveLocalPath(request.workspacePath, "Editor target workspace path", runtime),
+    filePath:
+      request.filePath === undefined
+        ? undefined
+        : resolveLocalPath(request.filePath, "Editor target file path", runtime),
   };
-  if (!runtime.isAbsolutePath(input.workspacePath)) {
-    throw new Error("Editor target workspace path must be an absolute local path");
-  }
-  if (!runtime.pathExists(input.workspacePath)) {
-    throw new Error(`Path does not exist: ${input.workspacePath}`);
-  }
-  if (input.filePath) {
-    if (!runtime.isAbsolutePath(input.filePath)) {
-      throw new Error("Editor target file path must be an absolute local path");
-    }
-    if (!runtime.pathExists(input.filePath)) {
-      throw new Error(`Path does not exist: ${input.filePath}`);
-    }
-  }
 
   const target = getEditorTarget(input.editorId, targets);
   if (!(await target.isInstalled(runtime))) {
@@ -128,4 +128,9 @@ export async function openEditorTarget(
     throw new Error(`Editor target unavailable: ${descriptor.label}`);
   }
   await target.launch(input, runtime);
+}
+
+/** Opens a file with whatever application the operating system associates with it. */
+export async function openInDefaultApp(path: string, runtime: EditorTargetRuntime): Promise<void> {
+  await runtime.openPath(resolveLocalPath(path, "Default app path", runtime));
 }

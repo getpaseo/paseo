@@ -586,6 +586,7 @@ test.describe("registry fixture layout", () => {
     ] as const) {
       await page.setViewportSize({ width, height: 720 });
       await page.goto("/plugins/omercnet/dracula");
+      await expectPageWithinViewport(page);
       const three = page.getByRole("link", { name: /^Dracula (screenshot|video) \d$/ });
       const shares = await three.evaluateAll(visibleShares);
       expect(shares.map((share) => (share > 0.1 && share < 0.5 ? "peeks" : share))).toEqual(

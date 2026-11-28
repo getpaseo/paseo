@@ -8,6 +8,7 @@ import {
   type ControlSize,
 } from "@/components/ui/control-geometry";
 import { useContainedControlSize } from "@/components/ui/control-size";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Theme } from "@/styles/theme";
 
 type SegmentedControlIconRenderer = (props: { color: string; size: number }) => ReactNode;
@@ -18,14 +19,18 @@ export interface SegmentedControlOption<T extends string> {
   icon?: SegmentedControlIconRenderer;
   disabled?: boolean;
   testID?: string;
+  /** Shown below the segment while the pointer is over it. */
+  tooltip?: string;
 }
 
 interface SegmentedControlProps<T extends string> {
   options: SegmentedControlOption<T>[];
-  value: T;
+  value: T | null;
   onValueChange: (value: T) => void;
   size?: ControlSize;
   hideLabels?: boolean;
+  /** Share the container's width equally between the segments, for a control that heads a surface. */
+  fill?: boolean;
   style?: StyleProp<ViewStyle>;
   testID?: string;
 }
@@ -51,6 +56,7 @@ export function SegmentedControl<T extends string>({
   onValueChange,
   size: sizeProp,
   hideLabels = false,
+  fill = false,
   style,
   testID,
 }: SegmentedControlProps<T>) {
@@ -82,6 +88,7 @@ export function SegmentedControl<T extends string>({
             isSelected={isSelected}
             iconSize={iconSize}
             hideLabels={hideLabels}
+            fill={fill}
             segmentSizeStyle={segmentSizeStyle}
             labelSizeStyle={labelSizeStyle}
             currentValue={value}
@@ -98,6 +105,7 @@ function SegmentItem<T extends string>({
   isSelected,
   iconSize,
   hideLabels,
+  fill,
   segmentSizeStyle,
   labelSizeStyle,
   currentValue,
@@ -107,9 +115,10 @@ function SegmentItem<T extends string>({
   isSelected: boolean;
   iconSize: number;
   hideLabels: boolean;
+  fill: boolean;
   segmentSizeStyle: StyleProp<ViewStyle>;
   labelSizeStyle: StyleProp<TextStyle>;
-  currentValue: T;
+  currentValue: T | null;
   onValueChange: (value: T) => void;
 }) {
   const labelStyle = useMemo(
@@ -125,18 +134,19 @@ function SegmentItem<T extends string>({
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.segment,
       segmentSizeStyle,
+      fill && styles.segmentFill,
       isSelected && styles.segmentSelected,
       Boolean(hovered) && !isSelected && styles.segmentHover,
       pressed && !isSelected && styles.segmentPressed,
       option.disabled && styles.segmentDisabled,
     ],
-    [isSelected, option.disabled, segmentSizeStyle],
+    [fill, isSelected, option.disabled, segmentSizeStyle],
   );
   const accessibilityState = useMemo(
     () => ({ selected: isSelected, disabled: option.disabled }),
     [isSelected, option.disabled],
   );
-  return (
+  const segment = (
     <Pressable
       accessibilityRole="button"
       accessibilityState={accessibilityState}
@@ -159,6 +169,15 @@ function SegmentItem<T extends string>({
         </Text>
       )}
     </Pressable>
+  );
+  if (!option.tooltip) return segment;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{segment}</TooltipTrigger>
+      <TooltipContent side="bottom" offset={8}>
+        <Text style={styles.tooltipText}>{option.tooltip}</Text>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -191,6 +210,12 @@ const styles = StyleSheet.create((theme) => {
     segmentMd: {
       ...geometry.segmentedSegmentMd,
     },
+    segmentFill: {
+      flexGrow: 1,
+      flexBasis: 0,
+      flexShrink: 1,
+      minWidth: 0,
+    },
     segmentSelected: {
       backgroundColor: theme.colors.surface3,
     },
@@ -219,6 +244,10 @@ const styles = StyleSheet.create((theme) => {
     },
     labelSelected: {
       color: theme.colors.foreground,
+    },
+    tooltipText: {
+      fontSize: theme.fontSize.base,
+      color: theme.colors.popoverForeground,
     },
   };
 });

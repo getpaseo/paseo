@@ -5,7 +5,7 @@ const baseURL = process.env.WEBSITE_TEST_URL ?? "http://127.0.0.1:8187";
 
 export default defineConfig({
   testDir: "./e2e",
-  workers: 1,
+  workers: process.env.CI ? 4 : 1,
   use: { baseURL, screenshot: "only-on-failure", trace: "retain-on-failure" },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
@@ -31,6 +31,7 @@ export default defineConfig({
             ),
             CLOUDFLARE_INCLUDE_PROCESS_ENV: "true",
             PLUGINS_REGISTRY_URL: "http://127.0.0.1:8188",
+            VITE_HUB_PLANS_URL: "http://127.0.0.1:8188/hub-plans",
           },
         },
       ],

@@ -27,6 +27,7 @@ const NO_SHORTCUT: ShortcutKey[] = [];
 interface CompactHeaderProps {
   /** The leading island: the sidebar menu, or a back button. */
   navigation: "menu" | "back";
+  inDesktopTitlebar?: boolean;
   /** Back button action. Defaults to navigating back. */
   onBack?: () => void;
   title?: string;
@@ -49,6 +50,7 @@ interface CompactHeaderProps {
  */
 export function CompactHeader({
   navigation,
+  inDesktopTitlebar = false,
   onBack,
   title,
   titleTestID,
@@ -58,22 +60,28 @@ export function CompactHeader({
 }: CompactHeaderProps) {
   const insets = useSafeAreaInsets();
   const inTopBand = useTopBand() !== null;
+  const usesTitlebarHeight = inTopBand || inDesktopTitlebar;
   const rootStyle = useMemo(
     () => [
       styles.root,
       {
-        paddingTop: insets.top + (inTopBand ? 0 : HEADER_TOP_PADDING_MOBILE),
+        paddingTop: insets.top + (usesTitlebarHeight ? 0 : HEADER_TOP_PADDING_MOBILE),
         marginLeft: insets.left,
         marginRight: insets.right,
       },
     ],
-    [inTopBand, insets.top, insets.left, insets.right],
+    [usesTitlebarHeight, insets.top, insets.left, insets.right],
   );
 
   return (
     <IconButtonChromeProvider value="header-island">
       <View style={rootStyle}>
-        <View style={inTopBand ? styles.topBandRow : styles.row}>
+        <View
+          style={[
+            usesTitlebarHeight ? styles.titlebarRow : styles.row,
+            inDesktopTitlebar && styles.desktopTitlebarDividerSpace,
+          ]}
+        >
           <View style={styles.island}>
             {navigation === "menu" ? <SidebarMenuToggle /> : <BackButton onBack={onBack} />}
           </View>
@@ -155,11 +163,15 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
-  topBandRow: {
+  titlebarRow: {
     height: HEADER_INNER_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+  },
+  desktopTitlebarDividerSpace: {
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: "transparent",
   },
   titleGroup: {
     flex: 1,

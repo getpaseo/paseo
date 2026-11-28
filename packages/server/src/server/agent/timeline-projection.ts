@@ -1,5 +1,5 @@
 import { continuesTimelineTurn, isTimelineTurnTrigger } from "@getpaseo/protocol/timeline-turn";
-import type { AgentTimelineItem, ToolCallDetail } from "./agent-sdk-types.js";
+import type { AgentMetric, AgentTimelineItem, ToolCallDetail } from "./agent-sdk-types.js";
 import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
 
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
@@ -22,6 +22,7 @@ export interface TimelineProjectionEntry {
   item: AgentTimelineItem;
   turnId?: string;
   providerMessageId?: string;
+  turnMetrics?: AgentMetric[];
   timestamp: string;
   seqStart: number;
   seqEnd: number;
@@ -125,6 +126,7 @@ function makeCanonicalEntries(rows: readonly AgentTimelineRow[]): WorkingEntry[]
       timestamp: row.timestamp,
       ...(row.turnId ? { turnId: row.turnId } : {}),
       ...(row.providerMessageId ? { providerMessageId: row.providerMessageId } : {}),
+      ...(row.turnMetrics ? { turnMetrics: row.turnMetrics } : {}),
       seqStart: row.seq,
       seqEnd: row.seq,
       sourceSeqRanges: [{ startSeq: row.seq, endSeq: row.seq }],
@@ -155,6 +157,7 @@ function mergeIdentityEntries(existing: WorkingEntry, entry: WorkingEntry): Work
         item: mergeToolCallItems(existing.item, entry.item),
         timestamp: entry.timestamp,
         seqEnd: Math.max(existing.seqEnd, entry.seqEnd),
+        ...(entry.turnMetrics ? { turnMetrics: entry.turnMetrics } : {}),
         ...mergeIdentityMetadata(existing, entry, "tool_lifecycle"),
       };
     case "plugin":
@@ -258,44 +261,69 @@ export function continuesAssistantMessage(
   );
 }
 
+/**
+ * The index of the row in `rows` that `entry` continues, or null when `entry` starts a new
+ * row. A chunk continues the assistant message right before it. A chunk that carries a
+ * provider message id also continues its message across user rows recorded mid-stream, as
+ * a steer is. Any other row in between, such as a tool call, keeps the provider's order.
+ */
+function assistantContinuationIndex(
+  rows: readonly WorkingEntry[],
+  entry: WorkingEntry,
+): number | null {
+  if (entry.item.type !== "assistant_message") return null;
+  let index = rows.length - 1;
+  let coveredThrough = rows[index]?.seqEnd ?? Number.NEGATIVE_INFINITY;
+  while (index >= 0 && rows[index].item.type === "user_message") {
+    index -= 1;
+    coveredThrough = Math.max(coveredThrough, rows[index]?.seqEnd ?? coveredThrough);
+  }
+  const previous = rows[index];
+  if (!previous || !continuesAssistantMessage(previous, entry)) return null;
+  const skipsUserRows = index < rows.length - 1;
+  if (skipsUserRows && entry.item.messageId === undefined) return null;
+  return coveredThrough + 1 === entry.seqStart ? index : null;
+}
+
+function mergeAssistantEntries(previous: WorkingEntry, entry: WorkingEntry): WorkingEntry {
+  const previousAssistant = previous.item as Extract<
+    AgentTimelineItem,
+    { type: "assistant_message" }
+  >;
+  const entryAssistant = entry.item as Extract<AgentTimelineItem, { type: "assistant_message" }>;
+
+  const collapsedKinds = new Set<TimelineProjectionKind>([
+    ...previous.collapsed,
+    ...entry.collapsed,
+    "assistant_merge",
+  ]);
+
+  return {
+    ...previous,
+    item: {
+      type: "assistant_message",
+      text: `${previousAssistant.text}${entryAssistant.text}`,
+      ...(previousAssistant.messageId ? { messageId: previousAssistant.messageId } : {}),
+    },
+    timestamp: entry.timestamp,
+    seqEnd: Math.max(previous.seqEnd, entry.seqEnd),
+    sourceSeqRanges: mergeSeqRanges(previous.sourceSeqRanges, entry.sourceSeqRanges),
+    collapsed: Array.from(collapsedKinds),
+    // The turn's stats ride on its last row, which is the later chunk of a merged message.
+    ...(entry.turnMetrics ? { turnMetrics: entry.turnMetrics } : {}),
+  };
+}
+
 function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] {
   const output: WorkingEntry[] = [];
 
   for (const entry of entries) {
-    const previous = output[output.length - 1];
-    const shouldMerge =
-      previous &&
-      previous.seqEnd + 1 === entry.seqStart &&
-      continuesAssistantMessage(previous, entry);
-
-    if (!shouldMerge || !previous) {
+    const index = assistantContinuationIndex(output, entry);
+    if (index === null) {
       output.push(entry);
       continue;
     }
-    const previousAssistant = previous.item as Extract<
-      AgentTimelineItem,
-      { type: "assistant_message" }
-    >;
-    const entryAssistant = entry.item as Extract<AgentTimelineItem, { type: "assistant_message" }>;
-
-    const collapsedKinds = new Set<TimelineProjectionKind>([
-      ...previous.collapsed,
-      ...entry.collapsed,
-      "assistant_merge",
-    ]);
-
-    output[output.length - 1] = {
-      ...previous,
-      item: {
-        type: "assistant_message",
-        text: `${previousAssistant.text}${entryAssistant.text}`,
-        ...(previousAssistant.messageId ? { messageId: previousAssistant.messageId } : {}),
-      },
-      timestamp: entry.timestamp,
-      seqEnd: entry.seqEnd,
-      sourceSeqRanges: mergeSeqRanges(previous.sourceSeqRanges, entry.sourceSeqRanges),
-      collapsed: Array.from(collapsedKinds),
-    };
+    output[index] = mergeAssistantEntries(output[index], entry);
   }
 
   return output;
@@ -353,10 +381,15 @@ export class TimelineProjection {
       this.extendSpan(index);
       return index;
     }
+    const continued = assistantContinuationIndex(this.rows, entry);
+    if (continued !== null) {
+      const mergedText = mergeAssistantEntries(this.rows[continued], entry);
+      this.rows[continued] = { ...mergedText, seq: mergedText.seqEnd };
+      this.extendSpan(continued);
+      return continued;
+    }
     const previous = this.rows.at(-1);
-    const adjacent = previous
-      ? mergeReasoningChunks(mergeAssistantChunks([previous, entry]))
-      : [entry];
+    const adjacent = previous ? mergeReasoningChunks([previous, entry]) : [entry];
     if (previous && adjacent.length === 1) {
       const mergedText = adjacent[0];
       this.rows[this.rows.length - 1] = { ...mergedText, seq: mergedText.seqEnd };
@@ -545,6 +578,40 @@ export class TimelineProjection {
     if (index < 0) return null;
     this.rows[index] = { ...this.rows[index], providerMessageId };
     return { ...this.rows[index] };
+  }
+
+  /**
+   * Puts a completed turn's metrics on the row the app hangs that turn's footer on.
+   * Returns null when the turn has no such row.
+   */
+  stampTurnMetrics(metrics: AgentMetric[], turnId?: string): ProjectedTimelineRow | null {
+    const index = this.turnFooterRowIndex(turnId);
+    if (index === null) return null;
+    this.rows[index] = { ...this.rows[index], turnMetrics: metrics };
+    return { ...this.rows[index] };
+  }
+
+  // Mirrors the app's footer anchor: the turn's last assistant message, else its
+  // last row when that row is a tool call.
+  private turnFooterRowIndex(turnId: string | undefined): number | null {
+    const last = this.lastRowIndexOfTurn(turnId);
+    if (last === null) return null;
+    for (let index = last; index >= 0; index--) {
+      if (index < last && !continuesProjectedTurn(this.rows[index], this.rows[index + 1])) break;
+      if (this.rows[index].item.type === "assistant_message") return index;
+    }
+    return this.rows[last].item.type === "tool_call" ? last : null;
+  }
+
+  private lastRowIndexOfTurn(turnId: string | undefined): number | null {
+    const tail = this.rows.length - 1;
+    if (tail < 0) return null;
+    if (turnId === undefined) return tail;
+    const index = this.rows.findLastIndex((row) => row.turnId === turnId);
+    if (index >= 0) return index;
+    // Rows replayed from provider history carry no turn id, so the turn is the
+    // trailing one. A tail owned by another turn means this turn wrote no rows.
+    return this.rows[tail].turnId === undefined ? tail : null;
   }
 }
 

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -54,6 +54,19 @@ afterEach(async () => {
 });
 
 describe("copyWorktreeIncludes", () => {
+  it("does not run a command the source repository configures as its fsmonitor", async () => {
+    const marker = join(root, "fsmonitor.marker");
+    const hook = join(root, "fsmonitor-hook.sh");
+    await writeFile(hook, `#!/bin/sh\n: > '${marker}'\nprintf '1\\n'\n`);
+    await chmod(hook, 0o755);
+    await writeSource({ ".gitignore": ".env\n", ".worktreeinclude": ".env\n", ".env": "A=1" });
+    execFileSync("git", ["add", ".gitignore", ".worktreeinclude"], { cwd: source });
+    execFileSync("git", ["config", "core.fsmonitor", hook], { cwd: source });
+
+    expect(await copied()).toEqual([".env"]);
+    expect(existsSync(marker)).toBe(false);
+  });
+
   it("does not search inside an ignored directory that no pattern names", async () => {
     await writeSource({
       ".gitignore": "node_modules/\n.env\n",

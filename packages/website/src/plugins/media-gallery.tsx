@@ -13,6 +13,7 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { MOBILE_PAGE_BLEED_CLASS } from "~/components/page-frame";
 
 const TILE_CLASS =
   "relative block aspect-video w-[85%] flex-shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/[0.03] sm:w-[60%]";
@@ -80,7 +81,9 @@ export function MediaGallery({ name, media }: { name: string; media: string[] })
   const tileClass = items.length > 2 ? PEEKING_TILE_CLASS : FILLING_TILE_CLASS;
   return (
     <>
-      <div className="-mx-6 mt-10 flex gap-3 overflow-x-auto px-6 md:mx-0 md:px-0">
+      <div
+        className={`${MOBILE_PAGE_BLEED_CLASS} mt-10 flex gap-3 overflow-x-auto sm:-mx-8 sm:px-8 md:mx-0 md:px-0`}
+      >
         {entries.map((entry) =>
           typeof entry === "string" ? (
             <p key={entry}>{entry}</p>

@@ -2,6 +2,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { deriveAgentStateBucket } from "@getpaseo/protocol/agent-state-bucket";
 import { AgentManager } from "../agent/agent-manager.js";
 import { AgentStorage } from "../agent/agent-storage.js";
 import { createAgentCommand } from "../agent/create-agent/create.js";
@@ -39,7 +40,11 @@ import {
 } from "./service.js";
 import { ScheduleStore } from "./store.js";
 import { ForegroundPromptStart } from "../agent/agent-run-state.js";
-import type { ScheduleExecutionResult, StoredSchedule } from "@getpaseo/protocol/schedule/types";
+import type {
+  CreateScheduleInput,
+  ScheduleExecutionResult,
+  StoredSchedule,
+} from "@getpaseo/protocol/schedule/types";
 
 interface ScheduleServiceInternals {
   executeSchedule(schedule: StoredSchedule, runId: string): Promise<ScheduleExecutionResult>;
@@ -170,6 +175,8 @@ function createScheduleService(options: TestScheduleServiceOptions): ScheduleSer
           markWorkspaceArchiving: () => {},
           clearWorkspaceArchiving: () => {},
           killTerminalsForWorkspace: async () => {},
+          assertWorkspaceAutomationAllowed: async () => {},
+          isCheckoutUntrusted: async () => false,
           sessionLogger: options.logger,
         },
         {
@@ -275,6 +282,8 @@ async function createRegistryBackedScheduleWorkspaceDeps(rootDir: string): Promi
               markWorkspaceArchiving: () => {},
               clearWorkspaceArchiving: () => {},
               killTerminalsForWorkspace: async () => {},
+              assertWorkspaceAutomationAllowed: async () => {},
+              isCheckoutUntrusted: async () => false,
               sessionLogger: logger,
             },
             {
@@ -649,7 +658,7 @@ describe("ScheduleService", () => {
     expect(resumed.nextRunAt).toBe("2026-01-01T00:04:00.000Z");
   });
 
-  test("shows an active heartbeat and stops it through agent background work", async () => {
+  test("lists and stops an active heartbeat while the agent is idle", async () => {
     const logger = createTestLogger();
     const manager = new AgentManager({
       logger,
@@ -674,6 +683,12 @@ describe("ScheduleService", () => {
     } as const;
     const created = await service.create(input);
 
+    expect(
+      deriveAgentStateBucket({
+        status: "idle",
+        backgroundWork: manager.getAgentBackgroundWorkSummary(agent.id),
+      }),
+    ).toBe("done");
     const items = manager.listAgentBackgroundWork(agent.id);
     expect(items).toEqual([
       expect.objectContaining({
@@ -3834,6 +3849,103 @@ describe("ScheduleService", () => {
 
     expect(second.id).toBe(first.id);
     expect(await service.list()).toHaveLength(1);
+  });
+
+  test("createOrReplace refreshes archive on finish without duplicating the schedule", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+    const createNightly = (archiveOnFinish?: boolean) =>
+      service.createOrReplace({
+        name: "nightly",
+        prompt: "audit",
+        cadence: { type: "every", everyMs: 60_000 },
+        target: {
+          type: "new-agent",
+          config: {
+            provider: "claude",
+            cwd: tempDir,
+            ...(archiveOnFinish === undefined ? {} : { archiveOnFinish }),
+          },
+        },
+      });
+
+    const omitted = await createNightly();
+    const archived = await createNightly(true);
+    const kept = await createNightly(false);
+
+    expect([archived.id, kept.id]).toEqual([omitted.id, omitted.id]);
+    const schedules = await service.list();
+    expect(schedules).toHaveLength(1);
+    expect(schedules[0]?.target).toMatchObject({ config: { archiveOnFinish: false } });
+  });
+
+  test("createOrReplace keeps a saved archive on finish when the repeated create omits it", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+    const nightly = {
+      name: "nightly",
+      prompt: "audit",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    } satisfies CreateScheduleInput;
+
+    const created = await service.createOrReplace(nightly);
+    await service.update({ id: created.id, newAgentConfig: { archiveOnFinish: false } });
+    const repeated = await service.createOrReplace(nightly);
+
+    expect(repeated.id).toBe(created.id);
+    expect(repeated.target).toMatchObject({ config: { archiveOnFinish: false } });
+  });
+
+  test("createOrReplace prefers the schedule whose archive on finish matches exactly", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+    const nightly = (archiveOnFinish?: boolean) =>
+      ({
+        name: "nightly",
+        prompt: "audit",
+        cadence: { type: "every", everyMs: 60_000 },
+        target: {
+          type: "new-agent",
+          config: {
+            provider: "claude",
+            cwd: tempDir,
+            ...(archiveOnFinish === undefined ? {} : { archiveOnFinish }),
+          },
+        },
+      }) satisfies CreateScheduleInput;
+
+    // Hosts can already hold same-named schedules that differ only in this
+    // option, because plain create does not deduplicate by name.
+    const kept = await service.create(nightly(false));
+    const archived = await service.create(nightly(true));
+    const omitted = await service.create(nightly());
+
+    expect((await service.createOrReplace(nightly())).id).toBe(omitted.id);
+    expect((await service.createOrReplace(nightly(true))).id).toBe(archived.id);
+    expect((await service.createOrReplace(nightly(false))).id).toBe(kept.id);
+    expect(await service.list()).toHaveLength(3);
   });
 
   test("completeForAgent skips schedules that are already completed", async () => {

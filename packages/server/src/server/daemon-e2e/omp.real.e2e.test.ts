@@ -1,10 +1,13 @@
 import { execFile } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type IncomingMessage, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
 import pino from "pino";
+import semver from "semver";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
@@ -53,7 +56,10 @@ async function preflight(): Promise<void> {
 
 // OMP exits at startup when no model is usable at all, so the home offers one offline
 // model, and an agent on any other provider's model has no credentials.
-function createOfflineOmpHome(): string {
+function createOfflineOmpHome(
+  options: { baseUrl?: string; askTimeoutSeconds?: number } = {},
+): string {
+  const baseUrl = options.baseUrl ?? "http://127.0.0.1:9/v1";
   const home = mkdtempSync(path.join(tmpdir(), "paseo-real-omp-offline-"));
   roots.add(home);
   const agentDir = path.join(home, ".omp", "agent");
@@ -63,7 +69,7 @@ function createOfflineOmpHome(): string {
     [
       "providers:",
       "  offline:",
-      "    baseUrl: http://127.0.0.1:9/v1",
+      `    baseUrl: ${baseUrl}`,
       "    api: openai-completions",
       "    auth: none",
       "    models:",
@@ -78,6 +84,12 @@ function createOfflineOmpHome(): string {
       "",
     ].join("\n"),
   );
+  if (options.askTimeoutSeconds !== undefined) {
+    writeFileSync(
+      path.join(agentDir, "config.yml"),
+      `ask:\n  timeout: ${options.askTimeoutSeconds}\n`,
+    );
+  }
   return home;
 }
 
@@ -113,6 +125,110 @@ async function createHarness(options: { ompHome?: string } = {}): Promise<Harnes
     subscribe: {},
   });
   return { daemon, client, cwd, paseoHomeRoot, staticDir };
+}
+
+async function installedOmpVersion(): Promise<string | null> {
+  const command = process.env.OMP_COMMAND?.trim() || "omp";
+  const { stdout } = await execFileAsync(command, ["--version"], { timeout: 10_000 });
+  return semver.coerce(stdout)?.version ?? null;
+}
+
+interface ScriptedModel {
+  baseUrl: string;
+  close(): Promise<void>;
+}
+
+async function readBody(request: IncomingMessage): Promise<string> {
+  let body = "";
+  for await (const chunk of request) body += String(chunk);
+  return body;
+}
+
+function sseChunk(delta: Record<string, unknown>, finishReason: string | null): string {
+  const chunk = {
+    id: "chatcmpl-scripted",
+    object: "chat.completion.chunk",
+    created: 0,
+    model: "offline-1",
+    choices: [{ index: 0, delta, finish_reason: finishReason }],
+  };
+  return `data: ${JSON.stringify(chunk)}\n\n`;
+}
+
+/**
+ * An OpenAI-compatible model that calls OMP's `ask` tool once with `html`, then
+ * replies with the tool's result so the test can read what OMP received.
+ */
+async function startScriptedAskModel(html: string): Promise<ScriptedModel> {
+  const server: Server = createServer((request, response) => {
+    void readBody(request).then((body) => {
+      const payload = JSON.parse(body || "{}") as {
+        tools?: Array<{ function?: { name?: string } }>;
+        messages?: Array<{ role?: string; content?: unknown }>;
+      };
+      const toolMessage = payload.messages?.find((message) => message.role === "tool");
+      const offersAsk = payload.tools?.some((tool) => tool.function?.name === "ask") ?? false;
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      if (!toolMessage && offersAsk) {
+        response.write(
+          sseChunk(
+            {
+              role: "assistant",
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "call_ask_1",
+                  type: "function",
+                  function: { name: "ask", arguments: JSON.stringify({ html }) },
+                },
+              ],
+            },
+            null,
+          ),
+        );
+        response.write(sseChunk({}, "tool_calls"));
+      } else {
+        const result = toolMessage ? JSON.stringify(toolMessage.content) : "ok";
+        response.write(sseChunk({ role: "assistant", content: `ASK_RESULT ${result}` }, null));
+        response.write(sseChunk({}, "stop"));
+      }
+      response.end("data: [DONE]\n\n");
+      return undefined;
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    baseUrl: `http://127.0.0.1:${port}/v1`,
+    close: () => new Promise((resolve) => server.close(() => resolve())),
+  };
+}
+
+const COLOR_FORM =
+  '<form><fieldset><legend>Which color do you prefer?</legend><label><input type="radio" name="color" value="Red" checked> Red</label><label><input type="radio" name="color" value="Blue"> Blue</label></fieldset><label>Why? <input name="why"></label></form>';
+
+async function skipUnlessOmpSendsForms(context: { skip: (note?: string) => void }): Promise<void> {
+  const version = await installedOmpVersion();
+  if (!version || semver.lt(version, "19.1.0")) {
+    context.skip(`OMP ${version ?? "unknown"} sends field-by-field ask requests, not forms`);
+  }
+}
+
+async function askWithForm(harness: Harness) {
+  const agent = await harness.client.createAgent({
+    cwd: harness.cwd,
+    title: "html-ask-form",
+    provider: "omp",
+    model: "offline/offline-1",
+    modeId: "full",
+  });
+  await harness.client.sendMessage(agent.id, "Ask me which color I prefer.");
+  const pending = await harness.client.waitForAgentUpsert(
+    agent.id,
+    (snapshot) => snapshot.pendingPermissions.length > 0,
+    60_000,
+  );
+  return { agentId: agent.id, permission: pending.pendingPermissions[0] };
 }
 
 async function closeHarness(harness: Harness): Promise<void> {
@@ -425,6 +541,72 @@ describe("daemon E2E (real OMP)", () => {
         );
       } finally {
         await closeHarness(harness);
+      }
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
+    "an OMP 19.1+ HTML ask form is answered from the question card",
+    async (context) => {
+      await skipUnlessOmpSendsForms(context);
+      const model = await startScriptedAskModel(COLOR_FORM);
+      const harness = await createHarness({
+        ompHome: createOfflineOmpHome({ baseUrl: model.baseUrl }),
+      });
+      try {
+        const { agentId, permission } = await askWithForm(harness);
+        expect(permission).toMatchObject({
+          kind: "question",
+          input: {
+            questions: [
+              {
+                question: "Which color do you prefer?",
+                header: "color",
+                options: [{ label: "Red", description: "Default" }, { label: "Blue" }],
+              },
+              { question: "Why?", header: "why", options: [] },
+            ],
+          },
+        });
+        await harness.client.respondToPermission(agentId, permission.id, {
+          behavior: "allow",
+          updatedInput: { answers: { color: "Blue", why: "calmer" } },
+        });
+        expect((await harness.client.waitForFinish(agentId, 60_000)).status).toBe("idle");
+        const reply = await readAssistantText(harness, agentId);
+        expect(reply).toContain("ASK_RESULT");
+        expect(reply).toContain("Blue");
+        expect(reply).toContain("calmer");
+      } finally {
+        await closeHarness(harness);
+        await model.close();
+      }
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
+    "an OMP 19.1+ HTML ask that times out in OMP closes its question card",
+    async (context) => {
+      await skipUnlessOmpSendsForms(context);
+      const model = await startScriptedAskModel(COLOR_FORM);
+      const harness = await createHarness({
+        ompHome: createOfflineOmpHome({ baseUrl: model.baseUrl, askTimeoutSeconds: 2 }),
+      });
+      try {
+        const { agentId } = await askWithForm(harness);
+        // OMP submits the preselected answers itself and sends `cancel` for the open dialog.
+        const settled = await harness.client.waitForAgentUpsert(
+          agentId,
+          (snapshot) => snapshot.status === "idle" && snapshot.pendingPermissions.length === 0,
+          60_000,
+        );
+        expect(settled.pendingPermissions).toEqual([]);
+        expect(await readAssistantText(harness, agentId)).toContain("Red");
+      } finally {
+        await closeHarness(harness);
+        await model.close();
       }
     },
     TIMEOUT_MS,

@@ -53,6 +53,35 @@ describe("plugin timeline projection", () => {
     },
   );
 
+  it("passes tool-call metadata to timeline transformers", () => {
+    const source: StreamItem = {
+      kind: "tool_call",
+      id: "tool-intent",
+      timestamp: new Date(0),
+      payload: {
+        source: "agent",
+        data: {
+          provider: "omp",
+          callId: "call-1",
+          name: "bash",
+          status: "running",
+          error: null,
+          detail: { type: "unknown", input: null, output: null },
+          metadata: { intent: "Inspect files" },
+        },
+      },
+    };
+    const seen: unknown[] = [];
+    const transform: TimelineItemTransform = ({ item }) => {
+      if (item.type === "tool_call") seen.push(item.metadata?.intent);
+      return undefined;
+    };
+
+    projectPluginTimelineItems([source], transform);
+
+    expect(seen).toEqual(["Inspect files"]);
+  });
+
   it("does not expose mutable tool detail from stream state", () => {
     const detail = { type: "read" as const, filePath: "/repo/original.ts" };
     const source: StreamItem = {
@@ -98,8 +127,7 @@ describe("plugin timeline projection", () => {
       {
         kind: "plugin",
         id: "inline-thinking/thought-1/0",
-        sourceId: "thought-1",
-        sourceKind: "thought",
+        source: { kind: "thought", id: "thought-1" },
         data: { text: "First", phase: "streaming" },
       },
     ]);
@@ -191,5 +219,55 @@ describe("plugin timeline projection", () => {
       "split/thought-1/right",
     ]);
     expect(filtered).toEqual([]);
+  });
+
+  it("keeps the replaced reply on every card it was split into", () => {
+    const source: StreamItem = {
+      kind: "assistant_message",
+      id: "assistant-1",
+      messageId: "provider-msg-1",
+      timelineCursor: { epoch: "e1", seq: 7 },
+      turnId: "turn-1",
+      text: 'Summary\n\n```ui\nCard("Hi", [])\n```',
+      timestamp: new Date("2026-01-01T00:00:02.000Z"),
+    };
+    const split: TimelineItemTransform = ({ sourceId }) => [
+      {
+        type: "plugin",
+        id: `${sourceId}/text`,
+        pluginId: "genui",
+        kind: "genui-text",
+        version: 1,
+        data: { part: "text" },
+      },
+      {
+        type: "plugin",
+        id: `${sourceId}/card`,
+        pluginId: "genui",
+        kind: "genui-block",
+        version: 1,
+        data: { part: "card" },
+      },
+    ];
+    const projected = projectPluginTimelineItems([source], split);
+
+    expect(projected).toMatchObject([
+      {
+        kind: "plugin",
+        id: "genui/assistant-1/text",
+        timelineCursor: { epoch: "e1", seq: 7 },
+        turnId: "turn-1",
+      },
+      {
+        kind: "plugin",
+        id: "genui/assistant-1/card",
+        timelineCursor: { epoch: "e1", seq: 7 },
+        turnId: "turn-1",
+      },
+    ]);
+    expect(projected.map((item) => item.kind === "plugin" && item.source)).toEqual([
+      source,
+      source,
+    ]);
   });
 });

@@ -1,6 +1,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 import {
   isWorkspaceArchiveUndoPending,
+  isWorkspaceArchiveUndoRestoringAgent,
   subscribeWorkspaceArchiveIntents,
 } from "@/contexts/session-workspace-upserts";
 
@@ -16,6 +17,23 @@ export function useWorkspaceArchiveUndoRunning(input: {
   const read = useCallback(
     () => isWorkspaceArchiveUndoPending({ serverId, workspaceId }),
     [serverId, workspaceId],
+  );
+  return useSyncExternalStore(subscribeWorkspaceArchiveIntents, read, read);
+}
+
+/**
+ * True while this client's undo of the workspace's archive is pending and `agentId` was active
+ * in that workspace when archived (excluding agents that were already archived individually).
+ */
+export function useWorkspaceArchiveUndoRestoringAgent(input: {
+  serverId: string;
+  workspaceId: string | null;
+  agentId: string | null;
+}): boolean {
+  const { serverId, workspaceId, agentId } = input;
+  const read = useCallback(
+    () => isWorkspaceArchiveUndoRestoringAgent({ serverId, workspaceId, agentId }),
+    [agentId, serverId, workspaceId],
   );
   return useSyncExternalStore(subscribeWorkspaceArchiveIntents, read, read);
 }

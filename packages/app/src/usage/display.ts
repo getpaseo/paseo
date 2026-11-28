@@ -3,7 +3,7 @@ import { useAppSettings } from "@/hooks/use-settings";
 import {
   arrangeUsageCards,
   arrangeUsageReports,
-  isUsageCardOff,
+  isUsageCardOn,
   isUsagePinned,
   setUsageCardOn,
   setUsageDisplayAs,
@@ -25,7 +25,7 @@ export interface UsageDisplay {
   arrange: (reports: readonly UsageReportEntry[]) => UsageReportEntry[];
   /** Saves the order of the shown cards after the user drops one. */
   arrangeCards: (drop: UsageCardDrop) => void;
-  isCardOn: (reportId: string) => boolean;
+  isCardOn: (entry: Pick<UsageReportEntry, "id" | "defaultEnabled">) => boolean;
   setCardOn: (reportId: string, on: boolean) => void;
 }
 
@@ -72,7 +72,7 @@ export function useUsageDisplay(reports: readonly UsageReportEntry[]): UsagePref
       togglePin,
       arrange: (shown) => arrangeUsageReports(shown, preferences),
       arrangeCards,
-      isCardOn: (reportId) => !isUsageCardOff(preferences, reportId),
+      isCardOn: (entry) => isUsageCardOn(preferences, entry),
       setCardOn,
     }),
     [arrangeCards, preferences, reports, setCardOn, setDisplayAs, togglePin],

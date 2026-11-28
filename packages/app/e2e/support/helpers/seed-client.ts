@@ -32,6 +32,12 @@ export interface SeedDaemonClient {
     config: import("@getpaseo/protocol/messages").MutableDaemonConfigPatch,
   ): Promise<{ config: import("@getpaseo/protocol/messages").MutableDaemonConfig }>;
   getDaemonConfig(): Promise<{ config: import("@getpaseo/protocol/messages").MutableDaemonConfig }>;
+  installDirectoryPlugin(
+    directoryPath: string,
+    id?: string,
+  ): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
+  removePlugin(pluginId: string): Promise<void>;
+  invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
   connect(): Promise<void>;
   close(): Promise<void>;
   addProject(cwd: string): Promise<{

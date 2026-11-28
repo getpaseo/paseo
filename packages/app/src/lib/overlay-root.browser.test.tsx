@@ -1,6 +1,6 @@
 import { useGlobalOverlayLayer } from "./overlay-root";
 import { useOverlayRegistration } from "@/keyboard";
-import React, { type RefCallback } from "react";
+import React, { useCallback, useEffect, useRef, type RefCallback } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -22,6 +22,129 @@ function OverlayHarness({ active, showScope }: { active: boolean; showScope: boo
       <input data-testid="overlay-input" />
     </div>
   ) : null;
+}
+
+function InnerOverlay({
+  active,
+  restoreFocusRef,
+}: {
+  active: boolean;
+  restoreFocusRef?: React.RefObject<unknown>;
+}) {
+  const setScope = useOverlayRegistration({
+    keys: ["Escape"],
+    active,
+    layer: 20,
+    onKeyDown: () => false,
+    restoreFocusRef,
+  });
+  return active ? (
+    <div ref={setScope as RefCallback<HTMLDivElement>} tabIndex={-1}>
+      <input data-testid="overlay-search" />
+    </div>
+  ) : null;
+}
+
+function TextareaOverlayHarness({
+  open,
+  mountOverlay = true,
+  useExplicitRestoreRef,
+  events,
+  selections,
+}: {
+  open: boolean;
+  mountOverlay?: boolean;
+  useExplicitRestoreRef: boolean;
+  events: string[];
+  selections: number[];
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const focusHandleRef = useRef<{ focus: () => void }>({
+    focus: () => textareaRef.current?.focus(),
+  });
+  const handleFocus = useCallback(() => {
+    events.push("focus");
+  }, [events]);
+  const handleBlur = useCallback(() => {
+    events.push("blur");
+  }, [events]);
+  const handleSelect = useCallback(
+    (event: React.SyntheticEvent<HTMLTextAreaElement>) => {
+      selections.push(event.currentTarget.selectionStart);
+    },
+    [selections],
+  );
+  return (
+    <div>
+      <textarea
+        ref={textareaRef}
+        data-testid="restored-textarea"
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        onSelect={handleSelect}
+      />
+      {mountOverlay ? (
+        <InnerOverlay
+          active={open}
+          restoreFocusRef={useExplicitRestoreRef ? focusHandleRef : undefined}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function AutofocusReplacementHarness({
+  open,
+  showInlineInput,
+  blurs,
+}: {
+  open: boolean;
+  showInlineInput: boolean;
+  blurs: string[];
+}) {
+  const handleBlur = useCallback(() => {
+    blurs.push("blur");
+  }, [blurs]);
+  return (
+    <div>
+      <InnerOverlay active={open} />
+      {showInlineInput ? (
+        <input autoFocus data-testid="inline-autofocus-input" onBlur={handleBlur} />
+      ) : null}
+    </div>
+  );
+}
+
+function PassiveFocusOrderHarness({
+  open,
+  openedAfterClose,
+}: {
+  open: boolean;
+  openedAfterClose: string[];
+}) {
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const onFocusIn = (event: FocusEvent) => {
+      if (!open && trigger.contains(event.target as Node)) {
+        openedAfterClose.push("focusin-while-enabled");
+      }
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => {
+      document.removeEventListener("focusin", onFocusIn);
+    };
+  }, [open, openedAfterClose]);
+
+  return (
+    <div>
+      <button ref={triggerRef} type="button" data-testid="passive-trigger">
+        Trigger
+      </button>
+      <InnerOverlay active={open} restoreFocusRef={triggerRef} />
+    </div>
+  );
 }
 
 describe("useOverlayRegistration in the browser", () => {
@@ -73,6 +196,192 @@ describe("useOverlayRegistration in the browser", () => {
     await renderHarness(false, false);
 
     expect(openerFocusCalls).toBe(1);
+  });
+
+  it("delivers React onFocus and onSelect after restoring focus to a textarea", async () => {
+    const events: string[] = [];
+    const selections: number[] = [];
+
+    // Case 1: explicit restoreFocusRef handle closing via active: true -> false
+    flushSync(() =>
+      root.render(
+        <TextareaOverlayHarness
+          open={false}
+          useExplicitRestoreRef
+          events={events}
+          selections={selections}
+        />,
+      ),
+    );
+    const textarea = document.querySelector<HTMLTextAreaElement>(
+      '[data-testid="restored-textarea"]',
+    )!;
+    textarea.focus();
+    events.length = 0;
+    selections.length = 0;
+
+    flushSync(() =>
+      root.render(
+        <TextareaOverlayHarness
+          open
+          useExplicitRestoreRef
+          events={events}
+          selections={selections}
+        />,
+      ),
+    );
+    await nextFrame();
+    document.querySelector<HTMLInputElement>('[data-testid="overlay-search"]')?.focus();
+    expect(document.activeElement).not.toBe(textarea);
+
+    flushSync(() =>
+      root.render(
+        <TextareaOverlayHarness
+          open={false}
+          useExplicitRestoreRef
+          events={events}
+          selections={selections}
+        />,
+      ),
+    );
+    await nextFrame();
+    expect(document.activeElement).toBe(textarea);
+    expect(events).toContain("focus");
+
+    textarea.value = "/h";
+    textarea.setSelectionRange(2, 2);
+    textarea.dispatchEvent(new KeyboardEvent("keyup", { key: "h", bubbles: true }));
+    expect(selections).toContain(2);
+
+    // Case 2: captured activeElement closing via unmount while active
+    events.length = 0;
+    selections.length = 0;
+    textarea.value = "";
+    textarea.setSelectionRange(0, 0);
+    flushSync(() =>
+      root.render(
+        <TextareaOverlayHarness
+          open
+          mountOverlay
+          useExplicitRestoreRef={false}
+          events={events}
+          selections={selections}
+        />,
+      ),
+    );
+    await nextFrame();
+    document.querySelector<HTMLInputElement>('[data-testid="overlay-search"]')?.focus();
+    expect(document.activeElement).not.toBe(textarea);
+
+    flushSync(() =>
+      root.render(
+        <TextareaOverlayHarness
+          open
+          mountOverlay={false}
+          useExplicitRestoreRef={false}
+          events={events}
+          selections={selections}
+        />,
+      ),
+    );
+    await nextFrame();
+    expect(document.activeElement).toBe(textarea);
+    expect(events).toContain("focus");
+
+    textarea.value = "/help";
+    textarea.setSelectionRange(5, 5);
+    textarea.dispatchEvent(new KeyboardEvent("keyup", { key: "p", bubbles: true }));
+    expect(selections).toContain(5);
+  });
+
+  it("does not steal focus when another overlay opens in the same commit", async () => {
+    function StackedHarness({ which }: { which: "first" | "second" }) {
+      const firstScope = useOverlayRegistration({
+        keys: ["Escape"],
+        active: which === "first",
+        layer: 20,
+        onKeyDown: () => false,
+      });
+      const secondScope = useOverlayRegistration({
+        keys: ["Escape"],
+        active: which === "second",
+        layer: 30,
+        onKeyDown: () => false,
+      });
+      return (
+        <div>
+          {which === "first" ? (
+            <div ref={firstScope as RefCallback<HTMLDivElement>} tabIndex={-1}>
+              <input data-testid="first-input" />
+            </div>
+          ) : (
+            <div ref={secondScope as RefCallback<HTMLDivElement>} tabIndex={-1}>
+              <input data-testid="second-input" />
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    flushSync(() => root.render(<StackedHarness which="first" />));
+    await nextFrame();
+    document.querySelector<HTMLInputElement>('[data-testid="first-input"]')?.focus();
+
+    flushSync(() => root.render(<StackedHarness which="second" />));
+    const secondInput = document.querySelector<HTMLInputElement>('[data-testid="second-input"]')!;
+    secondInput.focus();
+    await nextFrame();
+
+    expect(document.activeElement).toBe(secondInput);
+  });
+
+  it("does not steal focus from an autofocused input mounted in the same commit", async () => {
+    const blurs: string[] = [];
+
+    flushSync(() =>
+      root.render(<AutofocusReplacementHarness open showInlineInput={false} blurs={blurs} />),
+    );
+    await nextFrame();
+    document.querySelector<HTMLInputElement>('[data-testid="overlay-search"]')?.focus();
+    expect(document.activeElement).not.toBe(opener);
+
+    flushSync(() =>
+      root.render(<AutofocusReplacementHarness open={false} showInlineInput blurs={blurs} />),
+    );
+    await nextFrame();
+
+    const inlineInput = document.querySelector<HTMLInputElement>(
+      '[data-testid="inline-autofocus-input"]',
+    );
+    expect(inlineInput).toBeTruthy();
+    expect(document.activeElement).toBe(inlineInput);
+    expect(blurs).toEqual([]);
+  });
+
+  it("restores focus during layout effects before passive focusin listeners re-enable", async () => {
+    const openedAfterClose: string[] = [];
+
+    flushSync(() =>
+      root.render(<PassiveFocusOrderHarness open={false} openedAfterClose={openedAfterClose} />),
+    );
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="passive-trigger"]')!;
+    trigger.focus();
+    openedAfterClose.length = 0;
+
+    flushSync(() =>
+      root.render(<PassiveFocusOrderHarness open openedAfterClose={openedAfterClose} />),
+    );
+    await nextFrame();
+    document.querySelector<HTMLInputElement>('[data-testid="overlay-search"]')?.focus();
+    expect(document.activeElement).not.toBe(trigger);
+
+    flushSync(() =>
+      root.render(<PassiveFocusOrderHarness open={false} openedAfterClose={openedAfterClose} />),
+    );
+    await nextFrame();
+
+    expect(document.activeElement).toBe(trigger);
+    expect(openedAfterClose).toEqual([]);
   });
 });
 

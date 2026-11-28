@@ -38,16 +38,29 @@ export function usageWindowRowLabel(input: {
   return `${input.pinLabel}, ${summary}`;
 }
 
-/** A user-requested refresh of one report. The previous report stays on screen throughout. */
+/** The outcome of a user-requested usage refresh. */
 export type UsageRefresh = "idle" | "pending" | "failed";
 
 export function resolveUsageRefresh(mutation: {
   isPending: boolean;
-  error: unknown;
+  isError: boolean;
 }): UsageRefresh {
   if (mutation.isPending) return "pending";
-  if (mutation.error) return "failed";
+  if (mutation.isError) return "failed";
   return "idle";
+}
+
+/** Keep quota readings after a failed refresh and attach the outcome to the readings it targeted. */
+export function markUsageRefreshFailure(
+  current: UsageReportEntry[] | undefined,
+  attempted: readonly UsageReportEntry[],
+): UsageReportEntry[] | undefined {
+  const attemptedAt = new Map(attempted.map((entry) => [entry.id, entry.fetchedAt]));
+  return current?.map((entry) =>
+    attemptedAt.get(entry.id) === entry.fetchedAt && !entry.forecastStale
+      ? { ...entry, forecastStale: true }
+      : entry,
+  );
 }
 
 /**
@@ -60,7 +73,9 @@ export function replaceReport(
   refreshed: UsageReportEntry | null,
 ): UsageReportEntry[] {
   if (!refreshed) return reports.filter((report) => report.id !== reportId);
-  return reports.map((report) => (report.id === reportId ? refreshed : report));
+  return reports.map((report) =>
+    report.id === reportId ? laterFetched(report, refreshed) : report,
+  );
 }
 
 /**
@@ -68,7 +83,9 @@ export function replaceReport(
  * started, so a Refresh that lands while it streams is newer than what the request still delivers.
  */
 function laterFetched(shown: UsageReportEntry, arriving: UsageReportEntry): UsageReportEntry {
-  return Date.parse(shown.fetchedAt) > Date.parse(arriving.fetchedAt) ? shown : arriving;
+  const shownAt = Date.parse(shown.fetchedAt);
+  const arrivingAt = Date.parse(arriving.fetchedAt);
+  return shownAt > arrivingAt || (shownAt === arrivingAt && shown.forecastStale) ? shown : arriving;
 }
 
 /**
@@ -117,10 +134,11 @@ export function resolveUsageView(
     isConnected: boolean;
     supportsUsage: boolean;
     query: UsageQueryState | undefined;
+    refreshState?: UsageRefresh;
   },
   t: TFunction = i18n.t,
 ): UsageView {
-  const { hostLabel, isConnected, supportsUsage, query } = input;
+  const { hostLabel, isConnected, supportsUsage, query, refreshState } = input;
   if (!isConnected)
     return {
       kind: "unavailable",
@@ -135,7 +153,12 @@ export function resolveUsageView(
   if (input.enabled === false)
     return { kind: "off", message: t("providerUsage.off", { host: hostLabel }) };
   if (query?.data) {
-    return { kind: "ready", reports: query.data, isRefreshing: query.isFetching };
+    return {
+      kind: "ready",
+      reports: query.data,
+      isRefreshing: query.isFetching || refreshState === "pending",
+      refreshFailed: refreshState === "failed",
+    };
   }
   if (query?.error) {
     return {
@@ -250,7 +273,12 @@ export function resolveUsageReport(entry: UsageReportEntry, t: TFunction) {
     // COMPAT(usageLoginErrors): added in v0.11.0, remove after 2027-04-05 once daemon floor >= v0.11.0.
     else messages.push(usageProblemText(entry.report, t));
   }
+  const forecastAt =
+    snapshot && !snapshot.retained && !entry.forecastStale
+      ? (snapshot.report.observedAt ?? snapshot.successfulAt)
+      : null;
   return {
+    forecastAt,
     windows: snapshot?.report.windows ?? [],
     balances: snapshot?.report.balances ?? [],
     details: snapshot?.report.details ?? [],

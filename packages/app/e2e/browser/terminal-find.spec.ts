@@ -503,6 +503,34 @@ test.describe("terminal history with a finger", () => {
     await expectMouseWheelScrollsHistory(page);
   });
 
+  test("finger scrolling leaves terminal input unfocused until a tap", async ({ page }) => {
+    await openPhoneTerminalHistory(page);
+    await blurTerminalInput(page);
+
+    await expectSingleFingerScroll(page, 24);
+    await expect(input(page)).not.toBeFocused();
+    await expectSingleFingerScroll(page, 1);
+    await expect(input(page)).not.toBeFocused();
+
+    await tapTerminalScreen(page);
+    await expect(input(page)).toBeFocused();
+  });
+
+  test("finger scrolling keeps a floating keyboard's input focused", async ({ page }) => {
+    await openPhoneTerminalHistory(page);
+    await tapTerminalScreen(page);
+    await expect(input(page)).toBeFocused();
+
+    // A floating keyboard leaves the visual viewport unchanged.
+    await expectSingleFingerScroll(page, 24);
+    await expect(input(page)).toBeFocused();
+    await expect(input(page)).toHaveAttribute("virtualkeyboardpolicy", "manual");
+
+    // Android Back also leaves the input focused. A tap restores automatic keyboard opening.
+    await tapTerminalScreen(page);
+    await expect(input(page)).not.toHaveAttribute("virtualkeyboardpolicy");
+  });
+
   for (const mode of ["alternate", "mouse"] as const) {
     test(`preserves finger navigation in ${mode} input mode`, async ({ page }) => {
       await openPhoneInputCapture(page, mode);
@@ -531,6 +559,26 @@ async function openPhoneTerminalHistory(page: Page) {
   });
   await openPhoneTerminal(page);
   await expect.poll(() => getTerminalBufferText(page)).toContain("HISTORY_150");
+  await expect
+    .poll(() => page.evaluate(() => window.__paseoTerminal!.buffer.active.baseY))
+    .toBeGreaterThan(0);
+  await page.evaluate(() => window.__paseoTerminal!.scrollToBottom());
+  await expect.poll(() => viewport(page)).toBeGreaterThan(0);
+}
+
+function terminalScreen(page: Page) {
+  return page.getByTestId("terminal-surface").filter({ visible: true }).locator(".xterm-screen");
+}
+
+async function tapTerminalScreen(page: Page) {
+  const box = await terminalScreen(page).boundingBox();
+  expect(box).not.toBeNull();
+  await page.touchscreen.tap(box!.x + box!.width / 2, box!.y + box!.height / 3);
+}
+
+async function blurTerminalInput(page: Page) {
+  await input(page).evaluate((element) => element.blur());
+  await expect(input(page)).not.toBeFocused();
 }
 
 async function openPhoneInputCapture(page: Page, mode: "alternate" | "mouse") {
@@ -570,6 +618,20 @@ async function openPhoneTerminal(page: Page) {
   await page.getByTestId(`sidebar-workspace-row-${getServerId()}:${harness.workspaceId}`).click();
   await expect(page.getByRole("textbox", { name: "Terminal input" })).toBeVisible();
   await expect(page.getByTestId("terminal-surface").filter({ visible: true })).toBeVisible();
+  // The terminal stays mounted while the sidebar's closing backdrop still intercepts input.
+  await expect
+    .poll(() =>
+      page
+        .getByTestId("terminal-surface")
+        .filter({ visible: true })
+        .evaluate((root) => {
+          const box = root.querySelector(".xterm-screen")!.getBoundingClientRect();
+          return root.contains(
+            document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 3),
+          );
+        }),
+    )
+    .toBe(true);
 }
 
 async function expectMouseWheelScrollsHistory(page: Page) {

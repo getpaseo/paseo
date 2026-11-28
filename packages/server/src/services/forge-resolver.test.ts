@@ -373,4 +373,40 @@ describe("createForgeResolver", () => {
     expect(b).toMatchObject({ forge: "gitlab", host: "git.acme.internal" });
     expect(probeForge).toHaveBeenCalledTimes(1);
   });
+
+  it("resolves cloud and probed hosts directly via resolveHost and shares service instances", async () => {
+    const probeForge = vi.fn(async (host: string) =>
+      host === "git.acme.internal" ? "gitlab" : null,
+    );
+    const created: string[] = [];
+    const disposed: string[] = [];
+    const resolver = createForgeResolver({
+      probeForge,
+      createService: (forge) => {
+        created.push(forge);
+        const base = createForgeService(forge);
+        if (!base) return null;
+        return {
+          ...base,
+          dispose: () => {
+            disposed.push(forge);
+          },
+        };
+      },
+    });
+
+    const cloud = await resolver.resolveHost("GitLab.com.");
+    expect(cloud).toMatchObject({ forge: "gitlab", host: "gitlab.com" });
+    expect(probeForge).not.toHaveBeenCalled();
+
+    const selfHosted = await resolver.resolveHost("GIT.ACME.INTERNAL");
+    expect(selfHosted).toMatchObject({ forge: "gitlab", host: "git.acme.internal" });
+    expect(selfHosted?.service).toBe(cloud?.service);
+    expect(probeForge).toHaveBeenCalledTimes(1);
+    expect(resolver.getService("gitlab")).toBe(cloud?.service);
+    expect(created).toEqual(["gitlab"]);
+
+    resolver.dispose();
+    expect(disposed).toEqual(["gitlab"]);
+  });
 });

@@ -1,6 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
-import { ArrowLeft } from "lucide-react-native";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Image, ScrollView, Text, View } from "react-native";
@@ -14,7 +13,12 @@ import type {
   PluginListingDetail,
 } from "@getpaseo/protocol/plugin-registry";
 import { MarkdownRenderer } from "@/components/markdown/renderer";
-import { SettingsCard, SettingsRow, SettingsSection } from "@/components/settings";
+import {
+  SettingsBackLink,
+  SettingsCard,
+  SettingsRow,
+  SettingsSection,
+} from "@/components/settings";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ExternalLink } from "@/components/ui/external-link";
@@ -428,9 +432,9 @@ export function PluginPage({
   }, [listingId, onBack, serverId, subject.kind]);
 
   const back = compact ? null : (
-    <Button onPress={onBack} variant="ghost" leftIcon={ArrowLeft} style={styles.back}>
-      {t("settings.plugins.screens.backToPlugins")}
-    </Button>
+    <View style={styles.back}>
+      <SettingsBackLink label={t("settings.plugins.screens.backToPlugins")} onPress={onBack} />
+    </View>
   );
   if (loading)
     return (
@@ -542,7 +546,7 @@ function PluginPageBody({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  back: { alignSelf: "flex-start", paddingHorizontal: 0, marginBottom: theme.spacing[4] },
+  back: { marginBottom: theme.spacing[4] },
   header: {
     flexDirection: "row",
     alignItems: "center",

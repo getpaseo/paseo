@@ -13,6 +13,7 @@ import {
   getWorktreeTeardownCommands,
   isServiceScript,
   isPaseoOwnedWorktreeCwd,
+  listGitWorktrees,
   listPaseoWorktrees,
   readPaseoConfig,
   resolveWorktreeRuntimeEnv,
@@ -881,6 +882,100 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(portValue).toBeGreaterThan(0);
     });
 
+    it("runs each setup command behind a plugin's wrap and stops at a refused one", async () => {
+      // The launcher records the argv it was given, marks the environment, then runs the rest.
+      const launcher = join(repoDir, "launcher.sh");
+      writeFileSync(
+        launcher,
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$(dirname "$0")/launch-argv.log"\nshift 2\nexport INSIDE=wrapped\nexec "$@"\n',
+        { mode: 0o755 },
+      );
+      writeFileSync(
+        join(repoDir, "paseo.json"),
+        JSON.stringify({
+          worktree: {
+            setup: [
+              'echo "$HOOK_MARK" > first.log && echo "$INSIDE" > second-part.log',
+              "echo refused > refused.log",
+            ],
+          },
+        }),
+      );
+      const seen: string[] = [];
+      const setup = runWorktreeSetupCommands({
+        worktreePath: repoDir,
+        branchName: "main",
+        runtimeEnv: {
+          PASEO_SOURCE_CHECKOUT_PATH: repoDir,
+          PASEO_ROOT_PATH: repoDir,
+          PASEO_WORKTREE_PATH: repoDir,
+          PASEO_BRANCH_NAME: "main",
+          PASEO_WORKTREE_PORT: "12345",
+        },
+        prepareCommand: async ({ command, env }) => {
+          seen.push(`${command} ${env.PASEO_BRANCH_NAME}`);
+          if (command.startsWith("echo refused")) throw new Error("not in this workspace");
+          return { env: { ...env, HOOK_MARK: "prepared" }, wrap: [launcher, "--profile", "a b"] };
+        },
+      });
+
+      await expect(setup).rejects.toMatchObject({
+        name: "WorktreeSetupError",
+        message:
+          "Worktree setup command refused: echo refused > refused.log\nnot in this workspace",
+        results: [expect.objectContaining({ exitCode: 0 })],
+      });
+      expect(seen).toEqual([
+        'echo "$HOOK_MARK" > first.log && echo "$INSIDE" > second-part.log main',
+        "echo refused > refused.log main",
+      ]);
+      expect(readFileSync(join(repoDir, "launch-argv.log"), "utf8").trim().split("\n")).toEqual([
+        "--profile",
+        "a b",
+        "bash",
+        "-c",
+        'echo "$HOOK_MARK" > first.log && echo "$INSIDE" > second-part.log',
+      ]);
+      expect(readFileSync(join(repoDir, "first.log"), "utf8").trim()).toBe("prepared");
+      // The part after `&&` ran inside the launcher too.
+      expect(readFileSync(join(repoDir, "second-part.log"), "utf8").trim()).toBe("wrapped");
+      expect(existsSync(join(repoDir, "refused.log"))).toBe(false);
+    });
+
+    it("reports a streamed setup command that cannot start as a failed command", async () => {
+      // Node refuses a null byte in an argument before it starts the process, as the SDK refuses a
+      // line break for a Windows cmd.exe launch.
+      writeFileSync(
+        join(repoDir, "paseo.json"),
+        JSON.stringify({ worktree: { setup: "echo a\0b" } }),
+      );
+      const events: string[] = [];
+      const setup = runWorktreeSetupCommands({
+        worktreePath: repoDir,
+        branchName: "main",
+        runtimeEnv: {
+          PASEO_SOURCE_CHECKOUT_PATH: repoDir,
+          PASEO_ROOT_PATH: repoDir,
+          PASEO_WORKTREE_PATH: repoDir,
+          PASEO_BRANCH_NAME: "main",
+          PASEO_WORKTREE_PORT: "12345",
+        },
+        signal: new AbortController().signal,
+        onEvent: (event) => events.push(event.type),
+      });
+
+      await expect(setup).rejects.toMatchObject({
+        name: "WorktreeSetupError",
+        results: [
+          expect.objectContaining({
+            exitCode: null,
+            stderr: expect.stringContaining("null bytes"),
+          }),
+        ],
+      });
+      expect(events).toEqual(["command_started", "output", "command_completed"]);
+    });
+
     it("runs string setup scripts from paseo.json as a single shell command", async () => {
       const paseoConfig = {
         worktree: {
@@ -1693,6 +1788,55 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
 
       const remaining = await listPaseoWorktrees({ cwd: repoDir, paseoHome });
       expect(remaining.map((worktree) => worktree.path)).toEqual([second.worktreePath]);
+    });
+
+    it("lists every git worktree of the repository, not only Paseo's", async () => {
+      const paseoWorktree = await createLegacyWorktreeForTest({
+        branchName: "feature/paseo",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "alpha",
+        paseoHome,
+      });
+      const manualPath = join(tempDir, "manual");
+      execFileSync("git", ["worktree", "add", "-b", "feature/manual", manualPath], {
+        cwd: repoDir,
+      });
+      const detachedPath = join(tempDir, "detached");
+      execFileSync("git", ["worktree", "add", "--detach", detachedPath], { cwd: repoDir });
+      const removedPath = join(tempDir, "removed");
+      execFileSync("git", ["worktree", "add", "-b", "feature/removed", removedPath], {
+        cwd: repoDir,
+      });
+      rmSync(removedPath, { recursive: true, force: true });
+      // Git reports a locked worktree as neither prunable nor gone after its directory is deleted.
+      const lockedRemovedPath = join(tempDir, "locked-removed");
+      execFileSync(
+        "git",
+        ["worktree", "add", "--lock", "-b", "feature/locked", lockedRemovedPath],
+        {
+          cwd: repoDir,
+        },
+      );
+      rmSync(lockedRemovedPath, { recursive: true, force: true });
+
+      const fromProject = await listGitWorktrees({ cwd: repoDir });
+      const fromPaseoWorktree = await listGitWorktrees({ cwd: paseoWorktree.worktreePath });
+
+      const [mainWorktree, ...linkedWorktrees] = fromProject.map(
+        ({ path, branchName, containsCwd }) => ({ path, branchName, containsCwd }),
+      );
+      expect(mainWorktree).toEqual({ path: repoDir, branchName: "main", containsCwd: true });
+      expect(linkedWorktrees.sort((a, b) => a.path.localeCompare(b.path))).toEqual(
+        [
+          { path: paseoWorktree.worktreePath, branchName: "feature/paseo", containsCwd: false },
+          { path: manualPath, branchName: "feature/manual", containsCwd: false },
+          { path: detachedPath, branchName: null, containsCwd: false },
+        ].sort((a, b) => a.path.localeCompare(b.path)),
+      );
+      expect(
+        fromPaseoWorktree.filter((worktree) => worktree.containsCwd).map(({ path }) => path),
+      ).toEqual([paseoWorktree.worktreePath]);
     });
 
     it("deletes a paseo worktree even when given a subdirectory path", async () => {

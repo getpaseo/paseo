@@ -24,6 +24,7 @@ import {
   type PluginSurfaceProps,
   type PluginTimelineRendererContribution,
   type PluginTimelineTransformerContribution,
+  type PluginNotificationOpenHandler,
   type PluginButtonRegistration,
 } from "@getpaseo/plugin/client";
 import type {
@@ -122,6 +123,29 @@ export type PluginClientRuntime = Pick<
 // The 0.12 entry exposed the reveal hook as well as UI components.
 const pluginReactNativeCompatRuntime = { ...pluginUiRuntime, useRevealedText };
 
+// PushNotificationIOS crashes iOS fatally via Metro's guardedLoadModule ->
+// RCTExceptionsManager.reportFatal because RCTPushNotificationManager is not linked
+// in Expo builds, bypassing PluginRegistry's try/catch. Omit it and raw `default`
+// while preserving all other enumerable react-native exports as lazy descriptors.
+export const OMITTED_REACT_NATIVE_EXPORTS = new Set(["PushNotificationIOS", "default"]);
+
+export function createPluginReactNativeRuntime(
+  source: Record<string, unknown>,
+): Record<string, unknown> {
+  const runtime: Record<string, unknown> = {};
+  for (const key of Object.keys(source)) {
+    if (OMITTED_REACT_NATIVE_EXPORTS.has(key)) continue;
+    const descriptor = Object.getOwnPropertyDescriptor(source, key);
+    if (!descriptor) continue;
+    Object.defineProperty(runtime, key, descriptor);
+  }
+  return runtime;
+}
+
+const pluginReactNativeRuntime = createPluginReactNativeRuntime(
+  ReactNative as unknown as Record<string, unknown>,
+);
+
 export function runPluginClientBundle(
   id: string,
   bundle: string,
@@ -145,6 +169,7 @@ export function runPluginClientBundle(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    notificationOpenHandlers: [],
   };
   const surfaceIds = new Set<string>();
   const sidebarViewIds = new Set<string>();
@@ -565,6 +590,12 @@ export function runPluginClientBundle(
         timelineRendererIds.delete(rendererId),
       );
     },
+    onNotificationOpen(handler: PluginNotificationOpenHandler) {
+      if (typeof handler !== "function") {
+        throw new Error("onNotificationOpen takes a callback function");
+      }
+      return register(collector.notificationOpenHandlers, handler, () => {});
+    },
     addComposerPill(contribution) {
       if (stopped) throw new Error("Plugin has stopped");
       return trackButton(runtime.addComposerPill(contribution));
@@ -580,7 +611,7 @@ export function runPluginClientBundle(
     if (name === "@getpaseo/plugin/client/ui") return pluginUiRuntime;
     if (name === "react") return React;
     if (name === "react/jsx-runtime") return ReactJsxRuntime;
-    if (name === "react-native") return ReactNative;
+    if (name === "react-native") return pluginReactNativeRuntime;
     if (name === "@getpaseo/plugin") return pluginSharedRuntime;
     if (name === "@getpaseo/plugin/client")
       return {
@@ -665,5 +696,6 @@ export function runPluginClientBundle(
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,
     timelineRenderers: collector.timelineRenderers,
+    notificationOpenHandlers: collector.notificationOpenHandlers,
   };
 }

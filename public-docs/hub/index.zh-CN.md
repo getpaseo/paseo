@@ -1,32 +1,35 @@
 ---
 title: Hub
-description: 位于 daemon 之上的一层。注册 daemon，为它们赋予能力，并与团队共享。
+description: 通过 GitHub、Linear、Slack、Discord、定时任务和 webhook，在你的 Paseo daemon 上自动化运行编程 Agent。
 nav: 概览
 ---
 
 # Hub {#hub}
 
-daemon 在一台机器上为你运行 Agent。Paseo Hub 是位于 daemon 之上的一层。你把 daemon 注册到 Hub，它就为这些 daemon 提供它们自身不具备的能力。
+Paseo daemon 在一台机器上运行编程 Agent。Paseo Hub 位于你的 daemon 之上，让外部事件、定时任务和 webhook 可以在这些机器上启动 Agent，并与团队共享运行历史。
 
 ```text
-             Hub
-    ┌─────────┼─────────┐
-    ▼         ▼         ▼
- laptop    devbox    build server
+GitHub · Linear · Slack · Discord · Schedules · Webhooks
+                           │
+                           ▼
+                          Hub
+               ┌───────────┼───────────┐
+               ▼           ▼           ▼
+            laptop       devbox   build server
 ```
 
-目前它能为你提供：
+Hub 为你的团队提供四项能力：
 
-- 由 GitHub、Slack 和 Discord 中的活动自动启动的 Agent。
-- 可以保存在仓库中、通过 CLI 部署的触发器。
-- 一份记录：收到了什么、匹配到了什么、运行了什么。
-- 一个让团队查看所有这些内容的地方。
+- 由 GitHub、Linear、Slack、Discord、周期性定时任务和入站 webhook 自动启动的事件驱动 Agent。
+- 可以在浏览器中编辑，或保存在 `.paseo/triggers/*.yml` 中并通过 CLI 部署的触发器。
+- 受控的集成工具，让任意触发器都能读取或发送到 Slack 和 Discord，或在 GitHub 上执行操作。
+- 在 [Activity](/docs/hub/activity) 查看最近的运行记录，在 **Integrations → Known unrouted events** 查看未启动运行的投递。
 
-你的 daemon 照常在原来的地方运行 Agent，Hub 决定何时让它们运行。
+你的 daemon 仍然在你自己的机器上运行 Agent，使用你现有的订阅、模型和技能。Hub 只负责决定何时调用它们。
 
 ## 仓库中有什么 {#what-lives-in-your-repository}
 
-`paseo hub init` 会创建一个自包含的起步触发器：
+你可以在 Hub 控制台中管理触发器，也可以将每个触发器保存为仓库中的一个 YAML 文件：
 
 ```text
 .paseo/
@@ -34,7 +37,7 @@ daemon 在一台机器上为你运行 Agent。Paseo Hub 是位于 daemon 之上�
     └── slack-help.yml
 ```
 
-这个文件指定了应用连接、允许的用户、daemon、工作目录、Agent 运行时、提示词和输出。设置流程会校验它并询问是否部署。之后提及机器人，就会在你的机器上启动一个 Agent。[快速开始](/docs/hub/quickstart)完整地跑通了这个过程；[生成的起步触发器](/docs/hub/configuration#generated-starter-trigger)展示了设置流程写入的内容。
+每个文件都是自包含的。它指定事件、允许的发送者、目标 daemon、工作目录、Agent 配置、提示词，以及所需的工具或回复限制。运行 `paseo hub init` 生成入门文件，或运行 `paseo hub deploy` 校验并安装触发器。
 
 ## 阅读顺序 {#reading-order}
 
@@ -42,15 +45,15 @@ daemon 在一台机器上为你运行 Agent。Paseo Hub 是位于 daemon 之上�
 2. [工作原理](/docs/hub/concepts)
 3. [Daemon](/docs/hub/daemons)
 4. [触发器](/docs/hub/triggers)
-5. [Workflow](/docs/hub/workflows)
+5. [集成工具](/docs/hub/tools)
 6. [GitHub 访问](/docs/hub/github)
 7. [配置](/docs/hub/configuration)
 8. [安全](/docs/hub/security)
 
-如果某个 workflow 接受来自 GitHub、Slack、Discord 或 API 的请求，在让 Agent 访问工作目录或输出能力之前，请先阅读 [Hub 安全](/docs/hub/security)。
+在授予触发器工作目录、GitHub 权限或聊天频道访问权限之前，请先阅读 [Hub 安全](/docs/hub/security)。
 
-## 自己运行 Hub {#run-hub-yourself}
+## 托管或自托管 {#hosted-or-self-hosted}
 
-先在你的机器上使用内嵌数据库启动，等确实需要时再添加 PostgreSQL 或公开部署。[自托管](/docs/hub/self-hosting)介绍了每一步。
+[托管 Hub](/docs/hub/hosted) 为你运维服务器和 Provider 应用。前往 [hub.paseo.sh](https://hub.paseo.sh) 创建免费账号，无需绑卡，也不会过期。
 
-[托管 Hub](/docs/hub/hosted) 使用相同的触发器、daemon 和活动模型。[创建免费账号](https://hub.paseo.sh)，无需绑卡，也不会过期。
+如果要在自己的机器或服务器上运行 Hub，可以先运行 `npx @getpaseo/hub` 使用内嵌数据库，按需再切换到 PostgreSQL 或公开 HTTPS 部署。参见[自托管](/docs/hub/self-hosting)。

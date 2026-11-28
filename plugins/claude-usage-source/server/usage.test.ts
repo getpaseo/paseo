@@ -162,6 +162,64 @@ describe("claude usage source", () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
+  it.each([false, true])("reports USD extra usage with rolling windows %j", async (hasWindows) => {
+    writeClaudeCredentials(claudeHome, "at_valid");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () =>
+            jsonResponse({
+              ...(hasWindows ? makeClaudeResponse() : {}),
+              extra_usage: {
+                is_enabled: true,
+                monthly_limit: 5000,
+                used_credits: 1250,
+                currency: "USD",
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const claude = findProvider(await service().listUsage(), "claude");
+
+    expect(claude.balances).toEqual([
+      expect.objectContaining({
+        id: "extra_usage_monthly",
+        used: 12.5,
+        remaining: 37.5,
+        limit: 50,
+        unit: "usd",
+      }),
+    ]);
+    expect(claude.details).toContainEqual(
+      expect.objectContaining({ id: "extra_usage", value: "Enabled" }),
+    );
+  });
+
+  it.each(["EUR", null, undefined])(
+    "does not report extra usage balances for currency %j",
+    async (currency) => {
+      writeClaudeCredentials(claudeHome, "at_valid");
+      fetchApi = mockFetch(
+        new Map([
+          [
+            "https://api.anthropic.com/api/oauth/usage",
+            () =>
+              jsonResponse({
+                ...makeClaudeResponse(),
+                extra_usage: { monthly_limit: 5000, used_credits: 1250, currency },
+              }),
+          ],
+        ]),
+      );
+
+      const claude = findProvider(await service().listUsage(), "claude");
+
+      expect(claude.balances).toEqual([]);
+    },
+  );
 
   it("accepts a null Claude resets_at when a window has no scheduled reset", async () => {
     writeClaudeCredentials(claudeHome, "at_valid");
@@ -916,6 +974,7 @@ it("keeps an expired Keychain login without calling the network and prefers Keyc
       {
         key: expect.stringMatching(/^[a-f0-9]{64}$/),
         harness: "Claude",
+        provider: "claude",
         input: {
           route: { store: "keychain", service: "Claude Code-credentials", account: "fixture" },
         },
@@ -938,7 +997,9 @@ async function accountFor(
   lookup: Parameters<typeof discover>[0] = {},
 ) {
   const accounts = await discover({ kind: "global" }, { ...lookup, now }, fetchApi);
-  const account = accounts.find((candidate) => isDeepStrictEqual(candidate.input, input));
+  const account = accounts.find((candidate) =>
+    isDeepStrictEqual(inputSchema.parse(candidate.input).route, input.route),
+  );
   if (!account) throw new Error("Expected discovered login");
   return { key: account.key, ...(account.label ? { label: account.label } : {}) };
 }
@@ -964,6 +1025,7 @@ it.each([401, 403])("a rejected profile HTTP %i keeps a locator-keyed account", 
     {
       key: expect.stringMatching(/^[a-f0-9]{64}$/),
       harness: "Claude",
+      provider: "claude",
       input: credentialInput(lookup.claudeHome),
     },
   ]);
@@ -998,7 +1060,12 @@ it.each([
     };
     const accounts = await discover({ kind: "global" }, lookup, api);
     expect(accounts).toEqual([
-      { key: hashAccountKey(JSON.stringify(input.route)), harness: "Claude", input },
+      {
+        key: hashAccountKey(JSON.stringify(input.route)),
+        harness: "Claude",
+        provider: "claude",
+        input,
+      },
     ]);
     await expect(fetchUsage(accounts[0]!.input as UsageInput, api, lookup)).rejects.toThrow(error);
   },
@@ -1082,7 +1149,8 @@ it("session discovery reads only its Claude home and excludes foreign sessions",
         key: "session-account.org",
         label: "session@example.test",
         harness: "Claude",
-        input: credentialInput(home),
+        provider: "claude",
+        input: { ...credentialInput(home), accountKey: "session-account.org" },
       },
     ]);
     await discover(scope, lookup, api);

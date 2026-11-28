@@ -27,9 +27,46 @@ export type SessionOpenWireRequest = Omit<PluginSessionOpenRequest, "tools"> & {
   tools: AgentToolMetadata[];
 };
 
-export interface PluginAgentToolsRuntime {
-  isToolPluginAvailable(pluginId: string, pluginInstanceId: string): boolean;
-  detachTools(agentId: string): void;
+export type PluginSessionOpenResult = SessionOpenWireRequest & {
+  tools: AttachedAgentTool[];
+  mcpServerOwners: Record<string, string>;
+};
+
+/** What an open request says about the agent that can change while its session runs. Plugins cannot change it. */
+export type SessionOpenAgentFacts = Pick<
+  SessionOpenWireRequest,
+  "workspaceId" | "title" | "background" | "labels" | "metadata"
+>;
+
+export interface PluginSessionRefreshOptions {
+  /** Tool names a refreshed plugin tool must not take, beyond the tools other plugins attached. */
+  reservedToolNames(): Promise<ReadonlySet<string>>;
+  /** The agent as it is now, so a rerun callback sees what a reopen would show it. */
+  agentFacts(): Promise<SessionOpenAgentFacts>;
+}
+
+/** What the agent manager asks of plugins about a session: its open, its attached tools, and their calls. */
+export interface PluginSessionsRuntime {
+  /**
+   * Runs every `agent.open.before` callback for a session open and records what each plugin attached. The result
+   * replaces the running session's record once `sessionLaunched` reports that its provider launch took over.
+   */
+  openSession(request: SessionOpenWireRequest): Promise<PluginSessionOpenResult>;
+  /** The provider session launched with the last open's result. */
+  sessionLaunched(agentId: string): void;
+  /** The last open's result did not launch; the session still running keeps its tools. */
+  sessionLaunchFailed(agentId: string): void;
+  /**
+   * Reruns the open of only the plugins that changed since the session opened, swaps in their tools, and reports
+   * whether the session must reopen to apply the rest.
+   */
+  refreshSession(
+    agentId: string,
+    options: PluginSessionRefreshOptions,
+  ): Promise<{ stale: boolean }>;
+  /** The session's tools from running plugin instances. */
+  sessionTools(agentId: string): readonly AttachedAgentTool[];
+  closeSession(agentId: string): void;
   callTool(
     pluginId: string,
     pluginInstanceId: string,

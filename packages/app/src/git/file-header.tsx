@@ -7,6 +7,7 @@ import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
 import { FileChangeIcon } from "@/components/file-change-icon";
 import { MaterialFileIcon } from "@/components/material-file-icon";
 import {
+  TreeIndentGuides,
   treeRowPaddingLeft,
   workspaceTreeRowStyles,
   WORKSPACE_PANE_TRAILING_GLYPH_RAIL,
@@ -308,6 +309,7 @@ export const FileHeader = memo(function FileHeader({
         aria-expanded={expandedAriaValue(showsBodyState, bodyVisible)}
         aria-selected={isSelected}
       >
+        <TreeIndentGuides depth={depth} />
         {renderedContent}
       </ContextMenuTrigger>
     );
@@ -317,6 +319,7 @@ export const FileHeader = memo(function FileHeader({
         style={[pressableStyle, canvasRendered && styles.canvasInteraction]}
         accessibilityLabel={accessibilityLabel}
       >
+        <TreeIndentGuides depth={depth} />
         {renderedContent}
       </View>
     );

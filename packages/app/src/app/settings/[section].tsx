@@ -9,7 +9,9 @@ import { StartupSplashScreen } from "@/screens/startup-splash-screen";
 import {
   buildSettingsHostSectionRoute,
   buildSettingsRoute,
+  buildSettingsSectionRoute,
   isSettingsSectionSlug,
+  normalizeSettingsSectionSlug,
   type SettingsSectionSlug,
 } from "@/utils/host-routes";
 
@@ -28,7 +30,7 @@ function SettingsDaemonRedirect() {
     localDaemon.serverId !== null &&
     hosts.some((host) => host.serverId === localDaemon.serverId)
   ) {
-    return <Redirect href={buildSettingsHostSectionRoute(localDaemon.serverId, "host")} />;
+    return <Redirect href={buildSettingsHostSectionRoute(localDaemon.serverId, "daemon")} />;
   }
 
   return <Redirect href={buildSettingsRoute()} />;
@@ -37,7 +39,8 @@ function SettingsDaemonRedirect() {
 export default function SettingsSectionRoute() {
   const params = useLocalSearchParams<{ section?: string }>();
   const rawSection = typeof params.section === "string" ? params.section : "";
-  const section: SettingsSectionSlug = isSettingsSectionSlug(rawSection) ? rawSection : "general";
+  const normalized = normalizeSettingsSectionSlug(rawSection);
+  const section: SettingsSectionSlug = normalized ?? "general";
   const view = useMemo(() => ({ kind: "section" as const, section }), [section]);
 
   // COMPAT(settingsDaemonRedirect): added 2026-07-08, remove after 2027-01-08.
@@ -47,6 +50,10 @@ export default function SettingsSectionRoute() {
         <SettingsDaemonRedirect />
       </HostRouteBootstrapBoundary>
     );
+  }
+
+  if (normalized && !isSettingsSectionSlug(rawSection)) {
+    return <Redirect href={buildSettingsSectionRoute(normalized)} />;
   }
 
   return <SettingsScreen view={view} />;

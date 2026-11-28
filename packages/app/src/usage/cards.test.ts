@@ -3,6 +3,7 @@ import {
   arrangeUsageCards,
   arrangeUsageReports,
   DEFAULT_USAGE_PREFERENCES,
+  isUsageCardOn,
   setUsageCardOn,
   UsagePreferencesSchema,
   usageReportsOn,
@@ -11,13 +12,19 @@ import {
 import { resolvePinnedUsage } from "./pinned";
 import type { UsageReportEntry } from "./types";
 
-function report(sourceId: string, sourceLabel: string, account?: string): UsageReportEntry {
+function report(
+  sourceId: string,
+  sourceLabel: string,
+  account?: string,
+  defaultEnabled?: boolean,
+): UsageReportEntry {
   return {
     id: `${sourceId}:${account ?? "default"}`,
     sourceId,
     sourceLabel,
     account: account ? { label: account } : {},
     fetchedAt: "2026-01-01T00:00:00.000Z",
+    ...(defaultEnabled === undefined ? {} : { defaultEnabled }),
     report: {
       status: "available",
       windows: [{ id: "weekly", label: "Weekly", summary: true, usedPct: 40 }],
@@ -114,8 +121,31 @@ describe("usage card order", () => {
 describe("usage cards turned off", () => {
   it("turns a card off and back on", () => {
     const off = setUsageCardOn(DEFAULT_USAGE_PREFERENCES, "codex:default", false);
-    expect(off.cardsOff).toEqual(["codex:default"]);
-    expect(setUsageCardOn(off, "codex:default", true).cardsOff).toEqual([]);
+    expect(off.cardVisibility).toEqual({ "codex:default": false });
+    expect(isUsageCardOn(off, codex)).toBe(false);
+    const on = setUsageCardOn(off, "codex:default", true);
+    expect(on.cardVisibility).toEqual({ "codex:default": true });
+    expect(isUsageCardOn(on, codex)).toBe(true);
+  });
+
+  it("hides sources hinted off by default until the user explicitly turns them on", () => {
+    const uninstalledCopilot = report("copilot", "GitHub Copilot", undefined, false);
+    expect(isUsageCardOn(DEFAULT_USAGE_PREFERENCES, uninstalledCopilot)).toBe(false);
+    expect(ids(usageReportsOn([codex, uninstalledCopilot], DEFAULT_USAGE_PREFERENCES))).toEqual([
+      "codex:default",
+    ]);
+    expect(
+      resolvePinnedUsage([codex, uninstalledCopilot], DEFAULT_USAGE_PREFERENCES).map(
+        (source) => source.key,
+      ),
+    ).toEqual(["codex:default"]);
+
+    const optedIn = setUsageCardOn(DEFAULT_USAGE_PREFERENCES, uninstalledCopilot.id, true);
+    expect(isUsageCardOn(optedIn, uninstalledCopilot)).toBe(true);
+    expect(ids(usageReportsOn([codex, uninstalledCopilot], optedIn))).toEqual([
+      "codex:default",
+      "copilot:default",
+    ]);
   });
 
   it("leaves off cards out of the sidebar summary", () => {
@@ -143,11 +173,24 @@ describe("stored card preferences", () => {
     );
   });
 
+  it("migrates legacy cardsOff into cardVisibility", () => {
+    expect(
+      UsagePreferencesSchema.parse({
+        displayAs: "used",
+        serverId: null,
+        cardsOff: ["codex:default"],
+      }),
+    ).toEqual({
+      ...DEFAULT_USAGE_PREFERENCES,
+      cardVisibility: { "codex:default": false },
+    });
+  });
+
   it("survives a save and reload, and ignores a malformed arrangement", () => {
     const saved = setUsageCardOn(arranged(["codex:default"]), "claude:work", false);
     expect(UsagePreferencesSchema.parse(JSON.parse(JSON.stringify(saved)))).toEqual(saved);
     expect(
-      UsagePreferencesSchema.parse({ displayAs: "used", cardOrder: "bad", cardsOff: [1] }),
+      UsagePreferencesSchema.parse({ displayAs: "used", cardOrder: "bad", cardVisibility: [1] }),
     ).toEqual(DEFAULT_USAGE_PREFERENCES);
   });
 });

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { AgentBackgroundWorkSummary } from "@getpaseo/protocol/messages";
 
 export interface AgentBackgroundWorkInput {
   id: string;
@@ -24,11 +25,13 @@ export interface DaemonBackgroundWorkInput extends DaemonBackgroundWorkKey {
   kind: string;
   description: string | null;
   startedAt: string;
+  countsAsRunning?: boolean;
   stop: () => Promise<void>;
 }
 
 interface DaemonBackgroundWork {
   item: AgentBackgroundWorkItem;
+  countsAsRunning: boolean;
   stop: DaemonBackgroundWorkInput["stop"];
 }
 
@@ -91,21 +94,23 @@ export class AgentBackgroundWorkStore {
   }
 
   setDaemonBackgroundWork(input: DaemonBackgroundWorkInput): AgentBackgroundWorkItem[] | null {
-    const { agentId, kind, description, startedAt, stop } = input;
+    const { agentId, kind, description, startedAt, countsAsRunning = true, stop } = input;
     const id = daemonItemId(input);
     const items = this.daemonItems.get(agentId) ?? new Map<string, DaemonBackgroundWork>();
-    const previous = items.get(id)?.item;
+    const previous = items.get(id);
     const item: AgentBackgroundWorkItem = {
       id,
       kind,
       description,
       startedAt,
       canStop: true,
-      stopToken: previous?.stopToken ?? randomUUID(),
+      stopToken: previous?.item.stopToken ?? randomUUID(),
     };
-    items.set(id, { item, stop });
+    items.set(id, { item, countsAsRunning, stop });
     this.daemonItems.set(agentId, items);
-    return previous && sameItems([previous], [item]) ? null : this.list(agentId);
+    return previous?.countsAsRunning === countsAsRunning && sameItems([previous.item], [item])
+      ? null
+      : this.list(agentId);
   }
 
   removeDaemonBackgroundWork(key: DaemonBackgroundWorkKey): AgentBackgroundWorkItem[] | null {
@@ -140,12 +145,17 @@ export class AgentBackgroundWorkStore {
     return items;
   }
 
-  summary(agentId: string): { count: number } | undefined {
+  summary(agentId: string): AgentBackgroundWorkSummary | undefined {
     const items = this.providerItems.get(agentId);
     const daemonItems = this.daemonItems.get(agentId);
-    return items || daemonItems
-      ? { count: (items?.length ?? 0) + (daemonItems?.size ?? 0) }
-      : undefined;
+    if (!items && !daemonItems) return undefined;
+
+    const count = (items?.length ?? 0) + (daemonItems?.size ?? 0);
+    let runningCount = items?.length ?? 0;
+    for (const work of daemonItems?.values() ?? []) {
+      if (work.countsAsRunning) runningCount++;
+    }
+    return runningCount === count ? { count } : { count, runningCount };
   }
 
   clear(agentId: string): AgentBackgroundWorkItem[] | null {

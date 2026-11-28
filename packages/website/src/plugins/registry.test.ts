@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createServer } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 import { describe, expect, it } from "vitest";
 import { getTranslator } from "~/i18n";
 import {
@@ -19,7 +19,12 @@ import {
   updatedAgo,
 } from "./registry";
 import { readInstallCounts, recordInstall } from "./installs";
-import { handlePluginRegistryRequest, loadRegistryIndex, loadRegistryPlugin } from "./published";
+import {
+  handlePluginRegistryRequest,
+  loadPluginCount,
+  loadRegistryIndex,
+  loadRegistryPlugin,
+} from "./published";
 const plugin: Plugin = {
   id: "acme/example",
   name: "Example",
@@ -371,6 +376,63 @@ describe("plugin registry", () => {
     );
     expect(at("https://gitlab.com/acme/example")).toBeUndefined();
     expect(at("javascript:alert(1)")).toBeUndefined();
+  });
+
+  it("reads the listed plugin count from the registry index and falls back to null on errors", async () => {
+    const context = { cache: seededIndex(), waitUntil: () => undefined };
+    expect(await loadPluginCount("https://registry.example.test", context)).toBe(1);
+
+    const server = createServer((_request, response) => {
+      response.statusCode = 503;
+      response.end("unavailable");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected numeric port");
+    try {
+      const count = await loadPluginCount(`http://127.0.0.1:${address.port}`, {
+        cache: memoryKv(),
+        waitUntil: () => undefined,
+      });
+      expect(count).toBeNull();
+    } finally {
+      server.close();
+    }
+  });
+
+  it("returns a cold landing-page count before the registry responds and warms the shared index", async () => {
+    const index = {
+      schemaVersion: 1,
+      registry: { name: "Test", url: "https://registry.example.test" },
+      categories: [],
+      plugins: [plugin],
+      featured: [],
+      generatedAt: "2026-10-03",
+    };
+    const server = createServer();
+    const requested = new Promise<ServerResponse>((resolve) => {
+      server.once("request", (_request, response) => resolve(response));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected numeric port");
+    const base = `http://127.0.0.1:${address.port}`;
+    const pending: Promise<unknown>[] = [];
+    const context = {
+      cache: memoryKv(),
+      waitUntil: (promise: Promise<unknown>) => pending.push(promise),
+    };
+    const count = loadPluginCount(base, context);
+    try {
+      expect(await Promise.race([count, requested.then(() => "waiting on registry")])).toBeNull();
+      const response = await requested;
+      response.end(JSON.stringify(index));
+      await Promise.all(pending);
+      expect(await loadPluginCount(base, context)).toBe(1);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });
 

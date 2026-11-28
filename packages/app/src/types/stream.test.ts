@@ -631,6 +631,37 @@ describe("stream reducer tool call idempotency", () => {
 });
 
 describe("stream reducer canonical tool calls", () => {
+  it("keeps metadata.intent across lifecycle updates that omit it", () => {
+    const base = { provider: "codex" as const, callId: "call-intent", name: "shell" };
+    const state = hydrateStreamState([
+      {
+        event: canonicalToolTimeline({
+          ...base,
+          status: "running",
+          metadata: { intent: "Inspect" },
+        }),
+        timestamp: new Date(0),
+      },
+      {
+        event: canonicalToolTimeline({ ...base, status: "running" }),
+        timestamp: new Date(1),
+      },
+      {
+        event: canonicalToolTimeline({
+          ...base,
+          status: "completed",
+          metadata: { exitReason: "done" },
+        }),
+        timestamp: new Date(2),
+      },
+    ]);
+
+    expect(findToolByCallId(state, base.callId)?.payload.data.metadata).toEqual({
+      intent: "Inspect",
+      exitReason: "done",
+    });
+  });
+
   it("keeps repeated call ids in different turns as distinct timeline rows", () => {
     const callId = "tool-reused-across-turns";
     const state = hydrateStreamState([
@@ -2405,4 +2436,77 @@ it("retains agent-message provenance through live delivery and repeated history"
   const replay = reduceStreamUpdate(live, event, new Date(2));
   expect(replay).toHaveLength(1);
   expect(replay[0]).toMatchObject({ payload: { data: { agentMessage } } });
+});
+
+it("preserves daemon-uploaded images on canonical user_message events including image-only messages and keeps local optimistic previews on reconciliation", () => {
+  const uploaded = {
+    id: "upload_1",
+    fileName: "photo.jpg",
+    mimeType: "image/jpeg",
+    size: 4096,
+    path: "/home/user/.paseo/uploads/upload_1/photo.jpg",
+  };
+
+  // Reload / cross-device: canonical image-only message renders with daemon-upload image metadata.
+  const imageOnly = applyStreamEvent({
+    tail: [],
+    head: [],
+    event: {
+      type: "timeline",
+      provider: "claude",
+      item: {
+        type: "user_message",
+        text: "",
+        messageId: "msg-img-only",
+        clientMessageId: "client-img-only",
+        images: [uploaded],
+      },
+    },
+    timestamp: new Date("2026-11-28T00:00:00.000Z"),
+  });
+  expect(imageOnly.tail).toHaveLength(1);
+  expect(imageOnly.tail[0]).toMatchObject({
+    kind: "user_message",
+    text: "",
+    images: [{ ...uploaded, storageType: "daemon-upload" }],
+  });
+
+  // Optimistic local send keeps instant local AttachmentMetadata when canonical echo arrives.
+  const localMeta = {
+    id: "local-1",
+    mimeType: "image/jpeg",
+    storageType: "web-indexeddb" as const,
+    storageKey: "local-1",
+    fileName: "photo.jpg",
+    byteSize: 4096,
+    createdAt: 1,
+  };
+  const optimistic = createUserMessage({
+    clientMessageId: "client-1",
+    text: "Check this",
+    timestamp: new Date("2026-11-28T00:00:01.000Z"),
+    images: [localMeta],
+  });
+  const reconciled = applyStreamEvent({
+    tail: [optimistic],
+    head: [],
+    event: {
+      type: "timeline",
+      provider: "claude",
+      item: {
+        type: "user_message",
+        text: "Check this",
+        messageId: "provider-1",
+        clientMessageId: "client-1",
+        images: [uploaded],
+      },
+    },
+    timestamp: new Date("2026-11-28T00:00:02.000Z"),
+  });
+  expect(reconciled.tail).toHaveLength(1);
+  expect(reconciled.tail[0]).toMatchObject({
+    kind: "user_message",
+    messageId: "provider-1",
+    images: [localMeta],
+  });
 });

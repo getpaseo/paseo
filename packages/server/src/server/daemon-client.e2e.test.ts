@@ -181,6 +181,160 @@ test("DaemonClient uploads file bytes to daemon temp storage", async () => {
   }
 });
 
+test("DaemonClient uploads a >24 MiB multi-photo batch sequentially with supportsDrain=false, delivers native image blocks, projects timeline images, and rejects outside paths", async () => {
+  const clients = createTestAgentClients();
+  const claude = clients.claude as AgentClient;
+  const receivedPrompts: unknown[] = [];
+  const recordingClaude: AgentClient = Object.create(claude, {
+    createSession: {
+      value: async (...args: Parameters<AgentClient["createSession"]>) => {
+        const session = await claude.createSession(...args);
+        const origStartTurn = session.startTurn.bind(session);
+        session.startTurn = (prompt, options) => {
+          receivedPrompts.push(prompt);
+          return origStartTurn(prompt, options);
+        };
+        return session;
+      },
+    },
+  });
+
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { ...clients, claude: recordingClaude },
+  });
+  let maxOutboundFrameBytes = 0;
+  const trackingWsFactory = Object.assign(
+    (url: string) => {
+      const ws = new WebSocket(url);
+      const origSend = ws.send.bind(ws);
+      ws.send = ((data: Parameters<WebSocket["send"]>[0], ...rest: unknown[]) => {
+        let byteLength = 0;
+        if (typeof data === "string") {
+          byteLength = Buffer.byteLength(data, "utf8");
+        } else if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+          byteLength = data.byteLength;
+        }
+        if (byteLength > maxOutboundFrameBytes) {
+          maxOutboundFrameBytes = byteLength;
+        }
+        return (origSend as (...args: unknown[]) => unknown)(data, ...rest);
+      }) as WebSocket["send"];
+      return ws;
+    },
+    { supportsDrain: false },
+  );
+
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.18.1",
+    webSocketFactory: trackingWsFactory,
+  });
+
+  try {
+    await client.connect();
+    const agent = await client.createAgent({
+      provider: "claude",
+      cwd: tmpCwd(),
+      title: "Vision batch agent",
+    });
+
+    // 13 photos × 2 MiB = 26 MiB (> 16 MiB OkHttp limit and > 24 MiB #11117 batch)
+    const photoCount = 13;
+    const photoSize = 2 * 1024 * 1024;
+    const expectedPhotos: Uint8Array[] = [];
+    const uploadedImageAttachments = [];
+    for (let index = 0; index < photoCount; index += 1) {
+      const bytes = new Uint8Array(photoSize);
+      bytes.fill((index + 1) & 0xff);
+      bytes[0] = 0xff;
+      bytes[1] = 0xd8;
+      bytes[photoSize - 1] = index;
+      expectedPhotos.push(bytes);
+
+      const upload = await client.uploadFile({
+        fileName: `photo-${index + 1}.jpg`,
+        mimeType: "image/jpeg",
+        bytes,
+      });
+      expect(upload.error).toBeNull();
+      expect(upload.file).not.toBeNull();
+      uploadedImageAttachments.push({
+        ...upload.file!,
+        role: "image" as const,
+      });
+    }
+
+    await client.sendAgentMessage(agent.id, "Describe all 13 photos", {
+      messageId: "msg-batch-13",
+      attachments: uploadedImageAttachments,
+    });
+
+    // No single WebSocket frame should ever approach 16 MiB (each FileChunk is ~128 KiB).
+    expect(maxOutboundFrameBytes).toBeLessThan(256 * 1024);
+
+    expect(receivedPrompts).toHaveLength(1);
+    const promptBlocks = receivedPrompts[0] as Array<Record<string, unknown>>;
+    expect(promptBlocks[0]).toEqual({ type: "text", text: "Describe all 13 photos" });
+    const imageBlocks = promptBlocks.filter((block) => block.type === "image");
+    expect(imageBlocks).toHaveLength(photoCount);
+    expect(promptBlocks.filter((block) => block.type === "uploaded_file")).toHaveLength(0);
+    for (let index = 0; index < photoCount; index += 1) {
+      const block = imageBlocks[index] as { type: "image"; data: string; mimeType: string };
+      expect(block.mimeType).toBe("image/jpeg");
+      const decoded = Buffer.from(block.data, "base64");
+      expect(decoded.byteLength).toBe(photoSize);
+      expect(decoded[0]).toBe(0xff);
+      expect(decoded[1]).toBe(0xd8);
+      expect(decoded[photoSize - 1]).toBe(index);
+    }
+
+    // Timeline projection keeps lightweight uploaded image metadata for reload/cross-device rendering.
+    const timeline = await client.fetchAgentTimeline(agent.id, { projection: "canonical" });
+    const userRow = timeline.entries.find(
+      (entry) =>
+        entry.item.type === "user_message" && entry.item.clientMessageId === "msg-batch-13",
+    );
+    expect(userRow?.item.type).toBe("user_message");
+    if (userRow?.item.type === "user_message") {
+      expect(userRow.item.images).toHaveLength(photoCount);
+      expect(userRow.item.images?.[0]?.fileName).toBe("photo-1.jpg");
+    }
+
+    // New agent creation with uploaded image attachments also delivers native vision image blocks.
+    const createdWithImage = await client.createAgent({
+      provider: "claude",
+      cwd: tmpCwd(),
+      initialPrompt: "Inspect first photo",
+      clientMessageId: "msg-create-1",
+      attachments: [uploadedImageAttachments[0]!],
+    });
+    expect(createdWithImage.id).toBeTruthy();
+    expect(receivedPrompts).toHaveLength(2);
+    const createBlocks = receivedPrompts[1] as Array<Record<string, unknown>>;
+    expect(createBlocks.filter((block) => block.type === "image")).toHaveLength(1);
+
+    // Security invariant: reject paths outside paseoHome/uploads.
+    await expect(
+      client.sendAgentMessage(agent.id, "Leak secret", {
+        attachments: [
+          {
+            type: "uploaded_file",
+            id: "evil",
+            fileName: "local-credential",
+            mimeType: "image/png",
+            size: 32,
+            path: path.join(daemon.paseoHome, "local-credential"),
+            role: "image",
+          },
+        ],
+      }),
+    ).rejects.toThrow(/outside/i);
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+}, 60_000);
+
 test("agent.config.apply sets an option that has no control and the next snapshot reports it", async () => {
   const clients = createTestAgentClients();
   const codex = clients.codex as AgentClient;

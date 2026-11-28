@@ -1,12 +1,13 @@
 import { useSettingsContentPresented } from "@/navigation/settings-presentation";
+import { registerRouteLeaveGuard } from "@/navigation/route-leave-guard";
 import { AppearanceText as Text } from "@/appearance/text";
 import { useHardwareKeyboardPresent } from "@/keyboard";
 import { useAddHost } from "@/hosts/add-host";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { Alert, Pressable, ScrollView, View, type PressableStateCallbackType } from "react-native";
-import { useRouter } from "expo-router";
-import { useFocusEffect } from "expo-router/react-navigation";
+import { useNavigation, useRouter } from "expo-router";
+import { useFocusEffect, usePreventRemove } from "expo-router/react-navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -17,29 +18,24 @@ import {
   Settings,
   Palette,
   Server,
-  Network,
-  Bot,
   Boxes,
   Gauge,
   Keyboard,
-  Stethoscope,
   Info,
   Bell,
-  Shield,
-  Puzzle,
   Plus,
+  FolderOpen,
   FolderGit2,
   SquareTerminal,
-  Code2,
-  Files,
   Smartphone,
   Sparkles,
   Mic,
   Blocks,
-  Globe,
   PanelLeft,
   MessageSquare,
   ChevronRight,
+  Layers,
+  Laptop,
 } from "lucide-react-native";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
@@ -59,8 +55,7 @@ import {
   type AppSettings,
   type Settings as EffectiveSettings,
 } from "@/hooks/use-settings";
-import { useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
-import { useSessionStore } from "@/stores/session-store";
+import { useHosts } from "@/runtime/host-runtime";
 import {
   orderHostsLocalFirst,
   resolveActiveHostServerId,
@@ -79,10 +74,11 @@ import { CommunityLinks } from "@/components/community-links";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissions-section";
-import { DesktopNotificationsSection } from "@/desktop/components/desktop-notifications-section";
+import { NotificationsSection } from "@/components/settings/notifications-section";
 import { BrowserDataSection } from "@/desktop/browser/settings/browser-data-section";
 import { IntegrationsSection } from "@/desktop/components/integrations-section";
 import { isElectronRuntime } from "@/desktop/host";
+import { useDesktopSettings, type DesktopUpdateMode } from "@/desktop/settings/desktop-settings";
 import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { resolveAppVersion } from "@/utils/app-version";
@@ -99,25 +95,26 @@ import {
   type SupportedLocale,
 } from "@/i18n/locales";
 import {
-  HostConnectionsPage,
-  HostPairDevicePage,
-  HostAgentsPage,
-  HostSettingsPage,
+  HostDevicesPage,
+  HostToolsPage,
+  HostAgentProfilesPage,
+  HostDaemonPage,
+  HostWorkspacesPage,
   HostProvidersPage,
   HostUsagePage,
-  HostWorkspacesPage,
   HostTerminalsPage,
 } from "@/screens/settings/host-page";
+import { ClientHostDetailPage, ClientHostsSection } from "@/screens/settings/client-hosts-page";
 import {
   PluginGalleryMenu,
   PluginGalleryPage,
   PluginPage,
   type PluginPageSubject,
 } from "@/plugins/gallery";
-import { MetadataGenerationPage } from "@/screens/settings/metadata-generation-page";
 import { HostVoicePage } from "@/screens/settings/voice/voice-page";
 import ProjectsScreen from "@/screens/projects-screen";
 import ProjectSettingsScreen from "@/screens/project-settings-screen";
+import { ProviderDetailPage } from "@/provider-settings";
 import {
   SETTINGS_DESKTOP_DETAIL_MIN_WIDTH,
   SETTINGS_DESKTOP_SIDEBAR_WIDTH,
@@ -130,6 +127,7 @@ import {
   useEnableBuiltInDaemonOption,
 } from "@/desktop/hooks/use-enable-built-in-daemon-option";
 import {
+  buildClientHostSettingsRoute,
   buildSettingsHostSectionRoute,
   buildSettingsSectionRoute,
   type HostSectionSlug,
@@ -161,6 +159,7 @@ interface SidebarSectionItem {
 
 const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
   { id: "general", labelKey: "settings.sections.general", icon: Settings },
+  { id: "hosts", labelKey: "settings.sections.hosts", icon: Laptop },
   {
     id: "appearance",
     labelKey: "settings.sections.appearance",
@@ -173,28 +172,7 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     icon: PanelLeft,
     Content: SidebarNavSection,
   },
-  { id: "chat", labelKey: "settings.sections.chat", icon: MessageSquare, Content: ChatSection },
-  {
-    id: "terminal",
-    labelKey: "settings.sections.terminal",
-    icon: SquareTerminal,
-    Content: TerminalSection,
-  },
-  {
-    id: "browser",
-    labelKey: "settings.sections.browser",
-    icon: Globe,
-    desktopOnly: true,
-    Content: BrowserDataSection,
-  },
-  {
-    id: "editor",
-    labelKey: "settings.sections.editor",
-    icon: Code2,
-    webOnly: true,
-    Content: EditorSection,
-  },
-  { id: "files", labelKey: "settings.sections.files", icon: Files, Content: FilesSection },
+  { id: "chat", labelKey: "settings.sections.chatAndPanes", icon: MessageSquare },
   {
     id: "shortcuts",
     labelKey: "settings.sections.shortcuts",
@@ -203,27 +181,10 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     Content: KeyboardShortcutsSection,
   },
   {
-    id: "integrations",
-    labelKey: "settings.sections.integrations",
-    icon: Puzzle,
-    desktopOnly: true,
-    Content: IntegrationsSection,
-  },
-  {
     id: "notifications",
     labelKey: "settings.sections.notifications",
     icon: Bell,
-    desktopOnly: true,
-    Content: DesktopNotificationsSection,
   },
-  {
-    id: "permissions",
-    labelKey: "settings.sections.permissions",
-    icon: Shield,
-    desktopOnly: true,
-    Content: DesktopPermissionsSection,
-  },
-  { id: "diagnostics", labelKey: "settings.sections.diagnostics", icon: Stethoscope },
   { id: "about", labelKey: "settings.sections.about", icon: Info },
 ];
 
@@ -243,49 +204,44 @@ interface HostSectionItem {
 }
 
 const HOST_SECTION_ITEMS: HostSectionItem[] = [
-  { id: "host", labelKey: "settings.hostSections.host", icon: Server },
-  { id: "projects", labelKey: "settings.hostSections.projects", icon: FolderGit2 },
-  { id: "connections", labelKey: "settings.hostSections.connections", icon: Network },
-  { id: "pair-device", labelKey: "openProject.tiles.pairDevice.title", icon: Smartphone },
-  { id: "agents", labelKey: "settings.hostSections.agents", icon: Bot },
-  { id: "metadata", labelKey: "settings.hostSections.metadata", icon: Sparkles },
-  { id: "voice", labelKey: "settings.hostSections.voice", icon: Mic },
-  { id: "workspaces", labelKey: "settings.hostSections.workspaces", icon: FolderGit2 },
   { id: "providers", labelKey: "settings.hostSections.providers", icon: Boxes },
+  { id: "agent-profiles", labelKey: "settings.hostSections.agentProfiles", icon: Layers },
+  { id: "tools", labelKey: "settings.hostSections.tools", icon: Sparkles },
+  { id: "projects", labelKey: "settings.projects", icon: FolderOpen },
+  { id: "workspaces", labelKey: "settings.hostSections.workspaces", icon: FolderGit2 },
+  { id: "voice", labelKey: "settings.hostSections.voice", icon: Mic },
   { id: "usage", labelKey: "settings.hostSections.usage", icon: Gauge },
   { id: "terminals", labelKey: "settings.hostSections.terminals", icon: SquareTerminal },
   { id: "plugins", labelKey: "settings.hostSections.plugins", icon: Blocks },
+  { id: "devices", labelKey: "devices.title", icon: Smartphone },
+  { id: "daemon", labelKey: "settings.hostSections.daemon", icon: Server },
 ];
 
-function renderHostSettingsContent(
-  view: Extract<SettingsView, { kind: "host" }>,
-  onHostRemoved: () => void,
-): ReactNode {
+function renderHostSettingsContent(view: Extract<SettingsView, { kind: "host" }>): ReactNode {
   switch (view.section) {
-    case "projects":
-      return <ProjectsScreen serverId={view.serverId} />;
-    case "connections":
-      return <HostConnectionsPage serverId={view.serverId} />;
-    case "pair-device":
-      return <HostPairDevicePage serverId={view.serverId} />;
-    case "agents":
-      return <HostAgentsPage serverId={view.serverId} />;
-    case "metadata":
-      return <MetadataGenerationPage serverId={view.serverId} />;
-    case "voice":
-      return <HostVoicePage serverId={view.serverId} />;
-    case "workspaces":
-      return <HostWorkspacesPage serverId={view.serverId} />;
     case "providers":
       return <HostProvidersPage serverId={view.serverId} />;
+    case "agent-profiles":
+      // Rendered directly in SettingsScreen so AgentProfilesPage owns its wide PageLayout + drawer split.
+      return null;
+    case "tools":
+      return <HostToolsPage serverId={view.serverId} />;
+    case "projects":
+      return <ProjectsScreen serverId={view.serverId} />;
+    case "workspaces":
+      return <HostWorkspacesPage serverId={view.serverId} />;
+    case "voice":
+      return <HostVoicePage serverId={view.serverId} />;
     case "usage":
       return <HostUsagePage serverId={view.serverId} />;
     case "terminals":
       return <HostTerminalsPage serverId={view.serverId} />;
     case "plugins":
       return <PluginGalleryPage serverId={view.serverId} />;
-    case "host":
-      return <HostSettingsPage serverId={view.serverId} onHostRemoved={onHostRemoved} />;
+    case "devices":
+      return <HostDevicesPage serverId={view.serverId} />;
+    case "daemon":
+      return <HostDaemonPage serverId={view.serverId} />;
   }
 }
 
@@ -467,12 +423,12 @@ function DiagnosticsSection({
 }
 
 interface AboutSectionProps {
-  appVersion: string | null;
   appVersionText: string;
   isDesktopApp: boolean;
+  diagnostics: DiagnosticsSectionProps;
 }
 
-function AboutSection({ appVersion, appVersionText, isDesktopApp }: AboutSectionProps) {
+function AboutSection({ appVersionText, isDesktopApp, diagnostics }: AboutSectionProps) {
   const { t } = useTranslation();
   return (
     <>
@@ -489,7 +445,7 @@ function AboutSection({ appVersion, appVersionText, isDesktopApp }: AboutSection
           {isDesktopApp ? <DesktopAppUpdateRow /> : null}
         </View>
       </SettingsSection>
-      <ConnectedHostsSection clientVersion={appVersion} />
+      <DiagnosticsSection {...diagnostics} />
       <View style={styles.aboutCommunity}>
         <CommunityLinks />
       </View>
@@ -524,109 +480,94 @@ function WhatsNewRow() {
   );
 }
 
-function normalizeVersion(version: string | null | undefined): string | null {
-  const trimmed = version?.trim();
-  if (!trimmed) return null;
-  return trimmed.replace(/^v/i, "");
-}
-
-function ConnectedHostsSection({ clientVersion }: { clientVersion: string | null }) {
-  const { t } = useTranslation();
-  const hosts = useHosts();
-  if (hosts.length === 0) {
-    return null;
-  }
-  return (
-    <SettingsSection title={t("settings.about.connectedHosts")}>
-      <View style={settingsStyles.card}>
-        {hosts.map((host, index) => (
-          <HostVersionRow
-            key={host.serverId}
-            host={host}
-            showBorder={index > 0}
-            clientVersion={clientVersion}
-          />
-        ))}
-      </View>
-    </SettingsSection>
-  );
-}
-
-function HostVersionRow({
-  host,
-  showBorder,
-  clientVersion,
-}: {
-  host: HostProfile;
-  showBorder: boolean;
-  clientVersion: string | null;
-}) {
-  const { t } = useTranslation();
-  const isConnected = useHostRuntimeIsConnected(host.serverId);
-  const daemonVersion = useSessionStore(
-    (state) => state.sessions[host.serverId]?.serverInfo?.version ?? null,
-  );
-
-  const rowStyle = useMemo(
-    () => [settingsStyles.row, showBorder && settingsStyles.rowBorder],
-    [showBorder],
-  );
-
-  const normalizedHost = normalizeVersion(daemonVersion);
-  const normalizedClient = normalizeVersion(clientVersion);
-  const isMismatch =
-    normalizedHost !== null && normalizedClient !== null && normalizedHost !== normalizedClient;
-
-  let valueText: string;
-  if (!isConnected) {
-    valueText = t("settings.about.offline");
-  } else if (normalizedHost) {
-    valueText = formatVersionWithPrefix(normalizedHost);
-  } else {
-    valueText = "—";
-  }
-
-  const valueStyle = useMemo(
-    () => [styles.aboutValue, isMismatch && styles.aboutVersionMismatch],
-    [isMismatch],
-  );
-
-  return (
-    <View style={rowStyle}>
-      <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
-          {host.label}
-        </Text>
-        {isMismatch ? (
-          <Text style={settingsStyles.rowHint}>{t("settings.about.versionDiffers")}</Text>
-        ) : null}
-      </View>
-      <Text style={valueStyle}>{valueText}</Text>
-    </View>
-  );
-}
-
 function getUpdateButtonLabel(
   t: TFunction,
-  isInstalling: boolean,
-  latestVersion: string | null | undefined,
+  input: {
+    isInstalling: boolean;
+    isDownloading: boolean;
+    isActionable: boolean;
+    readyToInstall: boolean;
+    latestVersion: string | null | undefined;
+  },
 ): string {
-  if (isInstalling) return t("settings.about.updates.installing");
-  if (latestVersion) {
+  if (input.isInstalling) {
+    return input.isDownloading
+      ? t("settings.about.updates.downloading")
+      : t("settings.about.updates.installing");
+  }
+  if (input.isActionable && !input.readyToInstall) {
+    if (input.latestVersion) {
+      return t("settings.about.updates.downloadTo", {
+        version: formatVersionWithPrefix(input.latestVersion),
+      });
+    }
+    return t("settings.about.updates.download");
+  }
+  if (input.latestVersion) {
     return t("settings.about.updates.updateTo", {
-      version: formatVersionWithPrefix(latestVersion),
+      version: formatVersionWithPrefix(input.latestVersion),
     });
   }
   return t("settings.about.updates.update");
+}
+
+function getUpdateModeDescription(t: TFunction, mode: DesktopUpdateMode): string {
+  if (mode === "off") return t("settings.about.autoUpdate.descriptions.off");
+  if (mode === "notify") return t("settings.about.autoUpdate.descriptions.notify");
+  return t("settings.about.autoUpdate.descriptions.automatic");
+}
+
+function getUpdateConfirmDialogCopy(t: TFunction, isUpdateReady: boolean) {
+  if (isUpdateReady) {
+    return {
+      title: t("settings.about.updates.installTitle"),
+      message: t("settings.about.updates.installMessage"),
+      confirmLabel: t("settings.about.updates.installConfirm"),
+      cancelLabel: t("common.actions.cancel"),
+    };
+  }
+  return {
+    title: t("settings.about.updates.downloadTitle"),
+    message: t("settings.about.updates.downloadMessage"),
+    confirmLabel: t("settings.about.updates.downloadConfirm"),
+    cancelLabel: t("common.actions.cancel"),
+  };
+}
+
+function DesktopUpdateProgressBar({ percent }: { percent: number }) {
+  const accessibilityValue = useMemo(() => ({ min: 0, max: 100, now: percent }), [percent]);
+  const fillStyle = useMemo(
+    () => [styles.aboutUpdateProgressFill, { width: `${percent}%` as const }],
+    [percent],
+  );
+
+  return (
+    <View
+      style={styles.aboutUpdateProgressTrack}
+      accessibilityRole="progressbar"
+      accessibilityValue={accessibilityValue}
+      testID="settings-about-update-progress"
+    >
+      <View style={fillStyle} />
+    </View>
+  );
 }
 
 function DesktopAppUpdateRow() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useSettings();
   const {
+    settings: desktopSettings,
+    isLoading: isLoadingDesktopSettings,
+    updateSettings: updateDesktopSettings,
+  } = useDesktopSettings();
+  const updateMode = desktopSettings.updates.mode;
+  const {
     isDesktopApp,
+    status,
     statusText,
     availableUpdate,
+    downloadProgress,
     errorMessage,
     isChecking,
     isInstalling,
@@ -636,12 +577,12 @@ function DesktopAppUpdateRow() {
 
   useFocusEffect(
     useCallback(() => {
-      if (!isDesktopApp) {
+      if (!isDesktopApp || isLoadingDesktopSettings || updateMode === "off") {
         return undefined;
       }
       void checkForUpdates({ intent: "automatic", silent: true });
       return undefined;
-    }, [checkForUpdates, isDesktopApp]),
+    }, [checkForUpdates, isDesktopApp, isLoadingDesktopSettings, updateMode]),
   );
 
   const handleCheckForUpdates = useCallback(() => {
@@ -665,17 +606,36 @@ function DesktopAppUpdateRow() {
     [t],
   );
 
+  const handleUpdateModeChange = useCallback(
+    (mode: DesktopUpdateMode) => {
+      void updateDesktopSettings({ updates: { mode } });
+    },
+    [updateDesktopSettings],
+  );
+  const updateModeOptions = useMemo(
+    () => [
+      { value: "automatic" as const, label: t("settings.about.autoUpdate.options.automatic") },
+      { value: "notify" as const, label: t("settings.about.autoUpdate.options.notify") },
+      { value: "off" as const, label: t("settings.about.autoUpdate.options.off") },
+    ],
+    [t],
+  );
+
+  const isUpdateReady = availableUpdate?.readyToInstall === true;
+  const isUpdateActionable = status === "available" && availableUpdate?.hasUpdate === true;
+  const readyUpdateVersion = isUpdateReady ? availableUpdate?.latestVersion : null;
+  const actionableVersion = isUpdateActionable ? availableUpdate?.latestVersion : null;
+  const downloadPercent =
+    (isInstalling || status === "pending") && downloadProgress
+      ? Math.max(0, Math.min(100, Math.round(downloadProgress.percent)))
+      : null;
+
   const handleInstallUpdate = useCallback(() => {
     if (!isDesktopApp) {
       return;
     }
 
-    void confirmDialog({
-      title: t("settings.about.updates.installTitle"),
-      message: t("settings.about.updates.installMessage"),
-      confirmLabel: t("settings.about.updates.installConfirm"),
-      cancelLabel: t("common.actions.cancel"),
-    })
+    void confirmDialog(getUpdateConfirmDialogCopy(t, isUpdateReady))
       .then((confirmed) => {
         if (!confirmed) {
           return;
@@ -690,10 +650,7 @@ function DesktopAppUpdateRow() {
           t("settings.about.updates.alertMessage"),
         );
       });
-  }, [installUpdate, isDesktopApp, t]);
-
-  const isUpdateReady = availableUpdate?.readyToInstall === true;
-  const readyUpdateVersion = isUpdateReady ? availableUpdate?.latestVersion : null;
+  }, [installUpdate, isDesktopApp, isUpdateReady, t]);
 
   if (!isDesktopApp) {
     return null;
@@ -716,6 +673,18 @@ function DesktopAppUpdateRow() {
       </View>
       <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
         <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>{t("settings.about.autoUpdate.label")}</Text>
+          <Text style={settingsStyles.rowHint}>{getUpdateModeDescription(t, updateMode)}</Text>
+        </View>
+        <SegmentedControl
+          value={updateMode}
+          onValueChange={handleUpdateModeChange}
+          options={updateModeOptions}
+          testID="settings-about-update-mode"
+        />
+      </View>
+      <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+        <View style={settingsStyles.rowContent}>
           <Text style={settingsStyles.rowTitle}>{t("settings.about.updates.label")}</Text>
           <Text style={settingsStyles.rowHint}>{statusText}</Text>
           {readyUpdateVersion ? (
@@ -725,6 +694,7 @@ function DesktopAppUpdateRow() {
               })}
             </Text>
           ) : null}
+          {downloadPercent !== null ? <DesktopUpdateProgressBar percent={downloadPercent} /> : null}
           {errorMessage ? <Text style={styles.aboutErrorText}>{errorMessage}</Text> : null}
         </View>
         <View style={styles.aboutUpdateActions}>
@@ -738,9 +708,15 @@ function DesktopAppUpdateRow() {
           <Button
             variant="default"
             onPress={handleInstallUpdate}
-            disabled={isChecking || isInstalling || !isUpdateReady}
+            disabled={isChecking || isInstalling || !isUpdateActionable}
           >
-            {getUpdateButtonLabel(t, isInstalling, readyUpdateVersion)}
+            {getUpdateButtonLabel(t, {
+              isInstalling,
+              isDownloading: isInstalling && downloadProgress != null,
+              isActionable: isUpdateActionable,
+              readyToInstall: isUpdateReady,
+              latestVersion: actionableVersion,
+            })}
           </Button>
         </View>
       </View>
@@ -791,6 +767,7 @@ function SidebarSectionButton({
       accessibilityRole="button"
       accessibilityState={accessibilityState}
       onPress={handlePress}
+      testID={`settings-section-${itemId}`}
       style={isSelected ? selectedSidebarItemStyle : sidebarItemStyle}
     >
       <IconComponent
@@ -906,7 +883,7 @@ function HostPicker({
       showActiveConnection
       searchable={false}
       title={t("settings.hostPicker.switchHost")}
-      desktopMinWidth={240}
+      desktopMinWidth={328}
       addHostTestID="settings-add-host"
       hostOptionTestID={hostOptionTestID}
     >
@@ -986,10 +963,16 @@ function SettingsSidebar({
     () => [{ flex: 1 }, isDesktop ? { paddingTop: insets.top } : null],
     [insets.top, isDesktop],
   );
-  const selectedSectionId = view.kind === "section" ? view.section : null;
+  let selectedSectionId: SettingsSectionSlug | null = null;
+  if (view.kind === "section") {
+    selectedSectionId = view.section;
+  } else if (view.kind === "clientHost") {
+    selectedSectionId = "hosts";
+  }
   let selectedHostSection: HostSectionSlug | null = null;
   if (view.kind === "host") selectedHostSection = view.section;
   if (view.kind === "project") selectedHostSection = "projects";
+  if (view.kind === "provider") selectedHostSection = "providers";
   if (view.kind === "plugin" || view.kind === "pluginListing") selectedHostSection = "plugins";
 
   const sidebarBody = (
@@ -1102,6 +1085,140 @@ function SettingsSidebar({
   );
 }
 
+interface SettingsBeforeLeaveGuard {
+  isDirty: () => boolean;
+  confirmDiscard: () => Promise<boolean>;
+  subscribeDirty?: (listener: () => void) => () => void;
+}
+
+/**
+ * Lets an active Settings editor (such as Agent profiles) veto both in-app
+ * section switches and route-boundary exits (browser Back, native swipe-back,
+ * hardware Back) with a single discard confirmation.
+ *
+ * Uses `usePreventRemove` so native stacks set `preventNativeDismiss` before
+ * iOS can interactively dismiss the screen on a back swipe.
+ */
+function useSettingsBeforeLeaveGuard() {
+  const navigation = useNavigation();
+  const beforeLeaveRef = useRef<SettingsBeforeLeaveGuard | null>(null);
+  const dirtyUnsubRef = useRef<(() => void) | null>(null);
+  const [preventRemove, setPreventRemove] = useState(false);
+
+  const registerBeforeLeave = useCallback((guard: SettingsBeforeLeaveGuard | null) => {
+    dirtyUnsubRef.current?.();
+    dirtyUnsubRef.current = null;
+    beforeLeaveRef.current = guard;
+    const syncDirty = () => {
+      setPreventRemove(Boolean(beforeLeaveRef.current?.isDirty()));
+    };
+    syncDirty();
+    if (guard?.subscribeDirty) {
+      dirtyUnsubRef.current = guard.subscribeDirty(syncDirty);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      dirtyUnsubRef.current?.();
+      dirtyUnsubRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    return registerRouteLeaveGuard({
+      isDirty: () => Boolean(beforeLeaveRef.current?.isDirty()),
+      confirmDiscard: async () => (await beforeLeaveRef.current?.confirmDiscard()) ?? true,
+    });
+  }, []);
+
+  usePreventRemove(preventRemove, ({ data }) => {
+    const guard = beforeLeaveRef.current;
+    if (!guard?.isDirty()) {
+      navigation.dispatch(data.action);
+      return;
+    }
+    const confirmAndLeave = async () => {
+      if (await guard.confirmDiscard()) {
+        navigation.dispatch(data.action);
+      }
+    };
+    void confirmAndLeave();
+  });
+
+  const guardNavigation = useCallback((navigate: () => void) => {
+    const guard = beforeLeaveRef.current;
+    if (!guard?.isDirty()) {
+      navigate();
+      return;
+    }
+    const run = async () => {
+      if (await guard.confirmDiscard()) {
+        navigate();
+      }
+    };
+    void run();
+  }, []);
+
+  return { registerBeforeLeave, guardNavigation };
+}
+
+function SettingsDetailPane({
+  view,
+  isCompactLayout,
+  detailTitle,
+  detailActions,
+  detailWidth,
+  onBack,
+  onRegisterBeforeLeave,
+  content,
+}: {
+  view: SettingsView;
+  isCompactLayout: boolean;
+  detailTitle: string | undefined;
+  detailActions: React.ReactNode;
+  detailWidth: React.ComponentProps<typeof PageLayout>["width"];
+  onBack: () => void;
+  onRegisterBeforeLeave: (guard: SettingsBeforeLeaveGuard | null) => void;
+  content: React.ReactNode;
+}) {
+  const isStandaloneAgentProfilesView = view.kind === "host" && view.section === "agent-profiles";
+  const pageTitle =
+    !isCompactLayout &&
+    (view.kind === "project" || view.kind === "provider" || view.kind === "clientHost")
+      ? undefined
+      : detailTitle;
+
+  return (
+    <WindowChromeRegion corners={isCompactLayout ? "both" : "top-right"}>
+      <View
+        style={isCompactLayout ? desktopStyles.compactContentPane : desktopStyles.contentPane}
+        testID={isCompactLayout ? undefined : "settings-detail-pane"}
+      >
+        {isStandaloneAgentProfilesView ? (
+          <HostAgentProfilesPage
+            serverId={view.serverId}
+            onBack={isCompactLayout ? onBack : undefined}
+            onRegisterBeforeLeave={onRegisterBeforeLeave}
+          />
+        ) : (
+          <PageLayout
+            // A project or provider page draws its own title on desktop, naming the list it came from.
+            title={pageTitle}
+            onBack={isCompactLayout ? onBack : undefined}
+            actions={detailActions}
+            width={detailWidth}
+            titleTestID={isCompactLayout ? undefined : "settings-detail-header-title"}
+            testID={isCompactLayout ? undefined : "settings-detail-scroll-body"}
+          >
+            {content}
+          </PageLayout>
+        )}
+      </View>
+    </WindowChromeRegion>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main screen
 // ---------------------------------------------------------------------------
@@ -1137,7 +1254,8 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
       view.kind === "host" ||
       view.kind === "project" ||
       view.kind === "plugin" ||
-      view.kind === "pluginListing"
+      view.kind === "pluginListing" ||
+      view.kind === "provider"
     )
       return view.serverId;
     return resolveActiveHostServerId({
@@ -1187,7 +1305,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   const handleHostAdded = useCallback(
     (serverId: string) => {
       selectSettingsHost(serverId);
-      const target = buildSettingsHostSectionRoute(serverId, "host");
+      const target = buildClientHostSettingsRoute(serverId);
       if (isCompactLayout) {
         router.push(target);
       } else {
@@ -1198,10 +1316,11 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   );
 
   const handleAddHost = useAddHost({ onAdded: handleHostAdded });
+  const enableBuiltInDaemonOption = useEnableBuiltInDaemonOption();
+  const { registerBeforeLeave, guardNavigation } = useSettingsBeforeLeaveGuard();
 
-  const handleSelectSection = useCallback(
-    (section: SettingsSectionSlug) => {
-      const target = buildSettingsSectionRoute(section);
+  const navigateRoute = useCallback(
+    (target: Parameters<typeof router.push>[0]) => {
       if (isCompactLayout) {
         router.push(target);
       } else {
@@ -1211,65 +1330,94 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     [isCompactLayout, router],
   );
 
+  const handleSelectSection = useCallback(
+    (section: SettingsSectionSlug) => {
+      if (view.kind === "section" && view.section === section) {
+        return;
+      }
+      const target = buildSettingsSectionRoute(section);
+      guardNavigation(() => navigateRoute(target));
+    },
+    [guardNavigation, navigateRoute, view],
+  );
+
   // Picker: choose the host for host-section rows. If the user is already on a
   // host detail route, keep that detail section and swap only the host segment.
   const handleSelectHost = useCallback(
     (serverId: string) => {
-      selectSettingsHost(serverId);
-      if (view.kind === "project") {
-        const target = buildSettingsHostSectionRoute(serverId, "projects");
-        if (isCompactLayout) {
-          router.push(target);
-        } else {
-          router.replace(target);
+      if (view.kind === "host" && view.serverId === serverId) {
+        return;
+      }
+      const applySelection = () => {
+        selectSettingsHost(serverId);
+        if (view.kind === "project" || view.kind === "provider") {
+          // The detail belongs to the old host; open the same list on the new one.
+          navigateRoute(
+            buildSettingsHostSectionRoute(
+              serverId,
+              view.kind === "project" ? "projects" : "providers",
+            ),
+          );
+          return;
         }
-        return;
-      }
-      if (view.kind !== "host") {
-        return;
-      }
-      const target = buildSettingsHostSectionRoute(serverId, view.section);
-      if (isCompactLayout) {
-        router.push(target);
-      } else {
-        router.replace(target);
-      }
+        if (view.kind === "host") {
+          navigateRoute(buildSettingsHostSectionRoute(serverId, view.section));
+        }
+      };
+      guardNavigation(applySelection);
     },
-    [isCompactLayout, router, view],
+    [guardNavigation, navigateRoute, view],
   );
 
   const handleSelectHostSection = useCallback(
     (section: HostSectionSlug) => {
       if (!activeHostServerId) {
-        handleAddHost();
+        guardNavigation(handleAddHost);
+        return;
+      }
+      if (
+        view.kind === "host" &&
+        view.serverId === activeHostServerId &&
+        view.section === section
+      ) {
         return;
       }
       const target = buildSettingsHostSectionRoute(activeHostServerId, section);
-      if (isCompactLayout) {
-        router.push(target);
-      } else {
-        router.replace(target);
-      }
+      guardNavigation(() => navigateRoute(target));
     },
-    [activeHostServerId, handleAddHost, isCompactLayout, router],
+    [activeHostServerId, guardNavigation, handleAddHost, navigateRoute, view],
+  );
+
+  const handleSelectClientHost = useCallback(
+    (serverId: string) => {
+      const target = buildClientHostSettingsRoute(serverId);
+      guardNavigation(() => navigateRoute(target));
+    },
+    [guardNavigation, navigateRoute],
   );
 
   const handleHostRemoved = useCallback(() => {
-    const fallback = buildSettingsSectionRoute("general");
+    const target = buildSettingsSectionRoute("hosts");
     if (isCompactLayout) {
-      router.replace("/settings");
+      router.dismissTo(target);
     } else {
-      router.replace(fallback);
+      router.replace(target);
     }
   }, [isCompactLayout, router]);
 
   const handleBackFromDetail = useCallback(() => {
-    returnFromSettings(view);
-  }, [view]);
+    guardNavigation(() => {
+      if (view.kind === "clientHost" && !isCompactLayout) {
+        router.replace(buildSettingsSectionRoute("hosts"));
+        return;
+      }
+      returnFromSettings(view);
+    });
+  }, [guardNavigation, isCompactLayout, router, view]);
 
   const handleBackToWorkspace = useCallback(() => {
-    returnFromSettings({ kind: "root" });
-  }, []);
+    guardNavigation(() => returnFromSettings({ kind: "root" }));
+  }, [guardNavigation]);
 
   // A plugin's page draws its own header; the compact back header names the plugin.
   const pluginPage = useMemo((): { serverId: string; subject: PluginPageSubject } | null => {
@@ -1293,9 +1441,13 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
       const item = SIDEBAR_SECTION_ITEMS.find((s) => s.id === view.section);
       return item ? t(item.labelKey) : undefined;
     }
+    if (view.kind === "clientHost") {
+      return t("settings.sections.hosts");
+    }
     if (view.kind === "project") {
       return t("settings.projects");
     }
+    if (view.kind === "provider") return t("settings.hostSections.providers");
     return undefined;
   })();
 
@@ -1309,6 +1461,16 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   // The gallery and a plugin's page share one width, so opening a plugin keeps the page edges put.
   const detailWidth = pluginGalleryServerId || pluginPage ? "wide" : "default";
 
+  const aboutDiagnostics = useMemo(
+    () => ({
+      voiceAudioEngine,
+      isPlaybackTestRunning,
+      playbackTestResult,
+      handlePlaybackTest,
+    }),
+    [handlePlaybackTest, isPlaybackTestRunning, playbackTestResult, voiceAudioEngine],
+  );
+
   const content: ReactNode = (() => {
     if (pluginPage)
       return (
@@ -1318,8 +1480,18 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
           onBack={handleBackFromDetail}
         />
       );
+    if (view.kind === "clientHost") {
+      return (
+        <ClientHostDetailPage
+          serverId={view.serverId}
+          onBack={handleBackFromDetail}
+          onAddHost={handleAddHost}
+          onHostRemoved={handleHostRemoved}
+        />
+      );
+    }
     if (view.kind === "host") {
-      return renderHostSettingsContent(view, handleHostRemoved);
+      return renderHostSettingsContent(view);
     }
     if (view.kind === "project") {
       return (
@@ -1327,7 +1499,15 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
           serverId={view.serverId}
           projectId={view.projectId}
           onBackToProjects={handleBackFromDetail}
-          showBackToProjects={!isCompactLayout}
+        />
+      );
+    }
+    if (view.kind === "provider") {
+      return (
+        <ProviderDetailPage
+          serverId={view.serverId}
+          provider={view.providerId}
+          onBack={handleBackFromDetail}
         />
       );
     }
@@ -1339,25 +1519,42 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
           return (
             <>
               <GeneralSection settings={settings} handleLanguageChange={handleLanguageChange} />
-              <SendingSection />
-              {isDesktopApp ? <OpenLocationSection /> : null}
+              {isDesktopApp ? <IntegrationsSection /> : null}
             </>
           );
-        case "diagnostics":
+        case "hosts":
           return (
-            <DiagnosticsSection
-              voiceAudioEngine={voiceAudioEngine}
-              isPlaybackTestRunning={isPlaybackTestRunning}
-              playbackTestResult={playbackTestResult}
-              handlePlaybackTest={handlePlaybackTest}
+            <ClientHostsSection
+              onSelectHost={handleSelectClientHost}
+              onAddHost={handleAddHost}
+              enableBuiltInDaemonOption={enableBuiltInDaemonOption}
             />
+          );
+        case "chat":
+          return (
+            <>
+              <SendingSection />
+              <ChatSection />
+              {isDesktopApp ? <OpenLocationSection /> : null}
+              {isWeb ? <EditorSection /> : null}
+              <TerminalSection />
+              <FilesSection />
+              {isDesktopApp ? <BrowserDataSection /> : null}
+            </>
+          );
+        case "notifications":
+          return (
+            <>
+              <NotificationsSection />
+              {isDesktopApp ? <DesktopPermissionsSection /> : null}
+            </>
           );
         case "about":
           return (
             <AboutSection
-              appVersion={appVersion}
               appVersionText={appVersionText}
               isDesktopApp={isDesktopApp}
+              diagnostics={aboutDiagnostics}
             />
           );
         default:
@@ -1396,52 +1593,36 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     );
   }
 
-  if (isCompactLayout) {
-    return (
-      <View style={styles.container} onLayout={onContentLayout}>
-        <PageLayout
-          title={detailTitle}
-          onBack={handleBackFromDetail}
-          actions={detailActions}
-          width={detailWidth}
-        >
-          {content}
-        </PageLayout>
-      </View>
-    );
-  }
-
-  // Desktop split view — mirrors AppContainer: sidebar owns the titlebar drag
-  // region + traffic-light padding; detail pane renders whatever header the
-  // selected section provides.
+  // Desktop split view and compact detail view share one wrapper tree around the
+  // detail pane so resizing across the compact breakpoint never unmounts active
+  // detail screens or discards in-progress edits (e.g., Agent profiles drawer → sheet).
   return (
     <View style={styles.container} onLayout={onContentLayout}>
       <View style={desktopStyles.row}>
-        <WindowChromeRegion corners="top-left">
-          <SettingsSidebar
-            view={view}
-            onSelectSection={handleSelectSection}
-            onSelectHostSection={handleSelectHostSection}
-            onSelectHost={handleSelectHost}
-            onAddHost={handleAddHost}
-            onBackToWorkspace={handleBackToWorkspace}
-            activeHostServerId={activeHostServerId}
-            layout="desktop"
-          />
-        </WindowChromeRegion>
-        <WindowChromeRegion corners="top-right">
-          <View style={desktopStyles.contentPane} testID="settings-detail-pane">
-            <PageLayout
-              title={detailTitle}
-              actions={detailActions}
-              width={detailWidth}
-              titleTestID="settings-detail-header-title"
-              testID="settings-detail-scroll-body"
-            >
-              {content}
-            </PageLayout>
-          </View>
-        </WindowChromeRegion>
+        {isCompactLayout ? null : (
+          <WindowChromeRegion corners="top-left">
+            <SettingsSidebar
+              view={view}
+              onSelectSection={handleSelectSection}
+              onSelectHostSection={handleSelectHostSection}
+              onSelectHost={handleSelectHost}
+              onAddHost={handleAddHost}
+              onBackToWorkspace={handleBackToWorkspace}
+              activeHostServerId={activeHostServerId}
+              layout="desktop"
+            />
+          </WindowChromeRegion>
+        )}
+        <SettingsDetailPane
+          view={view}
+          isCompactLayout={isCompactLayout}
+          detailTitle={detailTitle}
+          detailActions={detailActions}
+          detailWidth={detailWidth}
+          onBack={handleBackFromDetail}
+          onRegisterBeforeLeave={registerBeforeLeave}
+          content={content}
+        />
       </View>
     </View>
   );
@@ -1473,9 +1654,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
   },
-  aboutVersionMismatch: {
-    color: theme.colors.palette.amber[500],
-  },
   aboutErrorText: {
     color: theme.colors.palette.red[300],
     fontSize: theme.fontSize.sm,
@@ -1488,6 +1666,19 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+  },
+  aboutUpdateProgressTrack: {
+    marginTop: theme.spacing[2],
+    height: 4,
+    maxWidth: 260,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface3,
+    overflow: "hidden",
+  },
+  aboutUpdateProgressFill: {
+    height: "100%",
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.accent,
   },
   placeholder: {
     flex: 1,
@@ -1510,6 +1701,10 @@ const desktopStyles = StyleSheet.create({
     flex: 1,
     minWidth: SETTINGS_DESKTOP_DETAIL_MIN_WIDTH,
   },
+  compactContentPane: {
+    flex: 1,
+    minWidth: 0,
+  },
 });
 
 const sidebarStyles = StyleSheet.create((theme) => ({
@@ -1531,8 +1726,10 @@ const sidebarStyles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
   },
   // Compact values draw each group as an island of tiles; desktop keeps a plain list.
+  // Use vertical margin rather than padding so trailing empty group padding cannot
+  // intersect the scrollport top alone and capture browser scroll anchoring.
   group: {
-    paddingVertical: theme.spacing[2],
+    marginVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[2],
     gap: { xs: theme.spacing[1], md: theme.spacing[0.5] },
   },

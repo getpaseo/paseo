@@ -22,7 +22,7 @@ type AgentSkillsClient = Pick<
   "close" | "connect" | "getAgentSkillsStatus" | "saveAgentSkillsSelection"
 >;
 
-export type SkillTargetName = "agents" | "claude";
+export type SkillTargetName = "agents" | "claude" | "antigravity";
 
 export interface AgentSkillsSandbox {
   available: string[];
@@ -64,6 +64,7 @@ export async function startAgentSkillsSandbox(): Promise<AgentSkillsSandbox> {
   const targets = {
     agents: path.join(home, ".agents", "skills"),
     claude: path.join(home, ".claude", "skills"),
+    antigravity: path.join(home, ".gemini", "config", "skills"),
   };
   const codexSkillsDir = path.join(home, ".codex", "skills");
 
@@ -133,9 +134,13 @@ export async function openAgentSkillsSettings(
     host: "127.0.0.1",
     port: sandbox.daemon.port,
   });
-  if (options.compact) await goBackInSettings(page);
+  if (options.compact) {
+    // Adding a host opens its client host detail page; back once goes to Hosts, back again returns to the Settings root.
+    await goBackInSettings(page);
+    await goBackInSettings(page);
+  }
   await selectSettingsHost(page, sandbox.daemon.serverId);
-  await openHostSection(page, sandbox.daemon.serverId, "agents");
+  await openHostSection(page, sandbox.daemon.serverId, "tools");
   await expect(page.getByTestId("host-agent-skills-card")).toBeVisible();
 }
 

@@ -1,7 +1,14 @@
 import { open, type FileHandle } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 import { basename, extname, join } from "node:path";
-import type { AgentProvider, AgentStreamEvent, AgentTimelineItem } from "../../agent-sdk-types.js";
+import type {
+  AgentMetric,
+  AgentProvider,
+  AgentStreamEvent,
+  AgentTimelineItem,
+} from "../../agent-sdk-types.js";
+import type { MeasuredStep } from "../turn-metrics.js";
+import { ompReplayedTurns } from "./metrics.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { OmpHistoryMapper, type OmpCapturedUserMessageEntry } from "./message-history.js";
 import type { OmpAgentMessage } from "./rpc-types.js";
@@ -67,19 +74,25 @@ function buildOmpModelId(provider: unknown, model: unknown): string | null {
   return normalizedProvider && normalizedModel ? `${normalizedProvider}/${normalizedModel}` : null;
 }
 
+/** What a replay learned that the live session reports from later. */
+export interface OmpHistoryReplay {
+  lastReply: MeasuredStep | null;
+}
+
 export async function* streamOmpHistory(input: {
   sessionFile?: string;
   runtimeSession?: OmpRuntimeSession;
   provider: AgentProvider;
   bridgedTools?: ReadonlyMap<string, OmpBridgedToolIdentity>;
   visitedSessionFiles?: Set<string>;
-}): AsyncGenerator<AgentStreamEvent> {
+}): AsyncGenerator<AgentStreamEvent, OmpHistoryReplay> {
+  const replay: OmpHistoryReplay = { lastReply: null };
   if (!input.sessionFile) {
-    return;
+    return replay;
   }
   const visitedSessionFiles = input.visitedSessionFiles ?? new Set<string>();
   if (visitedSessionFiles.has(input.sessionFile)) {
-    return;
+    return replay;
   }
   visitedSessionFiles.add(input.sessionFile);
   let entries: OmpSessionEntry[];
@@ -90,7 +103,7 @@ export async function* streamOmpHistory(input: {
     );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return;
+      return replay;
     }
     throw error;
   }
@@ -118,6 +131,9 @@ export async function* streamOmpHistory(input: {
     OMP_HISTORY_MAPPER_HOOKS,
     input.bridgedTools,
   );
+  const turns = ompReplayedTurns();
+  const turnCompleted = (metrics: AgentMetric[]): AgentStreamEvent[] =>
+    metrics.length ? [{ type: "turn_completed", provider: input.provider, metrics }] : [];
   let replayed = 0;
   for (const replayEntry of replayEntries) {
     if (++replayed % 32 === 0) await setImmediate();
@@ -125,14 +141,20 @@ export async function* streamOmpHistory(input: {
     const events: AgentStreamEvent[] =
       "item" in replayEntry
         ? [{ type: "timeline", provider: input.provider, item: replayEntry.item }]
-        : mapper.mapMessages([replayEntry.message]);
+        : [
+            ...turnCompleted(turns.observe(replayEntry.message)),
+            ...mapper.mapMessages([replayEntry.message]),
+          ];
     for (const event of events) {
       yield timestamp && event.type === "timeline" ? { ...event, timestamp } : event;
     }
   }
+  yield* turnCompleted(turns.end());
+  replay.lastReply = turns.lastReply;
   for (const transcript of readSubagentTranscripts(messages, input.sessionFile)) {
     yield* replaySubagentTranscript(transcript, input.provider, visitedSessionFiles);
   }
+  return replay;
 }
 
 async function* replaySubagentTranscript(

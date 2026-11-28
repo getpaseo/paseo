@@ -6,13 +6,16 @@ import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import { relative } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { runAcpProvider, type AcpStreamMessage } from "@getpaseo/plugin/server/acp";
 import type {
+  ProviderCapability,
   ProviderConnection,
   ProviderLaunch,
   ProviderEvent,
   ProviderInput,
   ProviderRegistration,
 } from "@getpaseo/plugin/server/provider";
+import { sendPreparedPromptToAgent } from "./agent-prompt.js";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -22,6 +25,8 @@ import { AgentManager } from "./agent-manager.js";
 import { buildProviderRegistry } from "./provider-registry.js";
 import { ProviderOverrideSchema } from "@getpaseo/protocol/provider-config";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
+import { ToolPolicyUnsupportedError } from "./provider-options.js";
+import { runProviderRefreshWithDeadline } from "./provider-refresh-deadline.js";
 import {
   isStaleProviderSessionError,
   StaleProviderSessionError,
@@ -56,6 +61,24 @@ interface ProviderHarnessOptions {
   closeAcknowledgementOnly?: boolean;
   openChildren?: (rootSessionId: string, emit: (event: ProviderEvent) => void) => void;
   handleInput?: (input: ProviderInput, emit: (event: ProviderEvent) => void) => Promise<boolean>;
+}
+
+interface ModelThinking {
+  id: string;
+  thinkingOptions?: readonly { id: string }[];
+  defaultThinkingOptionId?: string;
+}
+
+function modelThinking(model: ModelThinking) {
+  return {
+    id: model.id,
+    thinkingOptions: model.thinkingOptions?.map(optionId),
+    defaultThinkingOptionId: model.defaultThinkingOptionId,
+  };
+}
+
+function optionId(option: { id: string }): string {
+  return option.id;
 }
 
 function controlKey(control: { key: string }): string {
@@ -256,11 +279,44 @@ function eventsOfType(events: AgentStreamEvent[], type: AgentStreamEvent["type"]
   return events.filter((event) => event.type === type);
 }
 
+test("preserves skills in a plugin session's command list", async () => {
+  const harness = createProviderHarness();
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const session = await registry.clients()[harness.registration.id]!.createSession({
+    provider: harness.registration.id,
+    cwd: tmpdir(),
+  });
+  try {
+    const open = harness.inputs.find((input) => input.type === "session.open")!;
+    harness.emit({
+      type: "session.commands",
+      sessionId: open.sessionId,
+      commands: [
+        { name: "compact", description: "Compact the conversation" },
+        { name: "diagnose", description: "Diagnose a bug", kind: "skill" },
+      ],
+    });
+    await expect(session.listCommands!()).resolves.toEqual([
+      {
+        name: "compact",
+        description: "Compact the conversation",
+        argumentHint: "",
+        kind: "command",
+      },
+      { name: "diagnose", description: "Diagnose a bug", argumentHint: "", kind: "skill" },
+    ]);
+  } finally {
+    await session.close();
+  }
+});
+
 function createRewindProviderHarness(
   options: {
     reuseAnswerId?: boolean;
     forkOnRevert?: boolean;
     handleInput?: ProviderHarnessOptions["handleInput"];
+    extraCapabilities?: ProviderCapability[];
   } = {},
 ) {
   const nativeMessages: string[] = [];
@@ -272,6 +328,7 @@ function createRewindProviderHarness(
       "session.revert.conversation",
       "session.revert.files",
       "session.revert.both",
+      ...(options.extraCapabilities ?? []),
     ],
     async handleInput(input, emit) {
       if (await options.handleInput?.(input, emit)) return true;
@@ -2097,6 +2154,48 @@ describe("PluginAgentClientRegistry", () => {
     }
   });
 
+  test("keeps a model's own thinking options and default instead of the catalog's", async () => {
+    const harness = createProviderHarness({
+      async handleInput(input, emit) {
+        if (input.type !== "catalog") return false;
+        emit({
+          type: "catalog",
+          requestId: input.requestId,
+          catalog: {
+            models: [
+              { id: "shared", label: "Shared" },
+              {
+                id: "fast",
+                label: "Fast",
+                thinkingOptions: [{ id: "light", label: "Light" }],
+                defaultThinkingOptionId: "light",
+              },
+              { id: "planner", label: "Planner", thinkingOptions: [] },
+            ],
+            modes: [],
+            thinkingOptions: [{ id: "deep", label: "Deep" }],
+            defaultModel: "shared",
+            defaultThinkingOption: "deep",
+          },
+        });
+        return true;
+      },
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    try {
+      const client = registry.clients()[harness.registration.id]!;
+      const catalog = await client.fetchCatalog({ scope: "global", force: false });
+      expect(catalog.models.map(modelThinking)).toEqual([
+        { id: "shared", thinkingOptions: ["deep"], defaultThinkingOptionId: "deep" },
+        { id: "fast", thinkingOptions: ["light"], defaultThinkingOptionId: "light" },
+        { id: "planner", thinkingOptions: [], defaultThinkingOptionId: undefined },
+      ]);
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
   test("adapts callback providers into the existing AgentClient and AgentSession path", async () => {
     const harness = createProviderHarness();
     const registry = new PluginAgentClientRegistry(createTestLogger());
@@ -2185,6 +2284,73 @@ describe("PluginAgentClientRegistry", () => {
     expect(harness.inputs.map((input) => input.type)).toContain("session.close");
   });
 
+  test("carries a plugin's session and turn metrics into the agent stream", async () => {
+    const turnMetrics = [
+      { label: "Model", value: "plugin-model" },
+      { label: "Cache", value: "82%", tone: "ok" as const },
+    ];
+    const sessionMetrics = [{ label: "Cost", value: "$1.23" }];
+    const harness = createProviderHarness({
+      handleInput: async (input, emit) => {
+        if (input.type !== "session.prompt") return false;
+        emit({
+          type: "session.prompt_result",
+          sessionId: input.sessionId,
+          clientMessageId: input.prompt.clientMessageId,
+          result: { type: "turn", turnId: "turn-1" },
+        });
+        emit({
+          type: "session.turn",
+          sessionId: input.sessionId,
+          turnId: "turn-1",
+          state: "started",
+        });
+        emit({
+          type: "session.turn",
+          sessionId: input.sessionId,
+          turnId: "turn-1",
+          state: "completed",
+          metrics: turnMetrics,
+        });
+        emit({ type: "session.metrics", sessionId: input.sessionId, metrics: sessionMetrics });
+        return true;
+      },
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id]!;
+    const session = await client.createSession({ provider: harness.registration.id, cwd: "/tmp" });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("hello", { clientMessageId: "client-message" });
+
+      expect(eventsOfType(events, "turn_completed")).toEqual([
+        {
+          type: "turn_completed",
+          provider: "plugin-direct",
+          turnId: "turn-1",
+          metrics: turnMetrics,
+        },
+      ]);
+      expect(eventsOfType(events, "session_metrics_updated")).toEqual([
+        { type: "session_metrics_updated", provider: "plugin-direct", metrics: sessionMetrics },
+      ]);
+      const history: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) history.push(event);
+      expect(eventsOfType(history, "turn_completed")).toContainEqual({
+        type: "turn_completed",
+        provider: "plugin-direct",
+        turnId: "turn-1",
+        metrics: turnMetrics,
+      });
+    } finally {
+      unsubscribe();
+      await session.close();
+      registry.replace([]);
+    }
+  });
+
   test("delivers a supported steer to the active turn", async () => {
     const harness = createProviderHarness({
       capabilities: [...CAPABILITIES, "prompt.steer"],
@@ -2225,7 +2391,7 @@ describe("PluginAgentClientRegistry", () => {
     }
   });
 
-  test("returns unavailable when steering a provider without prompt.steer capability", async () => {
+  test("offers no steering when the provider did not negotiate prompt.steer", async () => {
     const harness = createProviderHarness({
       capabilities: [
         "prompt.message",
@@ -2242,9 +2408,7 @@ describe("PluginAgentClientRegistry", () => {
       cwd: "/workspace",
     });
     try {
-      const result = await session.steerActiveTurn!("hello", { expectedTurnId: "turn-1" });
-      expect(result).toEqual({ status: "unavailable" });
-      expect(harness.inputs.filter((input) => input.type === "session.prompt")).toHaveLength(0);
+      expect(session.steerActiveTurn).toBeUndefined();
     } finally {
       await session.close();
       registry.replace([]);
@@ -2464,7 +2628,144 @@ describe("pending provider responses", () => {
       );
     },
   );
+
+  test.each([
+    { offered: true, cancels: true },
+    { offered: false, cancels: false },
+  ])(
+    "tells the provider to cancel an abandoned catalogue request: offered $offered",
+    async ({ offered, cancels }) => {
+      const controller = new AbortController();
+      const inputs: ProviderInput[] = [];
+      await withObservedProvider(
+        {
+          capabilities: offered ? [...CAPABILITIES, "request.cancel"] : CAPABILITIES,
+          async handleInput(input) {
+            inputs.push(input);
+            if (input.type === "catalog") setImmediate(() => controller.abort(new Error("Late")));
+            return input.type === "catalog" || input.type === "request.cancel";
+          },
+        },
+        async (client) => {
+          await expect(
+            client.fetchCatalog({ scope: "global" }, { signal: controller.signal }),
+          ).rejects.toThrow("Late");
+          await nextTurn();
+        },
+      );
+      const catalog = inputs.find((input) => input.type === "catalog");
+      expect(inputs.filter((input) => input.type === "request.cancel")).toEqual(
+        cancels && catalog && "requestId" in catalog
+          ? [{ type: "request.cancel", requestId: catalog.requestId }]
+          : [],
+      );
+    },
+  );
 });
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+async function readIfPresent(file: string): Promise<string> {
+  const { readFile } = await import("node:fs/promises");
+  return readFile(file, "utf8").catch(() => "");
+}
+
+describe("timed-out plugin catalogue refresh", () => {
+  test("stops the ACP probe stuck in session/new and keeps the provider's running agent", async () => {
+    const logger = createTestLogger();
+    const home = await mkdtemp(join(tmpdir(), "paseo-acp-refresh-timeout-"));
+    const catalogCwd = join(home, "catalog");
+    const storage = new AgentStorage(join(home, "agents"), logger);
+    const script = join(home, "agent.cjs");
+    const { mkdir, readFile, writeFile } = await import("node:fs/promises");
+    await mkdir(catalogCwd);
+    // The catalogue probe records its PID, never answers session/new, and ignores stdin EOF.
+    await writeFile(
+      script,
+      `
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const { createInterface } = require("node:readline");
+      const catalogCwd = ${JSON.stringify(catalogCwd)};
+      const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...msg }) + "\\n");
+      createInterface({ input: process.stdin }).on("line", (line) => {
+        const msg = JSON.parse(line);
+        if (msg.method === "initialize") {
+          send({ id: msg.id, result: { protocolVersion: 1, agentCapabilities: {} } });
+        } else if (msg.method === "session/new" && msg.params.cwd === catalogCwd) {
+          setInterval(() => undefined, 1_000);
+          fs.writeFileSync(path.join(catalogCwd, "probe.pid"), String(process.pid));
+        } else if (msg.method === "session/new") {
+          send({ id: msg.id, result: { sessionId: "live-1", configOptions: [] } });
+        } else if (msg.method === "session/prompt") {
+          send({ method: "session/update", params: { sessionId: "live-1", update: {
+            sessionUpdate: "agent_message_chunk", content: { type: "text", text: "still here" },
+          } } });
+          send({ id: msg.id, result: { stopReason: "end_turn" } });
+        } else if (msg.method === "session/close") {
+          send({ id: msg.id, result: {} });
+        }
+      });
+      `,
+    );
+    const registration = runAcpProvider({
+      id: "hanging-catalog-acp",
+      label: "Hanging Catalog ACP",
+      command: [process.execPath, script],
+    });
+    const plugins = new PluginAgentClientRegistry(logger);
+    plugins.replace([registration]);
+    const manager = new AgentManager({ clients: plugins.clients(), registry: storage, logger });
+    try {
+      const agent = await manager.createAgent({ provider: registration.id, cwd: home }, undefined, {
+        workspaceId: undefined,
+      });
+      const client = plugins.clients()[registration.id]!;
+
+      const refresh = runProviderRefreshWithDeadline({
+        label: registration.label,
+        timeoutMs: 1_000,
+        operation: (context) =>
+          client.fetchCatalog({ scope: "workspace", cwd: catalogCwd }, context),
+      });
+      const pidFile = join(catalogCwd, "probe.pid");
+      await expect.poll(() => readIfPresent(pidFile), { timeout: 5_000 }).not.toBe("");
+      const pid = Number(await readFile(pidFile, "utf8"));
+      await expect(refresh).rejects.toThrow(
+        "Timed out refreshing Hanging Catalog ACP after 1000ms",
+      );
+      await expect.poll(() => isRunning(pid), { timeout: 3_000 }).toBe(false);
+
+      const next = await sendPreparedPromptToAgent({
+        agentManager: manager,
+        agentStorage: storage,
+        agentId: agent.id,
+        prompt: "are you still there?",
+        logger,
+      });
+      expect(next.disposition).toBe("turn_started");
+      if (next.disposition === "turn_started") await next.started;
+      await expect
+        .poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 3_000 })
+        .toBe("idle");
+    } finally {
+      await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+      await plugins.shutdown();
+      await storage.flush();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+});
+
+/** A diagnostic context for a provider that does not report its installation. */
+const NO_INSTALLATION = { inspectInstallation: async () => undefined };
 
 describe("plugin provider launch and status", () => {
   test("resolves the executable against the provider's PATH override", async () => {
@@ -2477,7 +2778,13 @@ describe("plugin provider launch and status", () => {
       const definition = registry.definitions()[registration.id]!;
       const client = definition.createClient(logger, { env: { PATH: "/paseo-nonexistent-bin" } });
       expect(await client.isAvailable()).toBe(false);
-      expect(await client.getDiagnostic!()).toEqual({ diagnostic: "node not found on PATH" });
+      const report = (await client.getDiagnostic!(NO_INSTALLATION)).diagnostic.split("\n");
+      expect(report[0]).toBe("Plugin direct");
+      expect(report).toContain("  Daemon PATH: /paseo-nonexistent-bin");
+      expect(report.slice(-2)).toEqual([
+        "  Resolved path: not found",
+        "  Error: node not found on PATH",
+      ]);
     } finally {
       await registry.shutdown();
     }
@@ -2512,6 +2819,30 @@ describe("plugin provider launch and status", () => {
     }
   });
 
+  test("exposes the session launch for usage discovery", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([{ ...harness.registration, command: [process.execPath, "acp"] }]);
+    try {
+      const client = registry.clients()[harness.registration.id]!;
+      const session = await client.createSession(
+        { provider: harness.registration.id, cwd: "/workspace" },
+        { env: { HOME: "/session-home" } },
+      );
+      expect(session.usageSession?.()).toMatchObject({
+        provider: harness.registration.id,
+        model: "plugin-model",
+        env: { HOME: "/session-home" },
+        launch: { command: process.execPath, args: ["acp"], env: { HOME: "/session-home" } },
+        sessionKey: expect.any(String),
+      });
+      await session.close();
+      expect(session.usageSession?.()).toBeNull();
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
   test("resolves relative executable paths before sending launch data", async () => {
     const harness = createProviderHarness();
     const launches: Array<ProviderLaunch | undefined> = [];
@@ -2533,6 +2864,51 @@ describe("plugin provider launch and status", () => {
     }
   });
 
+  test("the diagnostic reports the launch, the version and the provider's own rows", async () => {
+    const harness = createProviderHarness();
+    const registration: ProviderRegistration = {
+      ...harness.registration,
+      command: [process.execPath, "agent"],
+      async status() {
+        return { available: true, diagnostic: "Sign-in: work account\nPlan: Pro" };
+      },
+    };
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([registration]);
+    try {
+      const client = registry.clients()[registration.id]!;
+      const { diagnostic } = await client.getDiagnostic!({
+        inspectInstallation: async () => ({ status: "installed", version: "1.2.3" }),
+      });
+      // The daemon's PATH and shell rows depend on the host; the formatter's own tests cover them.
+      const hostRows = /^ {2}Daemon (PATH|shell): /;
+      expect(diagnostic.split("\n").filter((row) => !hostRows.test(row))).toEqual([
+        "Plugin direct",
+        "  Command source: default",
+        `  Configured command: ${process.execPath} agent`,
+        "  PATH matches: not checked",
+        `  Resolved path: ${process.execPath}`,
+        "  Version: 1.2.3",
+        "  Sign-in: work account",
+        "  Plan: Pro",
+      ]);
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
+  test("a provider without a command reports only its own rows", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    try {
+      const client = registry.clients()[harness.registration.id]!;
+      expect(await client.getDiagnostic!(NO_INSTALLATION)).toEqual({ diagnostic: "Plugin direct" });
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
   test("a missing executable is unavailable with a diagnostic without connecting", async () => {
     const harness = createProviderHarness();
     const registration: ProviderRegistration = {
@@ -2544,9 +2920,13 @@ describe("plugin provider launch and status", () => {
     try {
       const client = registry.clients()[registration.id]!;
       expect(await client.isAvailable()).toBe(false);
-      expect(await client.getDiagnostic!()).toEqual({
-        diagnostic: "paseo-nonexistent-provider-executable not found on PATH",
-      });
+      const report = (await client.getDiagnostic!(NO_INSTALLATION)).diagnostic.split("\n");
+      expect(report).toContain("  Configured command: paseo-nonexistent-provider-executable");
+      expect(report).toContain("  PATH matches: none");
+      expect(report.slice(-2)).toEqual([
+        "  Resolved path: not found",
+        "  Error: paseo-nonexistent-provider-executable not found on PATH",
+      ]);
       expect(harness.inputs).toEqual([]);
     } finally {
       await registry.shutdown();
@@ -2763,4 +3143,797 @@ test("plugin provider import launches with runtime MCP servers and returns only 
   } finally {
     await registry.shutdown();
   }
+});
+
+test("plugin provider import keeps the stats the plugin reported with its history", async () => {
+  const turnMetrics = [{ label: "Model", value: "plugin-model" }];
+  const sessionMetrics = [{ label: "Cost", value: "$1.23" }];
+  const harness = createProviderHarness({
+    handleInput: async (input, emit) => {
+      if (input.type !== "session.open" || input.history !== "replay") return false;
+      emit({
+        type: "session.opened",
+        requestId: input.requestId,
+        sessionId: input.sessionId,
+        capabilities: CAPABILITIES,
+        restoration: "core",
+        persistence: input.persistence ?? { version: 1, data: { token: "root" } },
+        cwd: input.config.cwd,
+      });
+      emit({
+        type: "timeline.item",
+        sessionId: input.sessionId,
+        item: { type: "user_message", id: "user-1", text: "go" },
+      });
+      emit({
+        type: "timeline.item",
+        sessionId: input.sessionId,
+        item: { type: "assistant_message", id: "answer-1", text: "Done" },
+      });
+      emit({
+        type: "session.turn",
+        sessionId: input.sessionId,
+        turnId: "turn-1",
+        state: "completed",
+        metrics: turnMetrics,
+      });
+      emit({ type: "session.metrics", sessionId: input.sessionId, metrics: sessionMetrics });
+      emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+      return true;
+    },
+  });
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const client = registry.clients()[harness.registration.id]!;
+  const storedConfig = { provider: harness.registration.id, cwd: "/project" };
+  try {
+    const imported = await client.importSession!(
+      { providerHandleId: 'plugin:{"version":1,"data":{"token":"root"}}', cwd: "/project" },
+      { config: storedConfig, storedConfig },
+    );
+    expect(imported.sessionMetrics).toEqual(sessionMetrics);
+    expect(imported.timeline.map((entry) => entry.turnMetrics ?? null)).toEqual([
+      null,
+      turnMetrics,
+    ]);
+    await imported.session.close();
+  } finally {
+    await registry.shutdown();
+  }
+});
+
+test.each(["goose", "hermes"])(
+  "resumes a %s session saved by the generic ACP provider",
+  async (provider) => {
+    const logger = createTestLogger();
+    const harness = createProviderHarness();
+    const plugins = new PluginAgentClientRegistry(logger);
+    plugins.replace([{ ...harness.registration, id: provider }]);
+    const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+    const client = registry[provider].createClient(logger);
+
+    try {
+      const session = await client.resumeSession(
+        {
+          provider,
+          sessionId: "native-session",
+          nativeHandle: "native-session",
+        },
+        { provider, cwd: "/tmp" },
+      );
+      expect(harness.inputs.findLast((input) => input.type === "session.open")).toMatchObject({
+        persistence: { version: 1, data: { sessionId: "native-session" } },
+      });
+      await session.close();
+    } finally {
+      await plugins.shutdown();
+    }
+  },
+);
+
+test("preserves a deferred ACP background job on steer and cancels it on explicit Stop through AgentManager", async () => {
+  const logger = createTestLogger();
+  const home = await mkdtemp(join(tmpdir(), "paseo-acp-deferred-daemon-"));
+  const storage = new AgentStorage(join(home, "agents"), logger);
+  let cancelCount = 0;
+  let promptCount = 0;
+  let currentMode = "default";
+  let notifyAgent: ((message: AcpStreamMessage) => void) | null = null;
+  let holdNextPrompt: ((release: () => void) => void) | null = null;
+  const modeConfig = () => [
+    {
+      id: "mode",
+      name: "Mode",
+      category: "mode",
+      type: "select",
+      currentValue: currentMode,
+      options: [
+        { value: "default", name: "Default" },
+        { value: "plan", name: "Plan" },
+      ],
+    },
+  ];
+  const registration = runAcpProvider({
+    id: "deferred-acp-daemon",
+    label: "Deferred ACP Daemon",
+    acpOptions: {
+      deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 1_000 },
+    },
+    connector() {
+      let controller!: ReadableStreamDefaultController<AcpStreamMessage>;
+      const readable = new ReadableStream<AcpStreamMessage>({
+        start(ctrl) {
+          controller = ctrl;
+        },
+      });
+      const send = (message: AcpStreamMessage) => controller.enqueue(message);
+      notifyAgent = send;
+      const writable = new WritableStream<AcpStreamMessage>({
+        write(message) {
+          if (!("method" in message)) return;
+          if (message.method === "session/cancel") {
+            cancelCount += 1;
+            return;
+          }
+          if (!("id" in message)) return;
+          if (message.method === "initialize") {
+            send({
+              jsonrpc: "2.0",
+              id: message.id,
+              result: { protocolVersion: 1, agentCapabilities: { loadSession: true } },
+            });
+            return;
+          }
+          if (message.method === "session/new") {
+            send({
+              jsonrpc: "2.0",
+              id: message.id,
+              result: { sessionId: "acp-s1", configOptions: modeConfig() },
+            });
+            return;
+          }
+          if (message.method === "session/load") {
+            send({ jsonrpc: "2.0", id: message.id, result: { configOptions: modeConfig() } });
+            return;
+          }
+          if (message.method === "session/set_config_option") {
+            const params = message.params as { value?: string } | undefined;
+            if (typeof params?.value === "string") currentMode = params.value;
+            send({ jsonrpc: "2.0", id: message.id, result: { configOptions: modeConfig() } });
+            return;
+          }
+          if (message.method === "session/prompt") {
+            promptCount += 1;
+            if (promptCount === 1) {
+              send({
+                jsonrpc: "2.0",
+                method: "session/update",
+                params: {
+                  sessionId: "acp-s1",
+                  update: {
+                    sessionUpdate: "tool_call",
+                    toolCallId: "bg-job-1",
+                    name: "run_command",
+                    title: "Background job",
+                    status: "in_progress",
+                  },
+                },
+              });
+            } else if (promptCount === 2) {
+              send({
+                jsonrpc: "2.0",
+                method: "session/update",
+                params: {
+                  sessionId: "acp-s1",
+                  update: {
+                    sessionUpdate: "agent_message_chunk",
+                    content: { type: "text", text: "Steered reply" },
+                  },
+                },
+              });
+            } else {
+              send({
+                jsonrpc: "2.0",
+                method: "session/update",
+                params: {
+                  sessionId: "acp-s1",
+                  update: {
+                    sessionUpdate: "tool_call",
+                    toolCallId: "bg-job-2",
+                    name: "run_command",
+                    title: "Cancelable job",
+                    status: "in_progress",
+                  },
+                },
+              });
+            }
+            if (holdNextPrompt) {
+              const hook = holdNextPrompt;
+              holdNextPrompt = null;
+              hook(() =>
+                send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "cancelled" } }),
+              );
+              return;
+            }
+            send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } });
+            return;
+          }
+          if (message.method === "session/close") {
+            send({ jsonrpc: "2.0", id: message.id, result: {} });
+          }
+        },
+      });
+      return { readable, writable };
+    },
+  });
+  const plugins = new PluginAgentClientRegistry(logger);
+  plugins.replace([registration]);
+  const manager = new AgentManager({ clients: plugins.clients(), registry: storage, logger });
+  try {
+    const agent = await manager.createAgent({ provider: registration.id, cwd: home }, undefined, {
+      workspaceId: undefined,
+    });
+    const first = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "start background job",
+      logger,
+    });
+    expect(first.disposition).toBe("turn_started");
+    if (first.disposition === "turn_started") await first.started;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+
+    // Follow-up steer through AgentManager preserves the background job without session/cancel.
+    const followUp = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "still working?",
+      activeTurnBehavior: "steer",
+      logger,
+    });
+    expect(followUp.disposition).toBe("steered");
+    expect(cancelCount).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+
+    // Completing the job + reply + usage_update settles the turn cleanly.
+    notifyAgent!({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "acp-s1",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "bg-job-1", status: "completed" },
+      },
+    });
+    notifyAgent!({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "acp-s1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Background job finished." },
+        },
+      },
+    });
+    notifyAgent!({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "acp-s1",
+        update: { sessionUpdate: "usage_update", used: 120, size: 1000 },
+      },
+    });
+    await expect.poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 3_000 }).toBe("idle");
+    expect(cancelCount).toBe(0);
+
+    // Start a second deferred job, send two steers while steer 1 waits on ACP, and press Stop.
+    let heldSteerResponse: (() => void) | null = null;
+    const second = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "start cancelable job",
+      logger,
+    });
+    if (second.disposition === "turn_started") await second.started;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+
+    // Hold the next steer prompt so Stop races with a queued second steer.
+    holdNextPrompt = (release) => {
+      heldSteerResponse = release;
+    };
+    const steerOne = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "held steer 1",
+      activeTurnBehavior: "steer",
+      logger,
+    });
+    expect(steerOne.disposition).toBe("steered");
+    const steerTwo = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "queued steer 2",
+      activeTurnBehavior: "steer",
+      logger,
+    });
+    expect(steerTwo.disposition).toBe("steered");
+    await expect.poll(() => heldSteerResponse).not.toBeNull();
+    const promptsBeforeStop = promptCount;
+
+    // Stop must send session/cancel immediately, retire the deferred session cleanly,
+    // and never dispatch the queued steer 2 to ACP.
+    await manager.cancelAgentRun(agent.id);
+    expect(cancelCount).toBe(1);
+    await expect.poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 3_000 }).toBe("idle");
+    expect(promptCount).toBe(promptsBeforeStop);
+
+    // Changing mode immediately after stopping a deferred turn must transparently reopen the session.
+    await manager.setAgentMode(agent.id, "plan");
+    expect(manager.getAgent(agent.id)?.currentModeId).toBe("plan");
+    expect(currentMode).toBe("plan");
+  } finally {
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await plugins.shutdown();
+    await storage.flush();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("reopens cleanly for mode changes and follow-up sends initiated while Stop is closing a slow ACP process", async () => {
+  const logger = createTestLogger();
+  const home = await mkdtemp(join(tmpdir(), "paseo-acp-slow-stop-"));
+  const storage = new AgentStorage(join(home, "agents"), logger);
+  const script = join(home, "slow-stop-agent.cjs");
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(
+    script,
+    `
+    const { createInterface } = require("node:readline");
+    const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...msg }) + "\\n");
+    let mode = "default";
+    const configOptions = () => [{
+      id: "mode", name: "Mode", category: "mode", type: "select", currentValue: mode,
+      options: [{ value: "default", name: "Default" }, { value: "plan", name: "Plan" }],
+    }];
+    process.on("SIGTERM", () => {
+      setTimeout(() => process.exit(0), 250);
+    });
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const msg = JSON.parse(line);
+      if (msg.method === "initialize") {
+        send({ id: msg.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } });
+      } else if (msg.method === "session/new") {
+        send({ id: msg.id, result: { sessionId: "slow-s1", configOptions: configOptions() } });
+      } else if (msg.method === "session/load") {
+        send({ id: msg.id, result: { configOptions: configOptions() } });
+      } else if (msg.method === "session/set_config_option") {
+        if (msg.params && typeof msg.params.value === "string") mode = msg.params.value;
+        send({ id: msg.id, result: { configOptions: configOptions() } });
+      } else if (msg.method === "session/prompt") {
+        const text = msg.params?.prompt?.[0]?.text ?? "";
+        if (text.includes("start bg")) {
+          send({ method: "session/update", params: { sessionId: "slow-s1", update: {
+            sessionUpdate: "tool_call", toolCallId: "slow-bg-1", name: "run_command",
+            title: "Slow bg job", status: "in_progress",
+          } } });
+        } else {
+          send({ method: "session/update", params: { sessionId: "slow-s1", update: {
+            sessionUpdate: "agent_message_chunk", content: { type: "text", text: "After stop reply" },
+          } } });
+        }
+        send({ id: msg.id, result: { stopReason: "end_turn" } });
+      } else if (msg.method === "session/close") {
+        send({ id: msg.id, result: {} });
+      }
+    });
+    `,
+  );
+  const registration = runAcpProvider({
+    id: "slow-stop-acp",
+    label: "Slow Stop ACP",
+    command: [process.execPath, script],
+    acpOptions: {
+      deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 1_000 },
+    },
+  });
+  const plugins = new PluginAgentClientRegistry(logger);
+  plugins.replace([registration]);
+  const manager = new AgentManager({ clients: plugins.clients(), registry: storage, logger });
+  try {
+    const agent = await manager.createAgent({ provider: registration.id, cwd: home }, undefined, {
+      workspaceId: undefined,
+    });
+    const first = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "start bg",
+      logger,
+    });
+    if (first.disposition === "turn_started") await first.started;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+
+    // Start Stop (takes 250ms to terminate the child on SIGTERM) and trigger a mode change mid-shutdown.
+    const stopPromise = manager.cancelAgentRun(agent.id);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const modePromise = manager.setAgentMode(agent.id, "plan");
+    await Promise.all([stopPromise, modePromise]);
+    expect(manager.getAgent(agent.id)?.currentModeId).toBe("plan");
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+
+    // A follow-up prompt immediately after Stop + mode change succeeds cleanly.
+    const next = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "fresh prompt",
+      logger,
+    });
+    expect(next.disposition).toBe("turn_started");
+    if (next.disposition === "turn_started") await next.started;
+    await expect.poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 3_000 }).toBe("idle");
+  } finally {
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await plugins.shutdown();
+    await storage.flush();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("does not block mode changes after a plugin refuses Stop by ignoring session.interrupt", async () => {
+  const logger = createTestLogger();
+  let currentMode = "code";
+  const harness = createProviderHarness({
+    async handleInput(input, emit) {
+      if (input.type === "session.open") {
+        emit({
+          type: "session.opened",
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+          capabilities: ["prompt.message", "session.interrupt", "session.configure"],
+          restoration: "core",
+          title: input.config.title,
+          cwd: input.config.cwd,
+        });
+        emit({
+          type: "session.config",
+          sessionId: input.sessionId,
+          config: {
+            mode: currentMode,
+            modes: [
+              { id: "code", label: "Code" },
+              { id: "plan", label: "Plan" },
+            ],
+            models: [],
+            thinkingOptions: [],
+          },
+        });
+        emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        return true;
+      }
+      if (input.type === "session.prompt") {
+        emit({
+          type: "session.prompt_result",
+          sessionId: input.sessionId,
+          clientMessageId: input.prompt.clientMessageId,
+          result: { type: "turn", turnId: "hung-turn" },
+        });
+        emit({
+          type: "session.turn",
+          sessionId: input.sessionId,
+          turnId: "hung-turn",
+          state: "started",
+        });
+        return true;
+      }
+      if (input.type === "session.interrupt") {
+        // Intentionally never acknowledge session.interrupt.
+        return true;
+      }
+      if (input.type === "session.configure") {
+        if (input.changes.mode) currentMode = input.changes.mode;
+        emit({
+          type: "session.config",
+          sessionId: input.sessionId,
+          config: {
+            mode: currentMode,
+            modes: [
+              { id: "code", label: "Code" },
+              { id: "plan", label: "Plan" },
+            ],
+            models: [],
+            thinkingOptions: [],
+          },
+        });
+        emit({ type: "request.completed", requestId: input.requestId });
+        return true;
+      }
+      return false;
+    },
+  });
+  const plugins = new PluginAgentClientRegistry(logger);
+  plugins.replace([harness.registration]);
+  const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+  const manager = new AgentManager({
+    logger,
+    clients: { "plugin-direct": registry["plugin-direct"].createClient(logger) },
+    providerDefinitions: { "plugin-direct": registry["plugin-direct"] },
+    rescueTimeouts: { interruptSessionMs: 50 },
+  });
+  try {
+    const agent = await manager.createAgent(
+      { provider: "plugin-direct", cwd: tmpdir() },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const stream = manager.streamAgent(agent.id, "start");
+    void stream.next();
+    await expect
+      .poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 2_000 })
+      .toBe("running");
+
+    const cancelResult = await manager.cancelAgentRun(agent.id);
+    expect(cancelResult.status).toBe("refused");
+
+    // Settings change must not hang behind the unacknowledged session.interrupt.
+    await manager.setAgentMode(agent.id, "plan");
+    expect(manager.getAgent(agent.id)?.currentModeId).toBe("plan");
+  } finally {
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await plugins.shutdown();
+  }
+});
+
+test("bounds settings wait when Stop is queued behind an unanswered steer", async () => {
+  const logger = createTestLogger();
+  let currentMode = "code";
+  let releaseSteer: (() => void) | null = null;
+  const harness = createProviderHarness({
+    capabilities: ["prompt.message", "prompt.steer", "session.interrupt", "session.configure"],
+    async handleInput(input, emit) {
+      if (input.type === "session.open") {
+        emit({
+          type: "session.opened",
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+          capabilities: [
+            "prompt.message",
+            "prompt.steer",
+            "session.interrupt",
+            "session.configure",
+          ],
+          restoration: "core",
+          title: input.config.title,
+          cwd: input.config.cwd,
+        });
+        emit({
+          type: "session.config",
+          sessionId: input.sessionId,
+          config: {
+            mode: currentMode,
+            modes: [
+              { id: "code", label: "Code" },
+              { id: "plan", label: "Plan" },
+            ],
+            models: [],
+            thinkingOptions: [],
+          },
+        });
+        emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        return true;
+      }
+      if (input.type === "session.prompt") {
+        if (input.prompt.delivery === "steer") {
+          releaseSteer = () =>
+            emit({
+              type: "session.prompt_result",
+              sessionId: input.sessionId,
+              clientMessageId: input.prompt.clientMessageId,
+              result: { type: "steer", turnId: "steer-turn" },
+            });
+          return true;
+        }
+        emit({
+          type: "session.prompt_result",
+          sessionId: input.sessionId,
+          clientMessageId: input.prompt.clientMessageId,
+          result: { type: "turn", turnId: "steer-turn" },
+        });
+        emit({
+          type: "session.turn",
+          sessionId: input.sessionId,
+          turnId: "steer-turn",
+          state: "started",
+        });
+        return true;
+      }
+      if (input.type === "session.interrupt") {
+        return true;
+      }
+      if (input.type === "session.configure") {
+        if (input.changes.mode) currentMode = input.changes.mode;
+        emit({
+          type: "session.config",
+          sessionId: input.sessionId,
+          config: {
+            mode: currentMode,
+            modes: [
+              { id: "code", label: "Code" },
+              { id: "plan", label: "Plan" },
+            ],
+            models: [],
+            thinkingOptions: [],
+          },
+        });
+        emit({ type: "request.completed", requestId: input.requestId });
+        return true;
+      }
+      return false;
+    },
+  });
+  const plugins = new PluginAgentClientRegistry(logger);
+  plugins.replace([harness.registration]);
+  const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+  const manager = new AgentManager({
+    logger,
+    clients: { "plugin-direct": registry["plugin-direct"].createClient(logger) },
+    providerDefinitions: { "plugin-direct": registry["plugin-direct"] },
+    rescueTimeouts: { interruptSessionMs: 50 },
+  });
+  try {
+    const agent = await manager.createAgent(
+      { provider: "plugin-direct", cwd: tmpdir() },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const stream = manager.streamAgent(agent.id, "start");
+    void stream.next();
+    await expect
+      .poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 2_000 })
+      .toBe("running");
+
+    // Start an unanswered steer, queue Stop behind it, then change mode.
+    const steerPromise = manager.steerAgentRun(agent.id, "unanswered steer").catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const stopPromise = manager.cancelAgentRun(agent.id);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Mode change must complete within the bounded interrupt timeout even while Stop is queued.
+    await manager.setAgentMode(agent.id, "plan");
+    expect(manager.getAgent(agent.id)?.currentModeId).toBe("plan");
+
+    releaseSteer?.();
+    await Promise.all([steerPromise, stopPromise]);
+  } finally {
+    releaseSteer?.();
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await plugins.shutdown();
+  }
+});
+
+test("a declared launch wrap still needs session.launch_wrap on the live connection", async () => {
+  const harness = createProviderHarness();
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([{ ...harness.registration, launchWrap: true }]);
+  expect(registry.definitions()[harness.registration.id]?.supportsLaunchWrap).toBe(true);
+  const client = registry.clients()[harness.registration.id]!;
+  expect(client.supportsLaunchWrap).toBe(true);
+
+  await expect(client.requireLaunchWrap?.()).rejects.toMatchObject({
+    code: "launch_wrap_unsupported",
+  });
+  await expect(
+    client.createSession(
+      { provider: harness.registration.id, cwd: tmpdir() },
+      { wrap: ["/opt/sandbox/bin/run"] },
+    ),
+  ).rejects.toThrow("session.launch_wrap");
+  expect(harness.inputs.some((input) => input.type === "session.open")).toBe(false);
+  await registry.shutdown();
+});
+
+test("a provider that declares no launch wrap is not marked as supporting it", () => {
+  const harness = createProviderHarness();
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  expect(registry.definitions()[harness.registration.id]?.supportsLaunchWrap).toBe(false);
+  expect(registry.clients()[harness.registration.id]!.supportsLaunchWrap).toBe(false);
+});
+
+test("a plugin session reopen sends the wrap the session opened with", async () => {
+  const harness = createRewindProviderHarness({ extraCapabilities: ["session.launch_wrap"] });
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([{ ...harness.registration, launchWrap: true }]);
+  const client = registry.clients()[harness.registration.id]!;
+  await expect(client.requireLaunchWrap?.()).resolves.toBeUndefined();
+  const wrap: [string, ...string[]] = ["/opt/sandbox/bin/run", "--profile", "a b"];
+  const session = await client.createSession(
+    { provider: harness.registration.id, cwd: tmpdir() },
+    { wrap },
+  );
+  await session.run("A");
+
+  await session.revertConversation!({ messageId: "user-A" });
+
+  const opens = harness.inputs.filter((input) => input.type === "session.open");
+  expect(opens.length).toBeGreaterThanOrEqual(2);
+  for (const open of opens) expect(open.config.wrap).toEqual(wrap);
+  await session.close();
+  await registry.shutdown();
+});
+
+describe("plugin provider tool policy", () => {
+  const hubMcpServers = { hub: { type: "http" as const, url: "https://hub.test/mcp" } };
+  const grants = { preapproved: [{ kind: "mcp" as const, server: "hub", tool: "reply" }] };
+
+  async function createWithToolPolicy(
+    capabilities: ProviderConnection["capabilities"],
+    toolPolicy: { preapproved: (typeof grants)["preapproved"] },
+  ) {
+    const logger = createTestLogger();
+    const harness = createProviderHarness({ capabilities });
+    const plugins = new PluginAgentClientRegistry(logger);
+    plugins.replace([harness.registration]);
+    const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+    const manager = new AgentManager({
+      logger,
+      clients: { "plugin-direct": registry["plugin-direct"].createClient(logger) },
+      providerDefinitions: { "plugin-direct": registry["plugin-direct"] },
+    });
+    const created = manager
+      .createAgent(
+        { provider: "plugin-direct", cwd: tmpdir(), mcpServers: hubMcpServers, toolPolicy },
+        undefined,
+        { workspaceId: undefined },
+      )
+      .then(
+        (agent) => ({ agent, error: null }),
+        (error: unknown) => ({ agent: null, error }),
+      );
+    const result = await created;
+    const opened = harness.inputs.filter((input) => input.type === "session.open");
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await plugins.shutdown();
+    return { ...result, opened };
+  }
+
+  test.each([
+    ["exact grants", grants],
+    ["an empty grant list", { preapproved: [] }],
+  ])(
+    "a plugin without permission.tool_policy refuses %s with ToolPolicyUnsupportedError",
+    async (_label, toolPolicy) => {
+      const result = await createWithToolPolicy(CAPABILITIES, toolPolicy);
+
+      expect(result.error).toBeInstanceOf(ToolPolicyUnsupportedError);
+      expect(result.error).toMatchObject({
+        code: "tool_policy_unsupported",
+        provider: "plugin-direct",
+      });
+      expect(result.opened).toEqual([]);
+    },
+  );
+
+  test.each([
+    ["exact grants", grants],
+    ["an empty grant list", { preapproved: [] }],
+  ])("a plugin with permission.tool_policy opens with %s", async (_label, toolPolicy) => {
+    const result = await createWithToolPolicy(
+      [...CAPABILITIES, "permission.tool_policy"],
+      toolPolicy,
+    );
+
+    expect(result.error).toBeNull();
+    expect(result.opened).toHaveLength(1);
+    expect(result.opened[0]).toMatchObject({ config: { toolPolicy } });
+  });
 });
