@@ -315,6 +315,7 @@ function deriveBootstrapTailTimelinePolicy({
   endCursor,
   isInitializing,
   hasActiveInitDeferred,
+  hasCurrentCursor,
 }: {
   direction: TimelineDirection;
   reset: boolean;
@@ -322,6 +323,7 @@ function deriveBootstrapTailTimelinePolicy({
   endCursor: { seq: number } | null;
   isInitializing: boolean;
   hasActiveInitDeferred: boolean;
+  hasCurrentCursor: boolean;
 }): {
   replace: boolean;
   catchUpCursor: { epoch: string; endSeq: number } | null;
@@ -332,6 +334,11 @@ function deriveBootstrapTailTimelinePolicy({
 
   const isBootstrapTailInit = direction === "tail" && isInitializing && hasActiveInitDeferred;
   if (!isBootstrapTailInit) {
+    // Without a cursor nothing anchors the painted rows to this page. Appending would
+    // relocate the matched prompt and duplicate the reply, so the tail page replaces them.
+    if (direction === "tail" && !hasCurrentCursor) {
+      return { replace: true, catchUpCursor: null };
+    }
     return { replace: false, catchUpCursor: null };
   }
 
@@ -1330,6 +1337,7 @@ export function processTimelineResponse(
     endCursor: payload.endCursor,
     isInitializing,
     hasActiveInitDeferred,
+    hasCurrentCursor: currentCursor !== undefined,
   });
   const replace = bootstrapPolicy.replace;
   const sideEffects: TimelineReducerSideEffect[] = [];
