@@ -1,4 +1,5 @@
 #import "ENRMMarkdownTextView.h"
+#import "ENRMBlockSelectionRange.h"
 #import "ENRMLinkPillAttachment.h"
 #import "ENRMLinkPillText.h"
 #import "ENRMTextHitTest.h"
@@ -6,7 +7,7 @@
 #import "PasteboardUtils.h"
 
 #if !TARGET_OS_OSX
-@interface ENRMMarkdownTextView () <UIContextMenuInteractionDelegate>
+@interface ENRMMarkdownTextView () <UIContextMenuInteractionDelegate, UIGestureRecognizerDelegate>
 @end
 
 @implementation ENRMMarkdownTextView {
@@ -15,6 +16,7 @@
   // stands in for it: it would show through that image.
   ENRMLinkPillAttachment *_liftedPill;
   NSUInteger _pillMenuIndex;
+  UITapGestureRecognizer *_blockSelectionTap;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame textContainer:(NSTextContainer *)textContainer
@@ -24,8 +26,60 @@
     __weak ENRMMarkdownTextView *weakSelf = self;
     _pillLift.onEnd = ^{ [weakSelf restoreLiftedPill]; };
     [self addInteraction:[[UIContextMenuInteraction alloc] initWithDelegate:self]];
+    _blockSelectionTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(selectTappedBlock:)];
+    _blockSelectionTap.numberOfTapsRequired = 2;
+    _blockSelectionTap.cancelsTouchesInView = NO;
+    _blockSelectionTap.delaysTouchesEnded = NO;
+    _blockSelectionTap.delegate = self;
+    [self addGestureRecognizer:_blockSelectionTap];
   }
   return self;
+}
+
+// Observe UIKit's double tap without taking over its text interaction. UIKit
+// creates the selection handles and menu; only its initial word range expands.
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer
+    shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other
+{
+  return recognizer == _blockSelectionTap || other == _blockSelectionTap;
+}
+
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)recognizer
+{
+  if (recognizer != _blockSelectionTap)
+    return YES;
+  if (!self.selectable || self.editable || self.textStorage.length == 0)
+    return NO;
+  CGPoint point = [recognizer locationInView:self];
+  if (isPointOnInteractiveElement(self, point, YES, YES))
+    return NO;
+  CGPoint contentPoint = CGPointMake(point.x - self.textContainerInset.left, point.y - self.textContainerInset.top);
+  NSUInteger glyph = [self.layoutManager glyphIndexForPoint:contentPoint inTextContainer:self.textContainer];
+  if (glyph >= self.layoutManager.numberOfGlyphs)
+    return NO;
+  CGRect line = [self.layoutManager lineFragmentUsedRectForGlyphAtIndex:glyph effectiveRange:NULL];
+  return CGRectContainsPoint(line, contentPoint);
+}
+
+- (void)selectTappedBlock:(UITapGestureRecognizer *)recognizer
+{
+  if (recognizer.state != UIGestureRecognizerStateRecognized)
+    return;
+  NSUInteger index = ENRMCharacterIndexAtPoint(self, [recognizer locationInView:self]);
+  NSRange range = ENRMBlockSelectionRange(self.textStorage, index);
+  if (range.location == NSNotFound)
+    return;
+  NSString *text = [self.text copy];
+  __weak ENRMMarkdownTextView *weakSelf = self;
+  // All native recognizers finish this event before the range is expanded.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    ENRMMarkdownTextView *view = weakSelf;
+    if (!view.window || !view.selectable || ![view.text isEqualToString:text])
+      return;
+    NSRange selected = view.selectedRange;
+    if (selected.length && NSLocationInRange(index, selected))
+      view.selectedRange = range;
+  });
 }
 
 /// New text moves or replaces the pill under its lifted image.

@@ -1,4 +1,5 @@
 #import "ListItemRenderer.h"
+#import "ENRMBlockSelectionRange.h"
 #import "BlockquoteBorder.h"
 #import "ENRMUIKit.h"
 #import "LastElementUtils.h"
@@ -123,6 +124,7 @@ NSString *const TaskIndexAttribute = @"TaskIndex";
 
   // Boxing metadata for attributed string storage
   NSMutableDictionary *metadata = [@{
+    ENRMSelectionBlockAttribute : [NSObject new],
     ListDepthAttribute : @(nestingLevel),
     ListTypeAttribute : @(context.listType),
     ListItemNumberAttribute : @(currentPosition)
