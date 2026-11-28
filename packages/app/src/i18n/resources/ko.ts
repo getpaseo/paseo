@@ -176,6 +176,7 @@ export const ko: TranslationResources = {
     attachments: {
       addImage: "이미지 추가",
       pasteImage: "이미지 붙여넣기",
+      takePhoto: "사진 찍기",
       addFile: "파일 업로드",
       addIssueOrPr: "이슈 또는 PR 추가",
       addIssueOrPr_mr: "이슈 또는 MR 추가",
@@ -1798,8 +1799,10 @@ export const ko: TranslationResources = {
   imageAttachmentPicker: {
     permissionTitle: "권한 필요",
     permissionMessage: "이미지를 첨부하려면 사진 라이브러리 접근을 허용해 주세요.",
+    cameraPermissionMessage: "사진을 찍으려면 카메라 접근을 허용해 주세요.",
     errorTitle: "오류",
     failedToSelect: "이미지를 선택하지 못했습니다",
+    failedToCapture: "사진을 찍지 못했습니다",
     dialogTitle: "이미지 첨부",
     dialogFilterName: "이미지",
   },

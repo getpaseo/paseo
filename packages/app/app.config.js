@@ -39,7 +39,7 @@ const buildProfile = isFdroidBuild
           "expo-camera",
           {
             cameraPermission:
-              "Allow $(PRODUCT_NAME) to access your camera to scan pairing QR codes.",
+              "Allow $(PRODUCT_NAME) to access your camera to take photos for your agents and to scan pairing QR codes.",
           },
         ],
       ],

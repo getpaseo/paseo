@@ -176,6 +176,7 @@ export const ar: TranslationResources = {
     attachments: {
       addImage: "أضف صورة",
       pasteImage: "لصق صورة",
+      takePhoto: "التقاط صورة",
       addFile: "Upload file",
       addIssueOrPr: "أضف مشكلة أو PR",
       addIssueOrPr_mr: "أضف مشكلة أو MR",
@@ -1786,8 +1787,10 @@ export const ar: TranslationResources = {
   imageAttachmentPicker: {
     permissionTitle: "الإذن مطلوب",
     permissionMessage: "يرجى السماح بالوصول إلى مكتبة الصور الخاصة بك لإرفاق الصور.",
+    cameraPermissionMessage: "يرجى السماح بالوصول إلى الكاميرا لالتقاط صورة.",
     errorTitle: "خطأ",
     failedToSelect: "فشل في تحديد الصورة",
+    failedToCapture: "فشل في التقاط الصورة",
     dialogTitle: "إرفاق الصور",
     dialogFilterName: "الصور",
   },
