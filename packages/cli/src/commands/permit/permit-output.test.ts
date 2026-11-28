@@ -3,7 +3,7 @@ import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { describe, expect, it } from "vitest";
 import { render } from "../../output/render.js";
 import { permitResponseSchema, toPermissionResponseItem } from "./allow.js";
-import { listPendingPermissions } from "./ls.js";
+import { fetchPermitAgents, listPendingPermissions } from "./ls.js";
 
 const agentId = "2d85f428-fdaf-4d98-906f-c583de2b805f";
 
@@ -41,5 +41,47 @@ describe("permit allow and deny output", () => {
       requestId: string;
     }>;
     expect(answered.map((item) => item.requestId)).toEqual([writeRequest.id]);
+  });
+});
+
+describe("permit ls agent directory read", () => {
+  function fakeClient(pages: AgentSnapshotPayload[][], supportsBackground: boolean) {
+    const calls: unknown[] = [];
+    return {
+      calls,
+      supportsBackgroundWorkspaces: () => supportsBackground,
+      async fetchAgents(options?: unknown) {
+        calls.push(options);
+        const index = calls.length - 1;
+        return {
+          entries: (pages[index] ?? []).map((entry) => ({ agent: entry })),
+          pageInfo: { nextCursor: index + 1 < pages.length ? `cursor-${index + 1}` : null },
+        };
+      },
+    };
+  }
+
+  it("includes background agents and reads past the first page", async () => {
+    const backgroundAgent = {
+      id: "7b0e3f52-9d1c-4f0a-8a59-0f1d2e3c4b5a",
+      pendingPermissions: [writeRequest],
+    } as AgentSnapshotPayload;
+    const client = fakeClient([[{ id: agentId } as AgentSnapshotPayload], [backgroundAgent]], true);
+
+    const result = listPendingPermissions(await fetchPermitAgents(client));
+
+    expect(result.data.map((item) => item.agentId)).toEqual([backgroundAgent.id]);
+    expect(client.calls).toEqual([
+      expect.objectContaining({ filter: { includeArchived: true, includeBackground: true } }),
+      expect.objectContaining({ page: expect.objectContaining({ cursor: "cursor-1" }) }),
+    ]);
+  });
+
+  it("leaves background out on hosts without background workspaces", async () => {
+    const client = fakeClient([[agent]], false);
+
+    await fetchPermitAgents(client);
+
+    expect(client.calls).toEqual([expect.objectContaining({ filter: { includeArchived: true } })]);
   });
 });
