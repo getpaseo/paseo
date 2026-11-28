@@ -35,6 +35,7 @@ import type {
 } from "./plugin-process-protocol.js";
 import type { RegisteredTunnelProvider, TunnelManager } from "../tunnels/index.js";
 import { readPluginProviderIcon } from "./provider-icon.js";
+import { readPluginManifestIcon } from "./manifest-icon.js";
 import {
   type AgentUsageLookup,
   type ListUsageReportsOptions,
@@ -335,12 +336,17 @@ export class PluginService {
             running: running.has(id),
           }),
         };
-        const manifest = await readPluginManifest(path.resolve(source.path)).catch(() => null);
+        const directory = path.resolve(source.path);
+        const manifest = await readPluginManifest(directory).catch(() => null);
         if (manifest) {
           item.name = manifest.name;
           item.description = manifest.description;
           item.icon = manifest.icon;
           item.media = manifest.media;
+          if (manifest.icon) {
+            const iconDataUrl = await readPluginManifestIcon(directory, manifest.icon);
+            if (iconDataUrl) item.iconDataUrl = iconDataUrl;
+          }
         }
         item.installation = await this.managedSources
           ?.describe(id, source.path)

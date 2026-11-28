@@ -32,6 +32,8 @@ import { runGitCommand } from "../../utils/run-git-command.js";
 const roots: string[] = [];
 type TestPluginRuntime = NonNullable<ConstructorParameters<typeof PluginService>[3]["runtime"]>;
 
+const PNG_ICON = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
+
 const emptyUsageRuntime = {
   getUsageSourceRegistrations: () => [],
   fetchUsage: async () => undefined,
@@ -876,6 +878,7 @@ export default function contribute(server) {
       path.join(disabled, "paseo-plugin.json"),
       JSON.stringify({ id: "disabled", description: "Waits until enabled" }),
     );
+    await writeFile(path.join(running, "icon.png"), PNG_ICON);
     await writeFile(path.join(malformed, "paseo-plugin.json"), "{");
     const service = createService(home, {
       running: { source: "directory", path: running },
@@ -886,11 +889,12 @@ export default function contribute(server) {
     await service.start();
 
     expect(
-      (await service.listPlugins()).map(({ id, description, name, icon, media }) => ({
+      (await service.listPlugins()).map(({ id, description, name, icon, iconDataUrl, media }) => ({
         id,
         description,
         name,
         icon,
+        iconDataUrl,
         media,
       })),
     ).toEqual([
@@ -901,6 +905,7 @@ export default function contribute(server) {
         description: "Runs checks",
         name: "Checks",
         icon: "icon.png",
+        iconDataUrl: `data:image/png;base64,${PNG_ICON.toString("base64")}`,
         media: ["screenshot.png", "https://example.com/demo.mp4"],
       },
     ]);

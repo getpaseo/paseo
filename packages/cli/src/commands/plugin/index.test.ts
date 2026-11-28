@@ -8,6 +8,8 @@ const listPlugins = vi.fn(async () => [
     path: "/plugins/git-plugin",
     enabled: true,
     status: "running" as const,
+    icon: "assets/icon.png",
+    iconDataUrl: "data:image/png;base64,AAAA",
     source: "git" as const,
     commit: "1557a34c91e2abcdef",
     ref: "main",
@@ -121,6 +123,15 @@ describe("plugin management commands", () => {
     expect(output).not.toContain("LATEST");
     expect(output).toContain("1557a34c91e2");
     expect(output).toContain("This plugin was made for an older version of Paseo");
+  });
+
+  it("keeps the manifest icon path but not the inline icon the app draws", async () => {
+    features.pluginManagement = true;
+
+    const result = await runPluginListCommand("git-plugin", { daemonTarget }, {} as never);
+
+    expect(result.data[0]).toMatchObject({ icon: "assets/icon.png" });
+    expect(result.data[0]).not.toHaveProperty("iconDataUrl");
   });
 
   it("filters the shared ls and status command by plugin ID", async () => {

@@ -61,6 +61,12 @@ const scaffoldSchema: OutputSchema<PluginScaffold> = {
   ],
 };
 
+/** The inline icon is for app clients; CLI output keeps the manifest path in `icon`. */
+function withoutIconData<T extends { iconDataUrl?: string }>(plugin: T): Omit<T, "iconDataUrl"> {
+  const { iconDataUrl: _iconDataUrl, ...rest } = plugin;
+  return rest;
+}
+
 const pluginLogsSchema: OutputSchema<PluginLogEntry> = {
   idField: (entry) => String(entry.sequence),
   columns: [
@@ -104,7 +110,9 @@ export async function runPluginListCommand(
   const plugins = await withPluginManagementClient(options.daemonTarget, (client) =>
     client.listPlugins(),
   );
-  const data = pluginId ? plugins.filter((plugin) => plugin.id === pluginId) : plugins;
+  const data = (pluginId ? plugins.filter((plugin) => plugin.id === pluginId) : plugins).map(
+    withoutIconData,
+  );
   if (pluginId && data.length === 0) throw new Error(`Plugin is not configured: ${pluginId}`);
   return { type: "list", data, schema: pluginSchema };
 }
@@ -147,7 +155,7 @@ export async function runPluginInstallCommand(
       ...(options.ref ? { ref: options.ref } : {}),
     }),
   );
-  return { type: "single", data, schema: pluginSchema };
+  return { type: "single", data: withoutIconData(data), schema: pluginSchema };
 }
 
 export async function runPluginUpdateCommand(
@@ -179,6 +187,7 @@ export async function runPluginUpdateCommand(
     ),
   );
   if (data.some((item) => item.outcome === "error")) process.exitCode = 1;
+  for (const item of data) if (item.plugin) item.plugin = withoutIconData(item.plugin);
   return { type: "list", data, schema: pluginUpdateSchema };
 }
 
@@ -190,7 +199,7 @@ async function act(
   const data = await withPluginManagementClient(options.daemonTarget, (client) =>
     client[`${action}Plugin`](pluginId),
   );
-  return { type: "single", data, schema: pluginSchema };
+  return { type: "single", data: withoutIconData(data), schema: pluginSchema };
 }
 
 async function remove(
@@ -204,7 +213,7 @@ async function remove(
     await client.removePlugin(pluginId);
     return { ...current, enabled: false, status: "disabled" as const };
   });
-  return { type: "single", data, schema: pluginSchema };
+  return { type: "single", data: withoutIconData(data), schema: pluginSchema };
 }
 
 export function createPluginCommand(): Command {

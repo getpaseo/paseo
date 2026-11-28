@@ -7,6 +7,7 @@ import {
   formatInstallCount,
   listingImages,
   listingText,
+  pluginIcon,
 } from "./listing";
 
 function listing(id: string, overrides: Partial<PluginListing> = {}): PluginListing {
@@ -117,5 +118,32 @@ describe("listing presentation", () => {
       ["acme/zeta", "gone/plugin", "acme/alpha"],
     );
     expect(ids(featuredListings(index))).toEqual(["acme/zeta", "acme/alpha"]);
+  });
+});
+
+describe("pluginIcon", () => {
+  const installed = {
+    id: "example",
+    path: "/plugins/example",
+    enabled: true,
+    status: "running",
+    icon: "assets/icon.png",
+    iconDataUrl: "data:image/png;base64,AAAA",
+  } as const;
+
+  it("prefers the directory's icon", () => {
+    expect(
+      pluginIcon(installed, listing("acme/example", { icon: "https://example.com/icon.png" })),
+    ).toBe("https://example.com/icon.png");
+  });
+
+  it("falls back to the installed manifest's icon", () => {
+    expect(pluginIcon(installed, undefined)).toBe("data:image/png;base64,AAAA");
+    expect(pluginIcon(installed, listing("acme/example"))).toBe("data:image/png;base64,AAAA");
+  });
+
+  it("has no icon when neither has one", () => {
+    expect(pluginIcon({ ...installed, iconDataUrl: undefined }, undefined)).toBeUndefined();
+    expect(pluginIcon(undefined, undefined)).toBeUndefined();
   });
 });

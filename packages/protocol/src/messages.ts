@@ -7650,7 +7650,10 @@ export const PluginNpmInstallationSchema = z.object({
 export const PluginListItemSchema = z.object({
   id: PluginIdSchema,
   name: z.string().optional(),
+  /** The manifest's icon path, relative to the plugin package. */
   icon: z.string().optional(),
+  /** The manifest's PNG icon as a `data:` URL, for clients that cannot read the package. */
+  iconDataUrl: z.string().optional(),
   media: z.array(z.string()).optional(),
   description: z.string().optional(),
   path: z.string(),
