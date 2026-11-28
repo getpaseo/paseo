@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   EMPTY_FOCUS_CLAIM_STATE,
+  EMPTY_PALETTE_SYNC_STATE,
   canRequestFocusClaim,
   reconcileFocusClaim,
+  resolveTerminalPaletteSync,
   resolveTerminalResizeClaim,
   settleFocusClaim,
   type FocusClaimState,
@@ -248,5 +250,122 @@ describe("terminal pane focus claim", () => {
 
     expect(refocused.shouldRequest).toBe(true);
     expect(changed.shouldRequest).toBe(true);
+  });
+});
+
+describe("terminal pane palette sync", () => {
+  const readyFocused = {
+    isWorkspaceFocused: true,
+    isPaneFocused: true,
+    isAppActivelyVisible: true,
+    isClientReady: true,
+    isConnected: true,
+  };
+
+  it("claims on focus, skips duplicate sends, and re-claims on theme change or explicit focus", () => {
+    const first = resolveTerminalPaletteSync(EMPTY_PALETTE_SYNC_STATE, {
+      terminalKey: "ws:term-1",
+      paletteKey: "light",
+      supportsTerminalPaletteOwnership: true,
+      readiness: readyFocused,
+    });
+    expect(first).toMatchObject({ shouldSend: true, intent: "claim" });
+
+    const duplicate = resolveTerminalPaletteSync(first.state, {
+      terminalKey: "ws:term-1",
+      paletteKey: "light",
+      supportsTerminalPaletteOwnership: true,
+      readiness: readyFocused,
+    });
+    expect(duplicate.shouldSend).toBe(false);
+
+    const themeFlipped = resolveTerminalPaletteSync(duplicate.state, {
+      terminalKey: "ws:term-1",
+      paletteKey: "dark",
+      supportsTerminalPaletteOwnership: true,
+      readiness: readyFocused,
+    });
+    expect(themeFlipped).toMatchObject({ shouldSend: true, intent: "claim" });
+
+    const explicitReclaim = resolveTerminalPaletteSync(themeFlipped.state, {
+      terminalKey: "ws:term-1",
+      paletteKey: "dark",
+      forceClaim: true,
+      supportsTerminalPaletteOwnership: true,
+      readiness: readyFocused,
+    });
+    expect(explicitReclaim).toMatchObject({ shouldSend: true, intent: "claim" });
+  });
+
+  it("sends owner-only updates when theme changes while away and re-claims on return", () => {
+    const claimed = resolveTerminalPaletteSync(EMPTY_PALETTE_SYNC_STATE, {
+      terminalKey: "ws:term-1",
+      paletteKey: "light",
+      supportsTerminalPaletteOwnership: true,
+      readiness: readyFocused,
+    });
+    const inSettings = resolveTerminalPaletteSync(claimed.state, {
+      terminalKey: "ws:term-1",
+      paletteKey: "light",
+      supportsTerminalPaletteOwnership: true,
+      readiness: { ...readyFocused, isWorkspaceFocused: false },
+    });
+    expect(inSettings.shouldSend).toBe(false);
+
+    const toggledInSettings = resolveTerminalPaletteSync(inSettings.state, {
+      terminalKey: "ws:term-1",
+      paletteKey: "dark",
+      supportsTerminalPaletteOwnership: true,
+      readiness: { ...readyFocused, isWorkspaceFocused: false },
+    });
+    expect(toggledInSettings).toMatchObject({ shouldSend: true, intent: "update" });
+
+    const returned = resolveTerminalPaletteSync(toggledInSettings.state, {
+      terminalKey: "ws:term-1",
+      paletteKey: "dark",
+      supportsTerminalPaletteOwnership: true,
+      readiness: readyFocused,
+    });
+    expect(returned).toMatchObject({ shouldSend: true, intent: "claim" });
+  });
+
+  it("never sends updates from an unfocused pane that has not claimed or against unsupported daemons", () => {
+    const neverFocused = resolveTerminalPaletteSync(EMPTY_PALETTE_SYNC_STATE, {
+      terminalKey: "ws:term-1",
+      paletteKey: "dark",
+      supportsTerminalPaletteOwnership: true,
+      readiness: { ...readyFocused, isPaneFocused: false },
+    });
+    expect(neverFocused.shouldSend).toBe(false);
+
+    const unsupported = resolveTerminalPaletteSync(EMPTY_PALETTE_SYNC_STATE, {
+      terminalKey: "ws:term-1",
+      paletteKey: "light",
+      supportsTerminalPaletteOwnership: false,
+      readiness: readyFocused,
+    });
+    expect(unsupported.shouldSend).toBe(false);
+  });
+
+  it("resets on disconnect so reconnect re-claims ownership on the fresh connection", () => {
+    const claimed = resolveTerminalPaletteSync(EMPTY_PALETTE_SYNC_STATE, {
+      terminalKey: "ws:term-1",
+      paletteKey: "light",
+      supportsTerminalPaletteOwnership: true,
+      readiness: readyFocused,
+    });
+    const disconnected = resolveTerminalPaletteSync(claimed.state, {
+      terminalKey: "ws:term-1",
+      paletteKey: "light",
+      supportsTerminalPaletteOwnership: true,
+      readiness: { ...readyFocused, isConnected: false },
+    });
+    const reconnected = resolveTerminalPaletteSync(disconnected.state, {
+      terminalKey: "ws:term-1",
+      paletteKey: "light",
+      supportsTerminalPaletteOwnership: true,
+      readiness: readyFocused,
+    });
+    expect(reconnected).toMatchObject({ shouldSend: true, intent: "claim" });
   });
 });

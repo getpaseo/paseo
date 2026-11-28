@@ -39,21 +39,24 @@ import {
   type CaptureTerminalLinesResult,
 } from "./terminal-capture.js";
 import type { TerminalReplayOptions, TerminalReplayMetadata } from "./terminal-replay.js";
+import type { TerminalDefaultColors } from "@getpaseo/protocol/messages";
 import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 import { TerminalActivityTracker } from "./activity/terminal-activity-tracker.js";
 import { resolveDefaultTerminalShell } from "./default-terminal-shell.js";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
+import {
+  formatColorSchemeModeReport,
+  formatColorSchemeReport,
+  resolveTerminalPalette,
+  type ResolvedTerminalPalette,
+} from "./terminal-palette.js";
 
 const require = createRequire(import.meta.url);
 let nodePtySpawnHelperChecked = false;
 const TERMINAL_TITLE_DEBOUNCE_MS = 150;
 const TERMINAL_EXIT_OUTPUT_LINE_LIMIT = 12;
 const TERMINAL_EXIT_OUTPUT_CHAR_LIMIT = 16000;
-const TERMINAL_OSC_COLOR_QUERY_RESPONSES = new Map<number, string>([
-  [10, "rgb:e6e6/e6e6/e6e6"],
-  [11, "rgb:0b0b/0b0b/0b0b"],
-  [12, "rgb:e6e6/e6e6/e6e6"],
-]);
+const DEC_COLOR_SCHEME_REPORTING_MODE = 2031;
 
 export interface TerminalExitInfo {
   exitCode: number | null;
@@ -82,7 +85,8 @@ export interface TerminalCommandFinishedInfo {
 export type ClientMessage =
   | { type: "input"; data: string }
   | { type: "resize"; rows: number; cols: number }
-  | { type: "mouse"; row: number; col: number; button: number; action: "down" | "up" | "move" };
+  | { type: "mouse"; row: number; col: number; button: number; action: "down" | "up" | "move" }
+  | { type: "palette"; defaultColors: TerminalDefaultColors };
 
 export type ServerMessage =
   | { type: "output"; data: string; revision?: number }
@@ -108,6 +112,7 @@ export interface TerminalSession {
   onTitleChange(listener: (title?: string) => void): () => void;
   onActivityChange(listener: (transition: TerminalActivityTransition) => void): () => void;
   getSize(): { rows: number; cols: number };
+  getDefaultColors?(): TerminalDefaultColors | undefined;
   hasOutput(): boolean;
   getReplayPreamble(): string;
   getTitle(): string | undefined;
@@ -151,6 +156,7 @@ export interface CreateTerminalOptions {
   id?: string;
   cwd: string;
   workspaceId: string;
+  defaultColors?: TerminalDefaultColors;
   shell?: string;
   env?: Record<string, string>;
   activityEnv?: Record<string, string>;
@@ -193,6 +199,7 @@ function isTerminalActivityInterruptInput(data: string): boolean {
 interface BuildTerminalEnvironmentInput {
   shell: string;
   env: Record<string, string>;
+  defaultColors?: TerminalDefaultColors;
   baseEnv?: Record<string, string>;
   zshShellIntegrationDir?: string;
   paseoCliBinDir?: string | null;
@@ -379,13 +386,20 @@ function prepareZshShellIntegrationRuntimeDir(sourceDir = resolveZshShellIntegra
 export function buildTerminalEnvironment(
   input: BuildTerminalEnvironmentInput,
 ): Record<string, string> {
+  const hasExplicitColorFgBg = Object.keys(input.env).some(
+    (key) => key.toLowerCase() === "colorfgbg" && input.env[key] !== undefined,
+  );
+  const terminalOverrides: Record<string, string> = {
+    TERM: "xterm-256color",
+    TERM_PROGRAM: "kitty",
+    ...(hasExplicitColorFgBg
+      ? {}
+      : { COLORFGBG: resolveTerminalPalette(input.defaultColors).colorFgBg }),
+  };
   const baseEnv: Record<string, string> = createExternalProcessEnv(
     input.baseEnv ?? process.env,
     input.env,
-    {
-      TERM: "xterm-256color",
-      TERM_PROGRAM: "kitty",
-    },
+    terminalOverrides,
   );
   const envWithAgentHooks = prependPaseoCliToPath(
     baseEnv,
@@ -683,6 +697,7 @@ export async function createTerminal(
   const {
     cwd,
     workspaceId,
+    defaultColors,
     shell,
     env = {},
     activityEnv = {},
@@ -698,6 +713,9 @@ export async function createTerminal(
   const resolvedShell = shell ?? resolveDefaultTerminalShell({ env: baseEnv });
 
   const id = options.id ?? randomUUID();
+  let activeDefaultColors: TerminalDefaultColors | undefined = defaultColors;
+  let activePalette: ResolvedTerminalPalette = resolveTerminalPalette(defaultColors);
+  let colorSchemeReportingEnabled = false;
   const listeners = new Set<(msg: ServerMessage) => void>();
   const exitListeners = new Set<(info: TerminalExitInfo) => void>();
   const commandFinishedListeners = new Set<(info: TerminalCommandFinishedInfo) => void>();
@@ -743,6 +761,7 @@ export async function createTerminal(
       ...activityEnv,
       PASEO_WORKSPACE_ID: workspaceId,
     },
+    ...(defaultColors ? { defaultColors } : {}),
     ...resolveTerminalEnvironmentSource({ baseEnv, paseoCliPath }),
   });
 
@@ -833,17 +852,51 @@ export async function createTerminal(
     }
     return false;
   });
+  terminal.parser.registerCsiHandler({ prefix: "?", final: "h" }, (params) => {
+    if (params.includes(DEC_COLOR_SCHEME_REPORTING_MODE)) {
+      colorSchemeReportingEnabled = true;
+    }
+    return false;
+  });
+  terminal.parser.registerCsiHandler({ prefix: "?", final: "l" }, (params) => {
+    if (params.includes(DEC_COLOR_SCHEME_REPORTING_MODE)) {
+      colorSchemeReportingEnabled = false;
+    }
+    return false;
+  });
+  terminal.parser.registerEscHandler({ final: "c" }, () => {
+    colorSchemeReportingEnabled = false;
+    return false;
+  });
+  terminal.parser.registerCsiHandler({ prefix: "?", intermediates: "$", final: "p" }, (params) => {
+    if (params.length === 1 && params[0] === DEC_COLOR_SCHEME_REPORTING_MODE) {
+      ptyProcess.write(formatColorSchemeModeReport(colorSchemeReportingEnabled));
+      return true;
+    }
+    return false;
+  });
   terminal.parser.registerCsiHandler({ prefix: "?", final: "n" }, (params) => {
-    if (params.length !== 1 || params[0] !== 6) {
+    if (params.length !== 1) {
       return false;
     }
-    const buffer = terminal.buffer.active;
-    ptyProcess.write(`\x1b[?${buffer.cursorY + 1};${buffer.cursorX + 1}R`);
-    return true;
+    if (params[0] === 6) {
+      const buffer = terminal.buffer.active;
+      ptyProcess.write(`\x1b[?${buffer.cursorY + 1};${buffer.cursorX + 1}R`);
+      return true;
+    }
+    if (params[0] === 996) {
+      ptyProcess.write(formatColorSchemeReport(activePalette.colorScheme));
+      return true;
+    }
+    return false;
   });
-  for (const [code, response] of TERMINAL_OSC_COLOR_QUERY_RESPONSES) {
+  for (const code of [10, 11, 12] as const) {
     terminal.parser.registerOscHandler(code, (data) => {
       if (data.trim() !== "?") {
+        return false;
+      }
+      const response = activePalette.oscResponses.get(code);
+      if (!response) {
         return false;
       }
       ptyProcess.write(`\x1b]${code};${response}\x1b\\`);
@@ -1108,6 +1161,20 @@ export async function createTerminal(
         // Mouse events can be sent as escape sequences if terminal supports it
         // For now, we'll just ignore them - can be implemented later
         break;
+      case "palette": {
+        const previousScheme = activePalette.colorScheme;
+        activeDefaultColors = msg.defaultColors;
+        activePalette = resolveTerminalPalette(msg.defaultColors);
+        if (
+          colorSchemeReportingEnabled &&
+          activePalette.colorScheme !== previousScheme &&
+          !disposed
+        ) {
+          flushPendingInput();
+          ptyProcess.write(formatColorSchemeReport(activePalette.colorScheme));
+        }
+        break;
+      }
     }
   }
 
@@ -1328,6 +1395,7 @@ export async function createTerminal(
     onTitleChange,
     onActivityChange,
     getSize,
+    getDefaultColors: () => activeDefaultColors,
     serializeReplay,
     captureLines: (captureOptions) => captureTerminalLines(terminal.buffer.active, captureOptions),
     hasOutput: () => {

@@ -45,6 +45,7 @@ import type {
   DaemonUpdateResponseSchema,
   AgentActiveTurnBehavior,
   ServerInfoStatusPayload,
+  TerminalDefaultColors,
 } from "@getpaseo/protocol/messages";
 import type { DaemonProtocolCodec, OutboundValidationResult } from "./daemon-protocol-codec.js";
 import { leanProtocolCodec } from "./daemon-protocol-codec-lean.js";
@@ -7260,6 +7261,7 @@ export class DaemonClientCore {
       args?: string[];
       workspaceId?: string;
       size?: { rows: number; cols: number };
+      defaultColors?: TerminalDefaultColors;
     },
   ): Promise<CreateTerminalPayload> {
     const resolvedRequestId = this.createRequestId(requestId);
@@ -7272,6 +7274,7 @@ export class DaemonClientCore {
       args: options?.args,
       ...(options?.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
       ...(options?.size !== undefined ? { size: options.size } : {}),
+      ...(options?.defaultColors !== undefined ? { defaultColors: options.defaultColors } : {}),
       requestId: resolvedRequestId,
     });
     return this.sendCorrelatedRequest({

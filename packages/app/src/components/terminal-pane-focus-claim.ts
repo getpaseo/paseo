@@ -127,3 +127,102 @@ export function settleFocusClaim(
     requestedKey: null,
   };
 }
+
+export interface TerminalPaletteSyncState {
+  terminalKey: string | null;
+  claimed: boolean;
+  sentPaletteKey: string | null;
+}
+
+export const EMPTY_PALETTE_SYNC_STATE: TerminalPaletteSyncState = {
+  terminalKey: null,
+  claimed: false,
+  sentPaletteKey: null,
+};
+
+export interface TerminalPaletteSyncReadiness {
+  isWorkspaceFocused: boolean;
+  isPaneFocused: boolean;
+  isAppActivelyVisible: boolean;
+  isClientReady: boolean;
+  isConnected: boolean;
+}
+
+export function resolveTerminalPaletteSync(
+  state: TerminalPaletteSyncState,
+  input: {
+    terminalKey: string | null;
+    paletteKey: string;
+    forceClaim?: boolean;
+    supportsTerminalPaletteOwnership: boolean;
+    readiness: TerminalPaletteSyncReadiness;
+  },
+): {
+  state: TerminalPaletteSyncState;
+  shouldSend: boolean;
+  intent: "claim" | "update";
+} {
+  if (
+    !input.supportsTerminalPaletteOwnership ||
+    !input.terminalKey ||
+    !input.readiness.isClientReady ||
+    !input.readiness.isConnected
+  ) {
+    return {
+      state: EMPTY_PALETTE_SYNC_STATE,
+      shouldSend: false,
+      intent: "update",
+    };
+  }
+
+  const base = state.terminalKey === input.terminalKey ? state : EMPTY_PALETTE_SYNC_STATE;
+  const canClaim =
+    input.readiness.isWorkspaceFocused &&
+    input.readiness.isPaneFocused &&
+    input.readiness.isAppActivelyVisible;
+
+  if (canClaim) {
+    if (input.forceClaim || !base.claimed || base.sentPaletteKey !== input.paletteKey) {
+      return {
+        state: {
+          terminalKey: input.terminalKey,
+          claimed: true,
+          sentPaletteKey: input.paletteKey,
+        },
+        shouldSend: true,
+        intent: "claim",
+      };
+    }
+    return {
+      state: base,
+      shouldSend: false,
+      intent: "claim",
+    };
+  }
+
+  if (
+    input.readiness.isAppActivelyVisible &&
+    base.sentPaletteKey !== null &&
+    base.sentPaletteKey !== input.paletteKey
+  ) {
+    return {
+      state: {
+        terminalKey: input.terminalKey,
+        claimed: false,
+        sentPaletteKey: input.paletteKey,
+      },
+      shouldSend: true,
+      intent: "update",
+    };
+  }
+
+  return {
+    state: {
+      terminalKey: input.terminalKey,
+      claimed: false,
+      sentPaletteKey: base.sentPaletteKey,
+    },
+    shouldSend: false,
+    intent: "update",
+  };
+}
