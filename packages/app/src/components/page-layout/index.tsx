@@ -13,10 +13,8 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { ICON_SIZE, SPACING, type Theme } from "@/styles/theme";
 
 // Rows on a page drag to reorder, so the page stops scrolling while a drag holds the touch.
-const PageScrollView =
-  Platform.OS === "android"
-    ? withContentDrag(KeyboardAwareScrollView)
-    : withContentDrag(ScrollView);
+const DragKeyboardAwareScrollView = withContentDrag(KeyboardAwareScrollView);
+const DragScrollView = withContentDrag(ScrollView);
 
 interface PageLayoutProps {
   title?: string;
@@ -29,6 +27,8 @@ interface PageLayoutProps {
   descriptionTestID?: string;
   /** Controls for the whole page: right of the title on desktop, in the back header on compact. */
   actions?: ReactNode;
+  /** Enable keyboard-aware scrolling on iOS for pages with editable content. */
+  keyboardAware?: boolean;
   /** `wide` for pages that lay content out in a grid, such as a gallery. Defaults to a reading column. */
   width?: "default" | "wide";
   children: ReactNode;
@@ -47,6 +47,7 @@ export function PageLayout({
   titleTestID,
   descriptionTestID,
   actions,
+  keyboardAware = false,
   width = "default",
   children,
 }: PageLayoutProps) {
@@ -72,6 +73,8 @@ export function PageLayout({
       </Text>
     );
   }
+  const aware = Platform.OS === "android" || (Platform.OS === "ios" && keyboardAware);
+  const PageScrollView = aware ? DragKeyboardAwareScrollView : DragScrollView;
 
   return (
     <View style={styles.container}>
@@ -82,7 +85,7 @@ export function PageLayout({
       )}
       <PageScrollView
         // Leave room for field borders and padding around the focused native input.
-        {...(Platform.OS === "android" ? { bottomOffset: SPACING[4] } : {})}
+        {...(aware ? { bottomOffset: SPACING[4] } : {})}
         style={styles.scroll}
         contentContainerStyle={scrollContentStyle}
         testID={testID}
