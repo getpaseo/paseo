@@ -4,6 +4,7 @@ import path from "node:path";
 import type { AgentSkillSelection } from "@getpaseo/protocol/messages";
 import {
   isLegacyCodexCopy,
+  isLinkedFromOutsideSkillRoots,
   listFilesRecursive,
   readManagedFilesManifest,
   removeSkill,
@@ -251,7 +252,15 @@ export async function autoUpdateInstalledSkills(
   if (status.state !== "drift") return status;
   // Automatic maintenance may repair selected skills, but removal is an
   // interactive operation because managed directories can contain user files.
-  return applySkills(targets, selection, nonDestructivePlan(status));
+  // It also leaves a skill directory linked in from outside the skill roots: that
+  // is the user's own copy, and only an explicit install or update writes there.
+  const plan = nonDestructivePlan(status);
+  const ops: SkillOp[] = [];
+  for (const op of plan.ops) {
+    if (await isLinkedFromOutsideSkillRoots(op.name, targets)) continue;
+    ops.push(op);
+  }
+  return applySkills(targets, selection, { ...plan, ops });
 }
 
 export async function uninstallSkills(
