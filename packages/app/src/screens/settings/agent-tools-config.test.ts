@@ -144,7 +144,7 @@ describe("agent tools UI state and legacy daemon compatibility", () => {
     expect(
       createOnboardingAgentToolsPatch({
         enabled: true,
-        groups: { ...DEFAULT_AGENT_TOOL_GROUPS },
+        changedGroups: {},
         current,
         supportsToolsConfig: true,
       }),
@@ -153,17 +153,14 @@ describe("agent tools UI state and legacy daemon compatibility", () => {
     expect(
       createOnboardingAgentToolsPatch({
         enabled: true,
-        groups: { ...DEFAULT_AGENT_TOOL_GROUPS, schedules: false, browser: true },
+        changedGroups: { schedules: false, browser: true },
         current,
         supportsToolsConfig: true,
       }),
     ).toEqual({
       tools: {
-        enabled: true,
         groups: {
-          orchestration: true,
           schedules: false,
-          changeRequests: true,
           browser: true,
         },
       },
@@ -172,7 +169,7 @@ describe("agent tools UI state and legacy daemon compatibility", () => {
     expect(
       createOnboardingAgentToolsPatch({
         enabled: false,
-        groups: { ...DEFAULT_AGENT_TOOL_GROUPS, browser: true },
+        changedGroups: { browser: true },
         current,
         supportsToolsConfig: false,
       }),
@@ -180,6 +177,33 @@ describe("agent tools UI state and legacy daemon compatibility", () => {
       mcp: { injectIntoAgents: false },
       browserTools: { enabled: true },
     });
+  });
+
+  it("keeps the host's tool groups when setup continues without changing them", () => {
+    const current = {
+      enabled: true,
+      groups: { ...DEFAULT_AGENT_TOOL_GROUPS, schedules: false, browser: true },
+    };
+
+    for (const supportsToolsConfig of [true, false]) {
+      expect(
+        createOnboardingAgentToolsPatch({
+          enabled: true,
+          changedGroups: {},
+          current,
+          supportsToolsConfig,
+        }),
+      ).toBeNull();
+    }
+
+    expect(
+      createOnboardingAgentToolsPatch({
+        enabled: true,
+        changedGroups: {},
+        current: { ...current, enabled: false },
+        supportsToolsConfig: true,
+      }),
+    ).toEqual({ tools: { enabled: true } });
   });
 
   it("reports whether host agent tools are enabled for Voice UI checks", () => {

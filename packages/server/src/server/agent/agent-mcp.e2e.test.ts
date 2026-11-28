@@ -18,6 +18,8 @@ import { withTimeout } from "../../utils/promise-timeout.js";
 import { hashDaemonPassword } from "../auth.js";
 import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
+import { DaemonClient } from "../test-utils/daemon-client.js";
+import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import type {
   AgentClient,
   AgentPersistenceHandle,
@@ -565,6 +567,63 @@ describe("agent MCP end-to-end (offline)", () => {
       await daemon.stop();
       await rm(paseoHome, { recursive: true, force: true });
       await rm(staticDir, { recursive: true, force: true });
+      await rm(agentCwd, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("tool settings saved by a client change the agent's MCP catalog without a restart", async () => {
+    const daemon = await createTestPaseoDaemon();
+    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-tools-"));
+    const mcpUrl = `http://127.0.0.1:${daemon.port}/mcp/agents`;
+    const client = await createMcpClient(mcpUrl);
+    const settingsClient = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.18.2",
+    });
+    let agentId: string | null = null;
+    async function agentToolNames(): Promise<string[]> {
+      const agentClient = new StandardMcpClient({ name: "agent-mcp-e2e", version: "0.0.0" });
+      await agentClient.connect(
+        new StandardMcpHttpTransport(new URL(`${mcpUrl}?callerAgentId=${agentId!}`)),
+      );
+      try {
+        return (await agentClient.listTools()).tools.map((tool) => tool.name);
+      } finally {
+        await agentClient.close();
+      }
+    }
+
+    try {
+      await settingsClient.connect();
+      const created = await client.callTool({
+        name: "create_agent",
+        args: {
+          cwd: agentCwd,
+          title: "Tool settings",
+          provider: "claude/claude-test-model",
+          mode: "bypassPermissions",
+          initialPrompt: "reply with done and stop",
+        },
+      });
+      const payload = getStructuredContent(created);
+      agentId = typeof payload?.agentId === "string" ? payload.agentId : null;
+      expect(agentId).toBeTruthy();
+
+      const defaults = await agentToolNames();
+      expect(defaults).toEqual(expect.arrayContaining(["create_agent", "create_schedule"]));
+
+      await settingsClient.patchDaemonConfig({ tools: { groups: { schedules: false } } });
+      const withoutSchedules = await agentToolNames();
+      expect(withoutSchedules).toContain("create_agent");
+      expect(withoutSchedules).not.toContain("create_schedule");
+      expect(withoutSchedules).not.toContain("create_heartbeat");
+    } finally {
+      if (agentId) {
+        await client.callTool({ name: "kill_agent", args: { agentId } });
+      }
+      await settingsClient.close();
+      await client.close();
+      await daemon.close();
       await rm(agentCwd, { recursive: true, force: true });
     }
   }, 30_000);

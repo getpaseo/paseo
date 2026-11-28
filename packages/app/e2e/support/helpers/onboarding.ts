@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, type Locator, type Page } from "@playwright/test";
 import type { DaemonClient as InternalDaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type {
+  MutableDaemonToolGroups,
+  MutableDaemonToolsConfigPatch,
+} from "@getpaseo/protocol/messages";
 import { addProjectFlow, addProjectFlowInput, expectAddProjectTab } from "./add-project-flow";
 import { connectDaemonClient } from "./daemon-client-loader";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
@@ -149,6 +153,35 @@ export async function hostGivesAgentsPaseoTools(host: { port: number }): Promise
   try {
     const config = (await client.getDaemonConfig()).config;
     return config.tools?.enabled ?? config.mcp.injectIntoAgents !== false;
+  } finally {
+    await client.close();
+  }
+}
+
+/** The host's saved tool groups, read from the host itself. */
+export async function hostToolGroups(host: {
+  port: number;
+}): Promise<MutableDaemonToolGroups | undefined> {
+  const client = await connectDaemonClient<
+    Pick<InternalDaemonClient, "connect" | "close" | "getDaemonConfig">
+  >({ clientIdPrefix: "app-e2e-onboarding", port: host.port });
+  try {
+    return (await client.getDaemonConfig()).config.tools?.groups;
+  } finally {
+    await client.close();
+  }
+}
+
+/** Saves tool settings on the host, the way Settings does. */
+export async function setHostTools(
+  host: { port: number },
+  tools: MutableDaemonToolsConfigPatch,
+): Promise<void> {
+  const client = await connectDaemonClient<
+    Pick<InternalDaemonClient, "connect" | "close" | "patchDaemonConfig">
+  >({ clientIdPrefix: "app-e2e-onboarding", port: host.port });
+  try {
+    await client.patchDaemonConfig({ tools });
   } finally {
     await client.close();
   }

@@ -71,32 +71,41 @@ export function createAgentToolGroupPatch(input: {
   return null;
 }
 
+/**
+ * Writes the main switch when it differs from the host, and only the groups the user changed. The
+ * groups sit in a collapsed row, so a group the user never touched keeps the host's value.
+ */
 export function createOnboardingAgentToolsPatch(input: {
   enabled: boolean;
-  groups: AgentToolGroupsState;
+  changedGroups: Partial<AgentToolGroupsState>;
   current: { enabled: boolean; groups: AgentToolGroupsState } | null;
   supportsToolsConfig: boolean;
 }): MutableDaemonConfigPatch | null {
-  const { enabled, groups, current, supportsToolsConfig } = input;
+  const { enabled, changedGroups, current, supportsToolsConfig } = input;
+  const writesEnabled = current === null || current.enabled !== enabled;
+  const groups: Partial<AgentToolGroupsState> = {};
+  for (const group of AGENT_TOOL_GROUP_ORDER) {
+    const value = changedGroups[group];
+    if (value !== undefined && (current === null || current.groups[group] !== value)) {
+      groups[group] = value;
+    }
+  }
+  const writesGroups = Object.keys(groups).length > 0;
   if (supportsToolsConfig) {
-    const unchanged =
-      current !== null &&
-      current.enabled === enabled &&
-      AGENT_TOOL_GROUP_ORDER.every((group) => current.groups[group] === groups[group]);
-    if (unchanged) return null;
+    if (!writesEnabled && !writesGroups) return null;
     return {
       tools: {
-        enabled,
-        groups: { ...groups },
+        ...(writesEnabled ? { enabled } : {}),
+        ...(writesGroups ? { groups } : {}),
       },
     };
   }
   // COMPAT(daemonToolsConfig): added in v0.18.2, remove after 2027-06-01.
   const patch: MutableDaemonConfigPatch = {};
-  if (current === null || current.enabled !== enabled) {
+  if (writesEnabled) {
     patch.mcp = { injectIntoAgents: enabled };
   }
-  if (current === null || current.groups.browser !== groups.browser) {
+  if (groups.browser !== undefined) {
     patch.browserTools = { enabled: groups.browser };
   }
   return Object.keys(patch).length > 0 ? patch : null;

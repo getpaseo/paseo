@@ -53,7 +53,7 @@ export function useOrchestrationSetup(serverId: string): OrchestrationSetupContr
   const supportsToolGroups = useHostFeature(serverId, "daemonToolsConfig");
   const { config, patchConfig } = useDaemonConfig(serverId);
   const [chosen, setChosen] = useState<Choices>(ALL_ON);
-  const [toolGroups, setToolGroups] = useState<AgentToolGroupsState>(DEFAULT_AGENT_TOOL_GROUPS);
+  const [changedToolGroups, setChangedToolGroups] = useState<Partial<AgentToolGroupsState>>({});
   // With nothing picked there is nothing to install, so skills read as off, as they do in Settings.
   const skillsSelected = skills.status === null || hasSelectedSkills(skills.status);
   const choices = useMemo<Choices>(
@@ -72,7 +72,7 @@ export function useOrchestrationSetup(serverId: string): OrchestrationSetupContr
   }, []);
 
   const setToolGroup = useCallback((group: AgentToolGroupId, on: boolean) => {
-    setToolGroups((current) => ({ ...current, [group]: on }));
+    setChangedToolGroups((current) => ({ ...current, [group]: on }));
   }, []);
 
   // What the host and this computer have now, or null while it is still being read. A choice is
@@ -81,6 +81,10 @@ export function useOrchestrationSetup(serverId: string): OrchestrationSetupContr
     () =>
       config ? resolveAgentToolsState({ config, supportsToolsConfig: supportsToolGroups }) : null,
     [config, supportsToolGroups],
+  );
+  const toolGroups = useMemo<AgentToolGroupsState>(
+    () => ({ ...(currentToolsState?.groups ?? DEFAULT_AGENT_TOOL_GROUPS), ...changedToolGroups }),
+    [currentToolsState, changedToolGroups],
   );
   const skillsInstalled = skills.status ? areSkillsInstalled(skills.status) : null;
   const cliInstalled = cli.status ? cli.status.installed : null;
@@ -92,7 +96,7 @@ export function useOrchestrationSetup(serverId: string): OrchestrationSetupContr
   const applyTools = useCallback(() => {
     const patch = createOnboardingAgentToolsPatch({
       enabled: choices.tools,
-      groups: toolGroups,
+      changedGroups: changedToolGroups,
       current: currentToolsState,
       supportsToolsConfig: supportsToolGroups,
     });
@@ -103,7 +107,15 @@ export function useOrchestrationSetup(serverId: string): OrchestrationSetupContr
         if (!done) toast.error(t("settings.host.orchestration.enableTools.updateFailed"));
         return done;
       });
-  }, [choices.tools, currentToolsState, patchConfig, supportsToolGroups, t, toast, toolGroups]);
+  }, [
+    changedToolGroups,
+    choices.tools,
+    currentToolsState,
+    patchConfig,
+    supportsToolGroups,
+    t,
+    toast,
+  ]);
 
   const setSkillsInstalled = useCallback(
     (on: boolean) => (on ? reconcile() : uninstall()),
