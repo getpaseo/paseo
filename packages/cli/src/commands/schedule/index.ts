@@ -41,9 +41,12 @@ export function createScheduleCommand(): Command {
       .option("--expires-in <duration>", "Time to live for the schedule"),
   ).action(withOutput(runCreateCommand));
 
-  addJsonAndDaemonHostOptions(schedule.command("ls").description("List schedules")).action(
-    withOutput(runLsCommand),
-  );
+  addJsonAndDaemonHostOptions(
+    schedule
+      .command("ls")
+      .description("List new-agent schedules")
+      .option("--all", "Include schedules targeting existing agents"),
+  ).action(withOutput(runLsCommand));
 
   addJsonAndDaemonHostOptions(
     schedule.command("inspect").description("Inspect a schedule").argument("<id>", "Schedule ID"),
