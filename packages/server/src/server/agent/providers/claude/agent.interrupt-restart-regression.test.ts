@@ -583,6 +583,176 @@ test("Claude can still wake into an autonomous turn once the interrupted request
   await session.close();
 });
 
+/**
+ * Claude reports a turn stopped before its prompt check as a `result` with
+ * subtype `error_during_execution` and `num_turns: 0`. When the stop lands
+ * after Claude dequeued the prompt but before it announced the turn, the
+ * late `system/init` for that prompt opens an autonomous turn, and the
+ * result must settle it as canceled — the user asked it to stop and nothing
+ * failed — instead of failing it and leaving the agent in `error`.
+ */
+function buildPromptCheckStoppedResult(sessionId: string, numTurns = 0) {
+  return {
+    type: "result",
+    subtype: "error_during_execution",
+    errors: ["prompt_check: the turn was stopped before its prompt was checked"],
+    num_turns: numTurns,
+    is_error: true,
+    usage: buildUsage(),
+    total_cost_usd: 0,
+    session_id: sessionId,
+  };
+}
+
+function buildGenuineExecutionErrorResult(sessionId: string) {
+  return {
+    type: "result",
+    subtype: "error_during_execution",
+    errors: ["Something broke while the turn was running."],
+    num_turns: 0,
+    is_error: true,
+    usage: buildUsage(),
+    total_cost_usd: 0,
+    session_id: sessionId,
+  };
+}
+
+async function startPromptCheckStopTurn(sessionId: string): Promise<{
+  session: AgentSession;
+  query: () => ScriptedQuery | null;
+  observed: AgentStreamEvent[];
+  canceledIndex: number;
+  unsubscribe: () => void;
+}> {
+  let query: ScriptedQuery | null = null;
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    query = createScriptedQuery({
+      prompt,
+      sessionId,
+      async handlePrompt({ promptRecord, query: scripted }) {
+        if (promptRecord.text === "first prompt") {
+          // Claude dequeued the prompt for its next turn but has not announced
+          // the turn yet: no init, no assistant output. (In this harness the
+          // session-start init already set mainTurnInFlight, so the interrupt
+          // flag does not depend on this frame; it mirrors the dequeue so
+          // the prompt can no longer be withdrawn.)
+          scripted.emit(buildCommandLifecycle(promptRecord.uuid, "started"));
+          return;
+        }
+        if (promptRecord.text === "follow-up") {
+          scripted.emit({
+            type: "assistant",
+            message: { content: "FOLLOW_UP_RESPONSE" },
+            session_id: sessionId,
+          });
+          scripted.emit(buildSuccessResult(sessionId));
+        }
+      },
+    });
+    return query;
+  });
+
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  }).createSession({ provider: "claude", cwd: process.cwd() });
+
+  const observed: AgentStreamEvent[] = [];
+  const unsubscribe = session.subscribe((event) => {
+    observed.push(event);
+  });
+
+  const turn = streamSession(session, "first prompt");
+  await turn.next();
+  await waitFor(() => query?.prompts.length === 1);
+  await waitForInitRouted(() => query);
+
+  await session.interrupt();
+  await collectUntilTerminal(turn);
+
+  const canceledIndex = observed.findIndex((event) => event.type === "turn_canceled");
+  expect(canceledIndex).toBeGreaterThanOrEqual(0);
+
+  return { session, query: () => query, observed, canceledIndex, unsubscribe };
+}
+
+test("a prompt-check stop after interrupt settles as canceled, not failed", async () => {
+  const sessionId = "prompt-check-stop-session";
+  const { session, query, observed, canceledIndex, unsubscribe } =
+    await startPromptCheckStopTurn(sessionId);
+
+  query()?.emit(buildTurnInit(sessionId));
+  query()?.emit(buildPromptCheckStoppedResult(sessionId));
+
+  await waitFor(() =>
+    observed
+      .slice(canceledIndex + 1)
+      .some((event) => event.type === "turn_failed" || event.type === "turn_canceled"),
+  );
+  unsubscribe();
+
+  const afterCancel = observed.slice(canceledIndex + 1);
+  // The late init opens one autonomous turn for the stopped prompt; its
+  // prompt-check result cancels that turn instead of failing it.
+  expect(afterCancel.filter((event) => event.type === "turn_started")).toHaveLength(1);
+  expect(afterCancel.filter((event) => event.type === "turn_failed")).toEqual([]);
+  expect(afterCancel.filter((event) => event.type === "turn_canceled")).toHaveLength(1);
+
+  // The agent is idle again: the next prompt completes normally.
+  const followUp = await collectUntilTerminal(streamSession(session, "follow-up"));
+  expect(followUp).toContainEqual(expect.objectContaining({ type: "turn_completed" }));
+  expect(collectAssistantText(followUp)).toContain("FOLLOW_UP_RESPONSE");
+
+  await session.close();
+});
+
+test("a genuine autonomous turn failure after interrupt still fails", async () => {
+  const sessionId = "prompt-check-stop-control-session";
+  const { session, query, observed, canceledIndex, unsubscribe } =
+    await startPromptCheckStopTurn(sessionId);
+
+  query()?.emit(buildTurnInit(sessionId));
+  query()?.emit(buildGenuineExecutionErrorResult(sessionId));
+
+  await waitFor(() =>
+    observed
+      .slice(canceledIndex + 1)
+      .some((event) => event.type === "turn_failed" || event.type === "turn_canceled"),
+  );
+  unsubscribe();
+
+  const afterCancel = observed.slice(canceledIndex + 1);
+  expect(afterCancel.filter((event) => event.type === "turn_started")).toHaveLength(1);
+  expect(afterCancel.filter((event) => event.type === "turn_failed")).toHaveLength(1);
+  expect(afterCancel.filter((event) => event.type === "turn_canceled")).toEqual([]);
+
+  await session.close();
+});
+
+test("the prompt-check remap keys on the error text, not num_turns", async () => {
+  const sessionId = "prompt-check-stop-num-turns-session";
+  const { session, query, observed, canceledIndex, unsubscribe } =
+    await startPromptCheckStopTurn(sessionId);
+
+  query()?.emit(buildTurnInit(sessionId));
+  query()?.emit(buildPromptCheckStoppedResult(sessionId, 2));
+
+  await waitFor(() =>
+    observed
+      .slice(canceledIndex + 1)
+      .some((event) => event.type === "turn_failed" || event.type === "turn_canceled"),
+  );
+  unsubscribe();
+
+  const afterCancel = observed.slice(canceledIndex + 1);
+  expect(afterCancel.filter((event) => event.type === "turn_started")).toHaveLength(1);
+  expect(afterCancel.filter((event) => event.type === "turn_failed")).toEqual([]);
+  expect(afterCancel.filter((event) => event.type === "turn_canceled")).toHaveLength(1);
+
+  await session.close();
+});
+
 test("reuses the existing query after interrupt before starting the next prompt", async () => {
   const logger = createTestLogger();
   const queries: ScriptedQuery[] = [];

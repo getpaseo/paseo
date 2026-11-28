@@ -4308,6 +4308,19 @@ class ClaudeAgentSession implements AgentSession {
     return errors.some((e: string) => /\baborted\b/i.test(e));
   }
 
+  /**
+   * Claude reports a turn stopped before its prompt check as an
+   * `error_during_execution` result: "prompt_check: the turn was stopped
+   * before its prompt was checked". The turn never ran, so the message can
+   * only describe a stop, never a genuine failure.
+   */
+  private isPromptCheckStoppedError(message: SDKMessage): boolean {
+    const errors = "errors" in message && Array.isArray(message.errors) ? message.errors : [];
+    return errors.some((e: string) =>
+      /the turn was stopped before its prompt was checked/i.test(e),
+    );
+  }
+
   private buildTurnFailedEvent(
     errorMessage: string,
   ): Extract<AgentStreamEvent, { type: "turn_failed" }> {
@@ -5465,6 +5478,30 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
+  /**
+   * A stop that lands after Claude dequeued the prompt but before it announced
+   * the turn leaves a late init to open an autonomous turn for the stopped
+   * prompt, after the foreground turn was already canceled. The prompt-check
+   * result belongs to that canceled turn, so settle it as canceled instead of
+   * failed. Returns true when the result was consumed.
+   */
+  private trySettlePromptCheckStopAsCanceled(
+    message: Extract<SDKMessage, { type: "result" }>,
+    events: AgentStreamEvent[],
+  ): boolean {
+    if (
+      message.subtype !== "error_during_execution" ||
+      !this.isPromptCheckStoppedError(message) ||
+      this.activeForegroundTurnId ||
+      !this.autonomousTurn
+    ) {
+      return false;
+    }
+    events.push(...this.sidechainTracker.finishAll("canceled"));
+    events.push({ type: "turn_canceled", provider: "claude", reason: "Interrupted" });
+    return true;
+  }
+
   private appendResultEvents(
     message: Extract<SDKMessage, { type: "result" }>,
     events: AgentStreamEvent[],
@@ -5539,6 +5576,11 @@ class ClaudeAgentSession implements AgentSession {
         ? message.errors.join("\n")
         : "Claude run failed";
     if (usage) events.push({ type: "usage_updated", provider: "claude", usage });
+    // Any other error, and the same error on a live foreground turn, still
+    // fail the turn as before.
+    if (this.trySettlePromptCheckStopAsCanceled(message, events)) {
+      return;
+    }
     events.push(...this.sidechainTracker.finishAll("failed"));
     events.push(this.buildTurnFailedEvent(errorMessage));
   }
