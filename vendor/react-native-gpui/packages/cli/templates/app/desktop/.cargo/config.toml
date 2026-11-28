@@ -1,6 +1,0 @@
-[build]
-target-dir = "build/target"
-
-[env]
-RN_GPUI_AUTOLINK_MANIFEST = { value = "autolink/autolink.json", relative = true }
-RN_GPUI_AUTOLINK_CMAKE = { value = "autolink/autolink.cmake", relative = true }

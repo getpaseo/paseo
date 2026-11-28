@@ -1,3 +1,0 @@
-set_property(
-  GLOBAL APPEND PROPERTY RN_GPUI_APP_CPP_SOURCES
-  "${CMAKE_CURRENT_LIST_DIR}/cpp/RNModule.cpp")

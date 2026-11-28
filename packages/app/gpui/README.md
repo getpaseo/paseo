@@ -96,7 +96,7 @@ iOS, Android, web, and macOS all run from the same app code. This target does to
   behind the interface the app already uses.
 - **Fix the renderer, not the React code.** When something looks or behaves
   wrong only on GPUI, such as the tab track, the same React code is correct on
-  every other platform. The defect is in `vendor/react-native-gpui`; fix it there.
+  every other platform. The defect is in [getpaseo/react-native-gpui](https://github.com/getpaseo/react-native-gpui); fix it there.
 
 ## Approach and renderer choice
 
@@ -136,38 +136,26 @@ controlled CPU, memory, startup, or frame-time results against these alternative
 
 | Area                                                                   | Why it is here                                                                                                                                                                                                                                                                  |
 | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `vendor/react-native-gpui/`                                            | Editable, pinned runtime source. This accounts for roughly 130,000 lines of the diff. GitHub marks it as vendored; inspect [UPSTREAM](../../../vendor/react-native-gpui/UPSTREAM) for provenance and the local patches.                                                         |
-| npm and Cargo lockfiles                                                | Reproduce the experiment's dependencies. Roughly 15,000 generated lines, collapsed on GitHub.                                                                                                                                                                                   |
+| `packages/app/gpui/package.json` and `package-lock.json`               | Pinned tarballs from a [getpaseo/react-native-gpui](https://github.com/getpaseo/react-native-gpui/releases) release (`paseo-*`) for `@react-native-gpui/{cli,codegen,core,hermes}` and the seven `@react-native-gpui/*` modules.                                                |
+| `packages/app/gpui/desktop/Cargo.lock`                                 | Pins Rust crates for the desktop shell (`../node_modules/@react-native-gpui/core/ReactGpui/...` path dependencies).                                                                                                                                                             |
 | `desktop/`, `index.js`, `routes.js`, Metro/Babel config, root launcher | Register the full app, select the native runtime, compile native services, and bundle the actual route graph. The explicit route context prevents an apparently successful build with no app routes.                                                                            |
 | `adapters/`                                                            | Desktop implementations of npm packages used by the app, plus explicit unavailable-capability implementations for mobile packages. Limited ports, not complete replacements for Expo/Unistyles. App-module overrides live next to the shared files as `.gpui.ts` / `.gpui.tsx`. |
 | Shared app edits                                                       | One capability gate for alpha-mask shimmer. GPUI shows the logo and labels without that effect. Existing web/iOS/Android paths keep their behavior.                                                                                                                             |
 | Native tests and this guide                                            | Make the working slice reproducible and give contributors bounded follow-up work.                                                                                                                                                                                               |
 
-Upstream examples, its tester/testing package, website, unused fonts/vector-icon
-ports, starter navigation dependencies, sample icon, and unused nested Cargo config
-are omitted. Build outputs, native binaries, downloaded SDKs, logs, screenshots,
-and the exploratory size-measurement copy stay out of Git.
+### Testing changes against a local fork checkout
 
-The retained runtime still includes its build machinery, platform backends,
-headers, and tests. Arbitrarily deleting those to reduce line count makes an
-upstream refresh harder. Vendoring can later be replaced by a pinned dependency
-once the local patches are upstreamed and distribution is reproducible.
+To build Paseo against a local checkout of `getpaseo/react-native-gpui` instead of the pinned release:
 
-### Editing the runtime
+```sh
+npm run gpui:install -- --local /path/to/react-native-gpui
+```
 
-Edit `vendor/react-native-gpui`, then run `npm run gpui:install` before rebuilding.
-npm copies local packages rather than symlinking them; the install command
-refreshes those copies even when their versions have not changed.
-
-There are two local renderer changes:
-
-- `node_view.rs`: a `pointerEvents="box-none"` view must not install its own hit
-  area. Before the patch, Paseo's empty portal overlay intercepted sidebar clicks.
-- `StatusBar.desktop.js`: desktop windows do not have the mobile OS status bar.
+You can also pass the path via `PASEO_GPUI_LOCAL=/path/to/react-native-gpui npm run gpui:install`.
+This installs locked dependencies and the seven `@react-native-gpui/*` modules from the release, then packs `@react-native-gpui/{cli,codegen,core,hermes}` from the local checkout into `packages/app/gpui/node_modules/@react-native-gpui/` without modifying `package.json` or `package-lock.json`. Re-run the same command after editing the fork, then rebuild (`npm run build:gpui` or `npm run dev:gpui`). Run `npm run gpui:install` without `--local` to restore the release packages.
 
 GPUI remains a pinned Cargo git dependency. Upstream tooling downloads Hermes
-and React Native prebuilt libraries. The snapshot is not an offline or fully
-source-built distribution, and release packaging has not been verified.
+and builds the C++ runtime when needed; release packaging has not been verified across all platforms.
 
 ## Working slice and limits
 

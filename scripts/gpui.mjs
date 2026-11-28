@@ -1,14 +1,17 @@
-import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { cpSync, mkdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const project = path.join(root, "packages/app/gpui");
 const action = process.argv[2] ?? "run";
 const extra = process.argv.slice(3);
 const artifacts = path.join(root, ".artifacts/gpui");
+const localRuntimePackages = ["cli", "codegen", "core", "hermes"];
 mkdirSync(artifacts, { recursive: true });
+
 function run(command, args, env = {}) {
   const result = spawnSync(command, args, {
     cwd: project,
@@ -23,21 +26,64 @@ function run(command, args, env = {}) {
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
-if (action === "install") {
-  run("npm", ["install", "--workspaces=false"]);
-  // npm copies file: packages. Refresh vendored source even when its version
-  // did not change, so edits to the native renderer reach the next Cargo build.
-  const manifest = JSON.parse(readFileSync(path.join(project, "package.json"), "utf8"));
-  for (const [name, spec] of Object.entries({
-    ...manifest.dependencies,
-    ...manifest.devDependencies,
-  })) {
-    if (spec.startsWith("file:"))
-      cpSync(path.resolve(project, spec.slice(5)), path.join(project, "node_modules", name), {
-        recursive: true,
-        preserveTimestamps: true,
-      });
+
+function parseLocalInstallArg(args) {
+  let localRepo = process.env.PASEO_GPUI_LOCAL?.trim() || "";
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--local") {
+      localRepo = args[++i] ?? "";
+      if (!localRepo) throw new Error("--local requires a path to a react-native-gpui checkout");
+    } else if (arg.startsWith("--local=")) {
+      localRepo = arg.slice("--local=".length);
+    } else {
+      throw new Error(`Unknown gpui:install argument: ${arg}`);
+    }
   }
+  return localRepo ? path.resolve(localRepo) : null;
+}
+
+function installLocalRuntime(localRepo) {
+  for (const name of localRuntimePackages) {
+    const manifestPath = path.join(localRepo, "packages", name, "package.json");
+    if (!existsSync(manifestPath)) {
+      throw new Error(`Missing local package manifest: ${manifestPath}`);
+    }
+  }
+
+  const stage = mkdtempSync(path.join(os.tmpdir(), "paseo-gpui-local-"));
+  try {
+    for (const name of localRuntimePackages) {
+      const pkgDir = path.join(localRepo, "packages", name);
+      const output = execFileSync("npm", ["pack", "--json", "--pack-destination", stage], {
+        cwd: pkgDir,
+        encoding: "utf8",
+        shell: process.platform === "win32",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [packed] = JSON.parse(output);
+      if (!packed?.filename) {
+        throw new Error(`npm pack produced no tarball for local package ${name}`);
+      }
+      const destDir = path.join(project, "node_modules", "@react-native-gpui", name);
+      rmSync(destDir, { recursive: true, force: true });
+      mkdirSync(destDir, { recursive: true });
+      execFileSync(
+        "tar",
+        ["-xzf", path.join(stage, packed.filename), "--strip-components=1", "-C", destDir],
+        { stdio: "inherit" },
+      );
+      process.stdout.write(`Installed local @react-native-gpui/${name} from ${pkgDir}\n`);
+    }
+  } finally {
+    rmSync(stage, { recursive: true, force: true });
+  }
+}
+
+if (action === "install") {
+  const localRepo = parseLocalInstallArg(extra);
+  run("npm", ["ci", "--workspaces=false"]);
+  if (localRepo) installLocalRuntime(localRepo);
 } else if (action === "bundle") {
   run("node", [
     "node_modules/react-native/cli.js",
