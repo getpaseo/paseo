@@ -33,6 +33,7 @@ describe("sidebar view store", () => {
   beforeEach(() => {
     useSidebarViewStore.setState({
       workspaceSort: "created",
+      nestProjects: false,
       showBackground: false,
       groupMode: "project",
       hostFilters: [],
@@ -87,6 +88,7 @@ describe("sidebar view store", () => {
       }),
     ).toEqual({
       workspaceSort: "created",
+      nestProjects: false,
       showBackground: false,
       groupMode: "status",
       hostFilters: [],
@@ -103,6 +105,7 @@ describe("sidebar view store", () => {
       }),
     ).toEqual({
       workspaceSort: "created",
+      nestProjects: false,
       showBackground: false,
       groupMode: "status",
       hostFilters: ["host-a"],
@@ -119,6 +122,7 @@ describe("sidebar view store", () => {
       }),
     ).toEqual({
       workspaceSort: "created",
+      nestProjects: false,
       showBackground: false,
       groupMode: "status",
       hostFilters: ["host-a", "host-b"],
@@ -231,6 +235,7 @@ describe("sidebar view store", () => {
       }),
     ).toEqual({
       workspaceSort: "created",
+      nestProjects: false,
       showBackground: false,
       groupMode: "project",
       hostFilters: ["host-a"],
@@ -242,6 +247,7 @@ describe("sidebar view store", () => {
   it("never keeps project filters from state the schema rejects", () => {
     expect(migrateSidebarViewState({ projectFilters: "project-a" })).toEqual({
       workspaceSort: "created",
+      nestProjects: false,
       showBackground: false,
       groupMode: "project",
       hostFilters: [],
@@ -303,4 +309,11 @@ it("defaults to Created and persists the Last prompt choice across migration", (
 
 it("retains the manual sorting preference on reload", () => {
   expect(migrateSidebarViewState({ workspaceSort: "manual" }).workspaceSort).toBe("manual");
+});
+
+it("defaults to flat projects and retains the nesting choice", () => {
+  expect(migrateSidebarViewState({}).nestProjects).toBe(false);
+  expect(migrateSidebarViewState({ nestProjects: true }).nestProjects).toBe(true);
+  useSidebarViewStore.getState().toggleNestProjects();
+  expect(useSidebarViewStore.getState().nestProjects).toBe(true);
 });

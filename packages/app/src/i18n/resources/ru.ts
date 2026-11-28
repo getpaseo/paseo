@@ -1284,6 +1284,7 @@ export const ru: TranslationResources = {
       done: "Готово",
     },
     display: {
+      nestProjects: "Вкладывать проекты по каталогам",
       showBackground: "Показать фоновые пространства",
       trigger: "Настройки отображения",
       heading: "Отображение",

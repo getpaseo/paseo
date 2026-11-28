@@ -1279,6 +1279,7 @@ export const ja: TranslationResources = {
       done: "完了",
     },
     display: {
+      nestProjects: "ディレクトリ別にプロジェクトを入れ子表示",
       showBackground: "バックグラウンドを表示",
       trigger: "表示設定",
       heading: "表示",

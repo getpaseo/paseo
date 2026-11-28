@@ -20,9 +20,11 @@ import {
   type SidebarShortcutSection,
 } from "@/utils/sidebar-shortcuts";
 import { statusWorkspaceGroups, type SidebarWorkspaceGroup } from "./sidebar-labels";
+import { nestSidebarProjects } from "./sidebar-project-nesting";
 
 export interface SidebarProjection {
   pinnedGroups: PinnedSidebarGroups;
+  projectDepthByViewKey: ReadonlyMap<string, number>;
   workspaceGroups: SidebarWorkspaceGroup[];
   /**
    * The project icons this projection needs fetched, keyed by `projectViewKey` — one per project,
@@ -43,6 +45,7 @@ export interface SidebarProjectionInput {
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   projectNamesByViewKey: Map<string, string>;
   groupMode: SidebarGroupMode;
+  nestProjects: boolean;
   pinnedCollapsed: boolean;
   collapsedProjectKeys: ReadonlySet<string>;
   collapsedWorkspaceGroupKeys: ReadonlySet<string>;
@@ -50,11 +53,22 @@ export interface SidebarProjectionInput {
 }
 
 export function buildSidebarProjection(input: SidebarProjectionInput): SidebarProjection {
-  const pinnedGroups = splitPinnedSidebarGroups({
+  let pinnedGroups = splitPinnedSidebarGroups({
     projects: input.projects,
     keys: input.pinnedKeys,
     pinnedWorkspaceOrder: input.pinnedWorkspaceOrder,
   });
+  const projectDepthByViewKey = new Map<string, number>();
+  if (input.groupMode === "project" && input.nestProjects) {
+    const nested = nestSidebarProjects(pinnedGroups.unpinnedProjects, input.collapsedProjectKeys);
+    pinnedGroups = {
+      ...pinnedGroups,
+      unpinnedProjects: nested.map(({ project, depth }) => {
+        projectDepthByViewKey.set(project.viewKey, depth);
+        return project;
+      }),
+    };
+  }
   const pinnedWorkspaceKeys = new Set(input.pinnedKeys.pinnedWorkspaceKeys);
   const unpinnedWorkspaces = Array.from(input.workspaceEntriesByKey.values()).filter(
     (workspace) => !pinnedWorkspaceKeys.has(workspace.workspaceKey),
@@ -86,6 +100,7 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
 
   return {
     pinnedGroups,
+    projectDepthByViewKey,
     workspaceGroups,
     projectIconTargets: resolveSidebarProjectIconTargets(input.projects),
     shortcutModel: buildSidebarShortcutSections({ sections }),

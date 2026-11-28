@@ -1294,6 +1294,7 @@ export const fr: TranslationResources = {
       done: "Terminé",
     },
     display: {
+      nestProjects: "Imbriquer les projets par dossier",
       showBackground: "Afficher les espaces en arrière-plan",
       trigger: "Préférences d’affichage",
       heading: "Affichage",
