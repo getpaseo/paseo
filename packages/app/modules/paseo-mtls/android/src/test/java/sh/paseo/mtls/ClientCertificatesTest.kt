@@ -16,6 +16,35 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ClientCertificatesTest {
+  @Test fun `only a TLS missing certificate alert triggers the picker`() {
+    assertTrue(isMissingClientCertificate(javax.net.ssl.SSLHandshakeException("TLSV13_ALERT_CERTIFICATE_REQUIRED")))
+    assertTrue(isMissingClientCertificate(java.io.IOException("connection failed", javax.net.ssl.SSLProtocolException("tlsv1 alert certificate required"))))
+    assertFalse(isMissingClientCertificate(java.io.IOException("Unexpected HTTP response: certificate required")))
+    assertFalse(isMissingClientCertificate(javax.net.ssl.SSLHandshakeException("Trust anchor not found")))
+    assertFalse(isMissingClientCertificate(javax.net.ssl.SSLPeerUnverifiedException("Hostname not verified")))
+  }
+  @Test fun `pairing challenge accepts HTTP errors without asking for an identity`() {
+    val server = MockWebServer()
+    val tls = HandshakeCertificates.Builder().heldCertificate(serverIdentity).build()
+    server.useHttps(tls.sslSocketFactory(), false)
+    server.start()
+    try {
+      server.enqueue(MockResponse().setResponseCode(404))
+      val client = OkHttpClient.Builder().sslSocketFactory(trust.sslSocketFactory(), trust.trustManager).build()
+      assertFalse(requiresClientCertificate(client, CertificateOrigin.of("localhost", server.port)))
+      assertEquals("HEAD", server.takeRequest().method)
+    } finally { server.shutdown() }
+  }
+
+  @Test fun `untrusted pairing servers do not open certificate selection`() {
+    val server = MockWebServer()
+    val tls = HandshakeCertificates.Builder().heldCertificate(serverIdentity).build()
+    server.useHttps(tls.sslSocketFactory(), false)
+    server.start()
+    try {
+      assertFalse(requiresClientCertificate(OkHttpClient(), CertificateOrigin.of("localhost", server.port)))
+    } finally { server.shutdown() }
+  }
   private val ca = HeldCertificate.Builder().certificateAuthority(1).build()
   private val serverIdentity = HeldCertificate.Builder().commonName("localhost")
     .addSubjectAlternativeName("localhost").signedBy(ca).build()

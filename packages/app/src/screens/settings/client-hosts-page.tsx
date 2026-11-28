@@ -39,6 +39,7 @@ import {
 import { formatLatency } from "@/utils/latency";
 
 import { ClientCertificateField } from "@/components/mtls/client-certificate-field";
+import { connectionCertificateTarget } from "@/components/mtls/pairing-client-certificate";
 
 const ThemedPlus = withUnistyles(Plus);
 const ThemedServer = withUnistyles(Server);
@@ -244,6 +245,7 @@ function ClientHostRouteRow({
   const { t } = useTranslation();
   const title = formatConnectionTitle(connection, isLocalHost, t);
   const endpoint = formatConnectionEndpoint(connection, isLocalHost, hosts);
+  const certificateTarget = connectionCertificateTarget(connection);
 
   const latencyText = (() => {
     if (latencyLoading) return "...";
@@ -274,11 +276,11 @@ function ClientHostRouteRow({
           </Button>
         </View>
       </SettingsRow>
-      {connection.type === "directTcp" ? (
+      {certificateTarget ? (
         <ClientCertificateField
-          host={connection.endpoint}
-          port="6767"
-          useTls={connection.useTls ?? false}
+          host={certificateTarget.host}
+          port={String(certificateTarget.port)}
+          useTls
         />
       ) : null}
     </View>

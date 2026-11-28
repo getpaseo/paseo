@@ -15,10 +15,17 @@ EAS profiles: `development`, `production`, and `production-apk` in `packages/app
 
 ## Client certificates (mTLS)
 
-For a direct HTTPS host that requires a client certificate, install the identity
-in Android's credential settings first. In **Add host**, enter the host and port,
-enable SSL, and choose **Client certificate (mTLS)** before connecting. Existing
-connections expose the same control in **Settings > Hosts > Routes**.
+Install the identity in Android's credential settings first. When you confirm a
+pairing link or QR code, Paseo checks the relay's TLS endpoint. If the relay
+requires a missing client certificate, Android opens its certificate picker
+before pairing. Cancelling the picker cancels the pairing attempt. A working
+saved identity, a relay without mTLS, and plaintext relays do not open the picker.
+
+For a direct HTTPS host, enter the host and port in **Add host**, enable SSL, and
+choose **Client certificate (mTLS)** before connecting. Existing direct and relay
+connections expose the same control in **Settings > Hosts > Routes**. A link
+served from port 8444 may name a relay on port 443; its certificate assignment
+belongs to the relay's hostname and port.
 
 Selections belong to a hostname and effective port, not to a daemon or a relay
 pairing. Android keeps the private key; Paseo persists only the granted KeyChain

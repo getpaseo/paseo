@@ -47,6 +47,7 @@ import { ConnectionOfferSchema, type ConnectionOffer } from "@getpaseo/protocol/
 import { HostConfirmations, type HostConfirmationRequest } from "./host-confirmation";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { isWeb } from "@/constants/platform";
+import { preparePairingCertificate } from "@/components/mtls/prepare-pairing-certificate";
 import { connectToDaemon, getConnectionAuthFailureReason } from "@/utils/test-daemon-connection";
 import { getOrCreateClientId } from "@/utils/client-id";
 import { z } from "zod";
@@ -208,6 +209,7 @@ export interface RelaySecurityPin {
 }
 
 export interface HostRuntimeControllerDeps {
+  preparePairingCertificate?: (connection: HostConnection) => Promise<boolean>;
   createClient: (input: {
     host: HostProfile;
     connection: HostConnection;
@@ -658,6 +660,7 @@ function createDefaultDeps(
         },
       });
     },
+    preparePairingCertificate,
     connectToDaemon: async ({ host, connection, timeoutMs }) => {
       if (connection.type === "routed") {
         const origin = resolveOrigin(connection.originServerId);
@@ -2332,7 +2335,8 @@ export class HostRuntimeStore {
   // TLS setting. The answer needs the saved hosts, so it waits for them to load.
   private async confirmLink(offer: ConnectionOffer): Promise<boolean> {
     await this.loadRegistry();
-    return this.hostConfirmations.confirmLink(offer, this.hosts);
+    if (!(await this.hostConfirmations.confirmLink(offer, this.hosts))) return false;
+    return this.deps.preparePairingCertificate?.(relayConnectionFromOffer(offer)) ?? true;
   }
 
   getPendingHostConfirmation(): HostConfirmationRequest | null {

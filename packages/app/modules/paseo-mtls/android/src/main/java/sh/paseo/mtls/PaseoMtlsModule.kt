@@ -34,6 +34,10 @@ class PaseoMtlsModule : Module() {
       PaseoMtls.selected(CertificateOrigin.of(host, port))
     }
 
+    AsyncFunction("requiresCertificate") { host: String, port: Int ->
+      requiresClientCertificate(PaseoMtls.client(), CertificateOrigin.of(host, port))
+    }
+
     AsyncFunction("remove") { host: String, port: Int ->
       PaseoMtls.select(CertificateOrigin.of(host, port), null)
     }
