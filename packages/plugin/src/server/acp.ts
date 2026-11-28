@@ -51,6 +51,10 @@ export type AcpConnector = () => AcpStream | Promise<AcpStream>;
 export interface AcpOptions {
   protocol?: "auto" | "v1";
   startupTimeoutMs?: number;
+  /** How long Stop waits for an in-flight prompt to settle after `session/cancel` before retiring the process. Defaults to 10_000ms. */
+  interruptGraceMs?: number;
+  /** How long forced process termination waits after SIGTERM before sending SIGKILL. Defaults to 2_000ms. */
+  interruptKillGraceMs?: number;
   /** Global discovery returns an empty catalog without spawning a process or opening a session. */
   workspaceOnlyCatalog?: boolean;
   /**

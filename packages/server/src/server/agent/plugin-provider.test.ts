@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile as readFsFile, rm, writeFile as writeFsFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentStorage } from "./agent-storage.js";
@@ -15,7 +15,7 @@ import type {
   ProviderInput,
   ProviderRegistration,
 } from "@getpaseo/plugin/server/provider";
-import { sendPreparedPromptToAgent } from "./agent-prompt.js";
+import { sendPreparedPromptToAgent, startAgentRun } from "./agent-prompt.js";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -3935,5 +3935,163 @@ describe("plugin provider tool policy", () => {
     expect(result.error).toBeNull();
     expect(result.opened).toHaveLength(1);
     expect(result.opened[0]).toMatchObject({ config: { toolPolicy } });
+  });
+});
+
+describe("plugin ACP hung-cancel retirement through AgentManager (#3256)", () => {
+  async function writeHungAcpScript(
+    dir: string,
+    options: { pidLog: string; methodLog: string; loadSession: boolean },
+  ): Promise<string> {
+    const scriptPath = join(dir, "hung-acp.mjs");
+    await writeFsFile(
+      scriptPath,
+      [
+        `import { appendFileSync } from "node:fs";`,
+        `import { createInterface } from "node:readline";`,
+        `const cfg = ${JSON.stringify(options)};`,
+        `appendFileSync(cfg.pidLog, String(process.pid) + "\\n");`,
+        `const write = (msg) => process.stdout.write(JSON.stringify(msg) + "\\n");`,
+        `createInterface({ input: process.stdin }).on("line", (line) => {`,
+        `  if (!line.trim()) return;`,
+        `  const msg = JSON.parse(line);`,
+        `  appendFileSync(cfg.methodLog, JSON.stringify({ pid: process.pid, method: msg.method }) + "\\n");`,
+        `  if (msg.method === "initialize") {`,
+        `    write({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, agentCapabilities: cfg.loadSession ? { loadSession: true } : {} } });`,
+        `    return;`,
+        `  }`,
+        `  if (msg.method === "session/new") {`,
+        `    write({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "plugin-acp-1" } });`,
+        `    return;`,
+        `  }`,
+        `  if (msg.method === "session/load") {`,
+        `    write({ jsonrpc: "2.0", id: msg.id, result: {} });`,
+        `    return;`,
+        `  }`,
+        `  if (msg.method === "session/prompt") {`,
+        `    const text = msg.params?.prompt?.[0]?.text ?? "";`,
+        `    if (text.startsWith("hang")) return;`,
+        `    write({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "reply:" + text } } } });`,
+        `    write({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });`,
+        `  }`,
+        `});`,
+      ].join("\n"),
+      "utf8",
+    );
+    return scriptPath;
+  }
+
+  test("retires a hung resumable plugin ACP child on Stop and transparently reloads on the next prompt", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "paseo-plugin-acp-e2e-resumable-"));
+    const logger = createTestLogger();
+    const pidLog = join(dir, "pids.log");
+    const methodLog = join(dir, "methods.jsonl");
+    const scriptPath = await writeHungAcpScript(dir, { pidLog, methodLog, loadSession: true });
+    const registration = runAcpProvider({
+      id: "hung-resumable-plugin",
+      label: "Hung Resumable Plugin",
+      command: [process.execPath, scriptPath],
+      acpOptions: { interruptGraceMs: 120, interruptKillGraceMs: 120 },
+    });
+    const plugins = new PluginAgentClientRegistry(logger);
+    plugins.replace([registration]);
+    const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+    const manager = new AgentManager({
+      logger,
+      clients: { "hung-resumable-plugin": registry["hung-resumable-plugin"].createClient(logger) },
+      providerDefinitions: { "hung-resumable-plugin": registry["hung-resumable-plugin"] },
+    });
+    try {
+      const agent = await manager.createAgent(
+        { provider: "hung-resumable-plugin", cwd: dir },
+        undefined,
+        { workspaceId: undefined },
+      );
+      const pidsAfterOpen = (await readFsFile(pidLog, "utf8")).trim().split("\n").map(Number);
+      const firstSessionPid = pidsAfterOpen.at(-1)!;
+
+      const firstRun = await startAgentRun(manager, agent.id, "hang-forever", logger);
+      if (firstRun.disposition === "turn_started") await firstRun.started;
+      expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+
+      const cancelResult = await manager.cancelAgentRun(agent.id);
+      expect(cancelResult).toEqual({ status: "settled" });
+      expect(() => process.kill(firstSessionPid, 0)).toThrow();
+      expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+
+      // Next prompt transparently spawns a fresh child and calls session/load.
+      const nextRun = await startAgentRun(manager, agent.id, "after-stop", logger);
+      if (nextRun.disposition === "turn_started") await nextRun.started;
+      const done = await manager.waitForAgentEvent(agent.id);
+      expect(done.status).toBe("idle");
+      expect(done.lastMessage).toBe("reply:after-stop");
+
+      const allPids = (await readFsFile(pidLog, "utf8")).trim().split("\n").map(Number);
+      const reloadedPid = allPids.at(-1)!;
+      expect(reloadedPid).not.toBe(firstSessionPid);
+      const methods = (await readFsFile(methodLog, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { pid: number; method: string });
+      expect(
+        methods.some((entry) => entry.pid === reloadedPid && entry.method === "session/load"),
+      ).toBe(true);
+    } finally {
+      await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+      await plugins.shutdown();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("retires a hung non-resumable plugin ACP child on Stop and surfaces a clear error state", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "paseo-plugin-acp-e2e-nonresumable-"));
+    const logger = createTestLogger();
+    const pidLog = join(dir, "pids.log");
+    const methodLog = join(dir, "methods.jsonl");
+    const scriptPath = await writeHungAcpScript(dir, { pidLog, methodLog, loadSession: false });
+    const registration = runAcpProvider({
+      id: "hung-nonresumable-plugin",
+      label: "Hung Non-Resumable Plugin",
+      command: [process.execPath, scriptPath],
+      acpOptions: { interruptGraceMs: 120, interruptKillGraceMs: 120 },
+    });
+    const plugins = new PluginAgentClientRegistry(logger);
+    plugins.replace([registration]);
+    const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+    const manager = new AgentManager({
+      logger,
+      clients: {
+        "hung-nonresumable-plugin": registry["hung-nonresumable-plugin"].createClient(logger),
+      },
+      providerDefinitions: { "hung-nonresumable-plugin": registry["hung-nonresumable-plugin"] },
+    });
+    try {
+      const agent = await manager.createAgent(
+        { provider: "hung-nonresumable-plugin", cwd: dir },
+        undefined,
+        { workspaceId: undefined },
+      );
+      const firstSessionPid = (await readFsFile(pidLog, "utf8"))
+        .trim()
+        .split("\n")
+        .map(Number)
+        .at(-1)!;
+
+      const firstRun = await startAgentRun(manager, agent.id, "hang-forever", logger);
+      if (firstRun.disposition === "turn_started") await firstRun.started;
+      expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+
+      const cancelResult = await manager.cancelAgentRun(agent.id);
+      expect(cancelResult).toEqual({ status: "settled" });
+      expect(() => process.kill(firstSessionPid, 0)).toThrow();
+      await expect
+        .poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 2_000 })
+        .toBe("error");
+      expect(manager.getAgent(agent.id)?.lastError).toMatch(/does not support session resume/i);
+    } finally {
+      await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+      await plugins.shutdown();
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
