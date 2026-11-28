@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { withOutput } from "../../output/index.js";
-import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
+import { addJsonAndDaemonHostOptions, collectMultiple } from "../../utils/command-options.js";
 import { runArchiveCommand } from "./archive.js";
 import { runCreateCommand } from "./create.js";
 import { runLsCommand } from "./ls.js";
@@ -43,7 +43,8 @@ export function createWorkspaceCommand(): Command {
     workspace
       .command("ls")
       .description("List active workspaces")
-      .option("--background", "Include background workspaces"),
+      .option("--background", "Include background workspaces")
+      .option("--label <name>", "Match any of the supplied workspace labels", collectMultiple, []),
   ).action(withOutput(runLsCommand));
 
   addJsonAndDaemonHostOptions(
