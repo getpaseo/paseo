@@ -41,32 +41,67 @@ function filterUsageDiscoveryEnv(
   return filtered;
 }
 
+function hasNonEmpty(value: string | undefined): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 function isEnabledFlag(value: string | undefined): boolean {
   return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
 }
 
+function isWrapperLaunch(
+  launch:
+    | Pick<import("@getpaseo/plugin/server/provider").ProviderLaunch, "command" | "args">
+    | undefined,
+  expectedBinary: string,
+): boolean {
+  if (!launch) return false;
+  if (launch.args.length > 0) return true;
+  const command = launch.command.trim();
+  if (!command) return false;
+  const base = command.replaceAll("\\", "/").split("/").pop()?.toLowerCase() ?? "";
+  const stem = base.replace(/\.(?:exe|cmd|bat|ps1)$/, "");
+  return stem !== expectedBinary;
+}
+
 /**
- * Whether a provider's effective launch environment routes requests away from its
- * base provider's first-party OAuth / subscription quota store (for example Bedrock,
- * Vertex, a custom proxy base URL, or an API-key override for Cursor). Evaluated
- * daemon-side so neither endpoint URLs nor auth secrets cross into usage plugins.
+ * Whether a provider's effective launch environment or command routes requests away from its
+ * base provider's first-party local disk/Keychain login store (for example Bedrock, Vertex,
+ * Foundry, a custom proxy base URL, an explicit login token env override, or a wrapper command).
+ * Evaluated daemon-side so neither endpoint URLs nor auth secrets cross into usage plugins.
  */
 function targetsForeignUsageEndpoint(
   baseProvider: string,
   effectiveEnv: Readonly<Record<string, string | undefined>>,
+  launch?: Pick<import("@getpaseo/plugin/server/provider").ProviderLaunch, "command" | "args">,
 ): boolean {
   if (baseProvider === "claude") {
-    const baseUrl = effectiveEnv.ANTHROPIC_BASE_URL;
+    if (isWrapperLaunch(launch, "claude")) return true;
+    if (
+      hasNonEmpty(effectiveEnv.CLAUDE_CODE_OAUTH_TOKEN) ||
+      hasNonEmpty(effectiveEnv.ANTHROPIC_API_KEY) ||
+      hasNonEmpty(effectiveEnv.ANTHROPIC_AUTH_TOKEN)
+    ) {
+      return true;
+    }
+    const baseUrl = effectiveEnv.ANTHROPIC_BASE_URL?.trim();
     const foreignUrl =
-      Boolean(baseUrl) && baseUrl!.replace(/\/+$/, "") !== "https://api.anthropic.com";
+      Boolean(baseUrl) &&
+      baseUrl!.replace(/\/+$/, "").toLowerCase() !== "https://api.anthropic.com";
     return (
       isEnabledFlag(effectiveEnv.CLAUDE_CODE_USE_BEDROCK) ||
       isEnabledFlag(effectiveEnv.CLAUDE_CODE_USE_VERTEX) ||
+      isEnabledFlag(effectiveEnv.CLAUDE_CODE_USE_FOUNDRY) ||
       foreignUrl
     );
   }
   if (baseProvider === "codex") {
-    return Boolean(effectiveEnv.OPENAI_BASE_URL);
+    if (isWrapperLaunch(launch, "codex")) return true;
+    return (
+      hasNonEmpty(effectiveEnv.CODEX_API_KEY) ||
+      hasNonEmpty(effectiveEnv.CODEX_ACCESS_TOKEN) ||
+      hasNonEmpty(effectiveEnv.OPENAI_BASE_URL)
+    );
   }
   if (baseProvider === "cursor") {
     return Boolean(effectiveEnv.CURSOR_API_KEY || effectiveEnv.CURSOR_AUTH_TOKEN);
@@ -78,16 +113,19 @@ export interface SelectProviderUsageEnvInput {
   provider: string;
   env: Readonly<Record<string, string | undefined>>;
   configuredEnvKeys?: readonly string[];
+  launch?: Pick<import("@getpaseo/plugin/server/provider").ProviderLaunch, "command" | "args">;
 }
 
 /**
  * Resolve the sanitized locator environment for configured-provider host discovery,
- * or `null` when the provider configures no locator variable or targets a foreign endpoint.
+ * or `null` when the provider configures no locator variable, uses a wrapper command,
+ * overrides login via an env token, or targets a foreign endpoint.
  */
 export function selectProviderUsageEnv({
   provider,
   env,
   configuredEnvKeys,
+  launch,
 }: SelectProviderUsageEnvInput): Record<string, string> | null {
   if (
     configuredEnvKeys !== undefined &&
@@ -97,7 +135,7 @@ export function selectProviderUsageEnv({
   ) {
     return null;
   }
-  if (targetsForeignUsageEndpoint(provider, env)) return null;
+  if (targetsForeignUsageEndpoint(provider, env, launch)) return null;
   const sanitized = filterUsageDiscoveryEnv(env);
   return Object.keys(sanitized).length > 0 ? sanitized : null;
 }

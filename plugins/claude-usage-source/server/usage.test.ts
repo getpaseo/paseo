@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -924,7 +924,7 @@ function tokenLookup(accessToken: string) {
   const directory = mkdtempSync(join(tmpdir(), "claude-profile-token-"));
   tokenDirectories.push(directory);
   writeClaudeCredentials(directory, accessToken);
-  return { claudeHome: directory, home: directory };
+  return { claudeHome: directory, home: directory, env: {} };
 }
 
 it("discovers a Pi OAuth login independently of the CLI login", async () => {
@@ -994,9 +994,9 @@ async function accountFor(
   input: UsageInput,
   fetchApi: typeof fetch,
   now: () => number,
-  lookup: Parameters<typeof discover>[0] = {},
+  lookup: Parameters<typeof discover>[1] = {},
 ) {
-  const accounts = await discover({ kind: "global" }, { ...lookup, now }, fetchApi);
+  const accounts = await discover({ kind: "global" }, { env: {}, ...lookup, now }, fetchApi);
   const account = accounts.find((candidate) =>
     isDeepStrictEqual(inputSchema.parse(candidate.input).route, input.route),
   );
@@ -1273,4 +1273,129 @@ it("CLAUDE_SECURESTORAGE_CONFIG_DIR overrides CLAUDE_CONFIG_DIR for macOS Keycha
   });
   expect(seenServices).toContain(expectedService);
   expect(seenServices).toContain("Claude Code-credentials");
+});
+
+it("suppresses local Claude credentials for env-token overrides and wrapper commands while keeping custom CLAUDE_CONFIG_DIR profiles", async () => {
+  const home = mkdtempSync(join(tmpdir(), "claude-wrapper-guard-"));
+  const defaultDir = join(home, ".claude");
+  const customDir = join(home, "work-profile");
+  try {
+    mkdirSync(defaultDir, { recursive: true });
+    mkdirSync(customDir, { recursive: true });
+    writeClaudeCredentials(defaultDir, "default-disk-token");
+    writeClaudeCredentials(customDir, "work-profile-token");
+    const lookup = { platform: "linux" as const, home, env: { HOME: home } };
+    const api: typeof fetch = async (_url, init) => {
+      const auth = new Headers(init?.headers).get("Authorization");
+      const id = auth?.includes("work-profile") ? "work-account" : "default-account";
+      return jsonResponse({
+        account: { uuid: id, email: `${id}@example.test` },
+        organization: { uuid: "org" },
+      });
+    };
+
+    // Baseline: default binary and custom CLAUDE_CONFIG_DIR profile both work.
+    expect(
+      await discover(
+        {
+          kind: "session",
+          provider: "claude",
+          env: { HOME: home, CLAUDE_CONFIG_DIR: customDir },
+          launch: {
+            command: "/opt/claude-nightly/claude",
+            args: [],
+            env: { HOME: home, CLAUDE_CONFIG_DIR: customDir },
+          },
+        },
+        lookup,
+        api,
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        key: "work-account.org",
+        label: "work-account@example.test",
+      }),
+    ]);
+
+    // Session scope suppresses disk fallback for env tokens and wrapper commands.
+    for (const override of [
+      { env: { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-setup" } },
+      { env: { ANTHROPIC_API_KEY: "sk-ant-api03-key" } },
+      { env: { ANTHROPIC_AUTH_TOKEN: "bearer-proxy-token" } },
+      {
+        launch: {
+          command: "/opt/homebrew/bin/teamcodex",
+          args: ["run", "--"],
+          env: { HOME: home },
+        },
+      },
+      {
+        launch: {
+          command: "/usr/local/bin/claude-proxy-wrapper",
+          args: [],
+          env: { HOME: home, CLAUDE_CONFIG_DIR: customDir },
+        },
+      },
+    ]) {
+      const env = { HOME: home, ...override.env };
+      expect(
+        await discover(
+          {
+            kind: "session",
+            provider: "claude",
+            env,
+            ...(override.launch ? { launch: override.launch } : {}),
+          },
+          lookup,
+          api,
+        ),
+      ).toEqual([]);
+    }
+
+    // Global scope also suppresses local Claude disk fallback when configured provider uses a wrapper or env token.
+    expect(
+      await discover(
+        {
+          kind: "global",
+          launch: {
+            command: "/opt/homebrew/bin/teamcodex",
+            args: ["run", "--"],
+            env: { HOME: home },
+          },
+        },
+        lookup,
+        api,
+      ),
+    ).toEqual([]);
+    expect(
+      await discover(
+        {
+          kind: "global",
+          launch: {
+            command: "claude",
+            args: [],
+            env: { HOME: home, CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-setup" },
+          },
+        },
+        lookup,
+        api,
+      ),
+    ).toEqual([]);
+    expect(
+      await discover(
+        { kind: "global" },
+        { ...lookup, env: { HOME: home, CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-setup" } },
+        api,
+      ),
+    ).toEqual([]);
+    expect(
+      await discover(
+        { kind: "global" },
+        { ...lookup, env: { HOME: home, ANTHROPIC_API_KEY: "sk-ant-api03-key" } },
+        api,
+      ),
+    ).toEqual([]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });

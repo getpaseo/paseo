@@ -4095,6 +4095,14 @@ test("listProviderEnvironments returns enabled env-configured providers with bas
           CODEX_HOME: "/tmp/codex-work",
         },
       },
+      "codex-wrapper": {
+        extends: "codex",
+        label: "Codex (Wrapper)",
+        command: ["/opt/homebrew/bin/teamcodex", "run", "--"],
+        env: {
+          CODEX_HOME: "/tmp/codex-wrapper",
+        },
+      },
       "codex-no-env": {
         extends: "codex",
         label: "Codex (No Env)",
@@ -4104,21 +4112,30 @@ test("listProviderEnvironments returns enabled env-configured providers with bas
   try {
     const envs = manager.listProviderEnvironments();
     expect(
-      envs.map(({ provider, label, configuredEnvKeys }) => ({
+      envs.map(({ provider, label, configuredEnvKeys, launch }) => ({
         provider,
         label,
         configuredEnvKeys,
+        launch,
       })),
     ).toEqual([
       {
         provider: "claude",
         label: "Claude (Work)",
         configuredEnvKeys: ["CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR"],
+        launch: { command: "claude", args: [] },
       },
       {
         provider: "codex",
         label: "Codex (Work)",
         configuredEnvKeys: ["CODEX_HOME"],
+        launch: { command: "codex", args: [] },
+      },
+      {
+        provider: "codex",
+        label: "Codex (Wrapper)",
+        configuredEnvKeys: ["CODEX_HOME"],
+        launch: { command: "/opt/homebrew/bin/teamcodex", args: ["run", "--"] },
       },
     ]);
     expect(envs[0]!.env.CLAUDE_CONFIG_DIR).toBe("/tmp/claude-work");

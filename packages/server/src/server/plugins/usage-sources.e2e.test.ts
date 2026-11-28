@@ -84,8 +84,14 @@ export default function contribute(server) {
 
 const API_HOST_ENV = [
   "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "CLAUDE_CODE_OAUTH_TOKEN",
   "CLAUDE_CODE_USE_BEDROCK",
   "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_USE_FOUNDRY",
+  "CODEX_API_KEY",
+  "CODEX_ACCESS_TOKEN",
   "OPENAI_BASE_URL",
 ];
 
@@ -492,6 +498,17 @@ dns.lookup = function(host, ...args) {
             OPENROUTER_API_KEY: "fixture-openrouter",
             OPENROUTER_MANAGEMENT_KEY: "fixture-openrouter-management",
             CLAUDE_CONFIG_DIR: path.join(root, ".claude"),
+            // Clear ambient auth overrides (e.g. CI secrets) so local fixture credentials on disk are discovered.
+            CLAUDE_CODE_OAUTH_TOKEN: "",
+            ANTHROPIC_API_KEY: "",
+            ANTHROPIC_AUTH_TOKEN: "",
+            ANTHROPIC_BASE_URL: "",
+            CLAUDE_CODE_USE_BEDROCK: "",
+            CLAUDE_CODE_USE_VERTEX: "",
+            CLAUDE_CODE_USE_FOUNDRY: "",
+            CODEX_API_KEY: "",
+            CODEX_ACCESS_TOKEN: "",
+            OPENAI_BASE_URL: "",
             NODE_OPTIONS: `--require=${JSON.stringify(guard.replaceAll("\\", "/"))}`,
             https_proxy: `http://127.0.0.1:${address.port}`,
             no_proxy: "",
@@ -808,7 +825,7 @@ export default function contribute(server) {
 
 test("#3589: host usage lists each enabled custom provider with strict source scoping and secret stripping", async () => {
   for (const name of API_HOST_ENV) vi.stubEnv(name, undefined);
-  vi.stubEnv("ANTHROPIC_API_KEY", "shell-anthropic-secret");
+  vi.stubEnv("GITHUB_TOKEN", "shell-github-secret");
   vi.stubEnv("OPENAI_API_KEY", "shell-openai-secret");
   const root = await mkdtemp(path.join(os.tmpdir(), "usage-provider-env-"));
   const home = path.join(root, "home");
@@ -820,7 +837,7 @@ test("#3589: host usage lists each enabled custom provider with strict source sc
   await json(path.join(home, ".codex", "auth.json"), {
     tokens: { access_token: "fixture-codex", account_id: "chatgpt-default" },
   });
-  for (const name of ["work", "personal", "same", "off"]) {
+  for (const name of ["work", "personal", "same", "off", "oauth", "wrapper"]) {
     await json(path.join(dir(`claude-${name}`), ".credentials.json"), {
       claudeAiOauth: { accessToken: `fixture-${name}` },
     });
@@ -830,6 +847,9 @@ test("#3589: host usage lists each enabled custom provider with strict source sc
   });
   await json(path.join(dir("codex-work"), "auth.json"), {
     tokens: { access_token: "fixture-codex-work", account_id: "chatgpt-work" },
+  });
+  await json(path.join(dir("codex-wrapper"), "auth.json"), {
+    tokens: { access_token: "fixture-codex-wrapper", account_id: "chatgpt-wrapper" },
   });
 
   // Third-party spy plugin registering both an unscoped source and an unrelated-provider source.
@@ -878,7 +898,7 @@ export default function contribute(server) {
     fetchApi: `async function fetchApi(url, init) {
   const token = new Headers(init.headers).get('Authorization');
   if (String(url).endsWith('/profile')) {
-    const uuid = { 'Bearer fixture-work': 'work', 'Bearer fixture-personal': 'personal', 'Bearer fixture-off': 'off' }[token] || 'default';
+    const uuid = { 'Bearer fixture-work': 'work', 'Bearer fixture-personal': 'personal', 'Bearer fixture-off': 'off', 'Bearer fixture-oauth': 'oauth', 'Bearer fixture-wrapper': 'wrapper' }[token] || 'default';
     return new Response(JSON.stringify({ account: { uuid }, organization: { uuid: 'org' } }));
   }
   const pct = { 'Bearer fixture-work': 24, 'Bearer fixture-personal': 68, 'Bearer fixture-codex-work': 41 }[token] || 10;
@@ -894,10 +914,25 @@ export default function contribute(server) {
         label: "Claude (work)",
         env: {
           CLAUDE_CONFIG_DIR: dir("claude-work"),
-          ANTHROPIC_API_KEY: "secret-anthropic-work",
-          ANTHROPIC_AUTH_TOKEN: "secret-auth-work",
-          CLAUDE_CODE_OAUTH_TOKEN: "secret-oauth-work",
+          OPENAI_API_KEY: "secret-openai-work",
+          GITHUB_TOKEN: "secret-github-work",
           MY_SECRET: "secret-custom-work",
+        },
+      },
+      "claude-oauth": {
+        extends: "claude",
+        label: "Claude (OAuth token)",
+        env: {
+          CLAUDE_CONFIG_DIR: dir("claude-oauth"),
+          CLAUDE_CODE_OAUTH_TOKEN: "secret-oauth-work",
+        },
+      },
+      "claude-wrapper": {
+        extends: "claude",
+        label: "Claude (wrapper)",
+        command: ["/opt/homebrew/bin/teamclaude", "run", "--"],
+        env: {
+          CLAUDE_CONFIG_DIR: dir("claude-wrapper"),
         },
       },
       "claude-personal": {
@@ -939,6 +974,14 @@ export default function contribute(server) {
           CODEX_HOME: dir("codex-work"),
           OPENAI_API_KEY: "secret-openai-work",
           MY_SECRET: "secret-codex-custom",
+        },
+      },
+      "codex-wrapper": {
+        extends: "codex",
+        label: "Codex (wrapper)",
+        command: ["/opt/homebrew/bin/teamcodex", "run", "--"],
+        env: {
+          CODEX_HOME: dir("codex-wrapper"),
         },
       },
     },
@@ -1017,11 +1060,12 @@ export default function contribute(server) {
       expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
       expect(env).not.toHaveProperty("CLAUDE_CODE_OAUTH_TOKEN");
       expect(env).not.toHaveProperty("OPENAI_API_KEY");
+      expect(env).not.toHaveProperty("GITHUB_TOKEN");
       expect(env).not.toHaveProperty("MY_SECRET");
     }
     const serializedLog = JSON.stringify(recorded);
     expect(serializedLog).not.toContain("secret-");
-    expect(serializedLog).not.toContain("shell-anthropic-secret");
+    expect(serializedLog).not.toContain("shell-github-secret");
     expect(serializedLog).not.toContain("shell-openai-secret");
 
     await client.patchDaemonConfig({ providers: { "claude-work": { enabled: false } } });

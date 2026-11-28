@@ -168,6 +168,7 @@ import {
 import { importSessionFromPersistence } from "../../provider-session-import.js";
 import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import {
+  buildProviderUsageLaunch,
   checkProviderLaunchAvailable,
   createProviderEnv,
   createProviderEnvSpec,
@@ -1934,7 +1935,11 @@ export class ClaudeAgentClient implements AgentClient {
     return claudeDefaultMode(this.buildProviderEnv(launchEnv));
   }
 
-  private buildProviderEnv(launchEnv?: Record<string, string>): NodeJS.ProcessEnv {
+  async resolveUsageLaunch() {
+    return buildProviderUsageLaunch("claude", this.runtimeSettings, this.buildProviderEnv());
+  }
+
+  private buildProviderEnv(launchEnv?: Record<string, string>): Record<string, string> {
     return createProviderEnv({
       baseEnv: process.env,
       runtimeSettings: this.runtimeSettings,
@@ -4149,6 +4154,7 @@ class ClaudeAgentSession implements AgentSession {
       provider: "claude",
       model: this.config.model,
       env: this.harnessEnvironment,
+      launch: buildProviderUsageLaunch("claude", this.runtimeSettings, this.harnessEnvironment),
       sessionKey: this.usageSessionKey,
     };
   }
