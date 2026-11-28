@@ -4,7 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { Pressable, Text } from "react-native";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Tooltip, TooltipTrigger } from "./tooltip";
+import { MenuRoot, MenuTrigger } from "./menu/menu-root";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
 
 vi.mock("@/constants/platform", () => ({
   isWeb: true,
@@ -25,10 +26,11 @@ vi.mock("@gorhom/bottom-sheet", () => ({
 
 vi.mock("react-native-reanimated", () => ({
   default: {
-    View: "div",
+    View: ({ children, testID }: { children?: React.ReactNode; testID?: string }) =>
+      React.createElement("div", { "data-testid": testID }, children),
   },
-  FadeIn: {},
-  FadeOut: {},
+  FadeIn: { duration: () => ({}) },
+  FadeOut: { duration: () => ({}) },
 }));
 
 vi.mock("react-native-unistyles", () => ({
@@ -112,5 +114,80 @@ describe("TooltipTrigger", () => {
     pressTrigger();
 
     expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes when an asChild MenuTrigger is pressed", async () => {
+    const onMenuOpenChange = vi.fn();
+
+    act(() => {
+      root?.render(
+        <MenuRoot onOpenChange={onMenuOpenChange}>
+          <Tooltip enabledOnMobile={false}>
+            <TooltipTrigger asChild>
+              <MenuTrigger testID="trigger" accessibilityLabel="Agent steps">
+                <Text>Standard</Text>
+              </MenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent testID="tooltip-content">
+              <Text>Agent steps</Text>
+            </TooltipContent>
+          </Tooltip>
+        </MenuRoot>,
+      );
+    });
+
+    const trigger = container?.querySelector('[data-testid="trigger"]');
+    expect(trigger).not.toBeNull();
+
+    await act(async () => {
+      trigger?.dispatchEvent(new window.MouseEvent("mouseover", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[data-testid="tooltip-content"]')).not.toBeNull();
+
+    await act(async () => {
+      trigger?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(onMenuOpenChange).toHaveBeenCalledWith(true);
+    expect(document.querySelector('[data-testid="tooltip-content"]')).toBeNull();
+  });
+
+  it("stays closed after being disabled while open and re-enabled", async () => {
+    const renderControlled = async (enabledOnDesktop: boolean) => {
+      await act(async () => {
+        root?.render(
+          <Tooltip enabledOnDesktop={enabledOnDesktop} enabledOnMobile={false}>
+            <TooltipTrigger asChild>
+              <Pressable testID="trigger">
+                <Text>Standard</Text>
+              </Pressable>
+            </TooltipTrigger>
+            <TooltipContent testID="tooltip-content">
+              <Text>Agent steps</Text>
+            </TooltipContent>
+          </Tooltip>,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderControlled(true);
+
+    const trigger = container?.querySelector('[data-testid="trigger"]');
+    expect(trigger).not.toBeNull();
+
+    await act(async () => {
+      trigger?.dispatchEvent(new window.MouseEvent("mouseover", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[data-testid="tooltip-content"]')).not.toBeNull();
+
+    await renderControlled(false);
+    expect(document.querySelector('[data-testid="tooltip-content"]')).toBeNull();
+
+    await renderControlled(true);
+    expect(document.querySelector('[data-testid="tooltip-content"]')).toBeNull();
   });
 });
