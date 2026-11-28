@@ -16,7 +16,11 @@ function advanceSharedRotation(): void {
     return;
   }
 
-  sharedRotation.value = getStatusRingRotation(Date.now());
+  // Listeners repaint their rings, so publish only when the ring reaches its next step.
+  const nextRotation = getStatusRingRotation(Date.now());
+  if (sharedRotation.value !== nextRotation) {
+    sharedRotation.value = nextRotation;
+  }
   requestAnimationFrame(advanceSharedRotation);
 }
 

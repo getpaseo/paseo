@@ -32,9 +32,17 @@ export const STATUS_RING_HEAD_OPACITY = 0.9;
 // rings already turning.
 export const STATUS_RING_PERIOD_MS = 900;
 
+// Native turns the ring in discrete steps, like a platform activity indicator. A continuous
+// rotation repaints the window on every vsync; on a pinned sidebar that kept an otherwise idle
+// Android foldable rendering at full frame rate. Twelve steps are about 13 repaints a second.
+export const STATUS_RING_STEPS = 12;
+
 export function getStatusRingRotation(nowMs: number): number {
   "worklet";
-  return ((nowMs % STATUS_RING_PERIOD_MS) / STATUS_RING_PERIOD_MS) * 360;
+  const step = Math.floor(
+    ((nowMs % STATUS_RING_PERIOD_MS) * STATUS_RING_STEPS) / STATUS_RING_PERIOD_MS,
+  );
+  return (step * 360) / STATUS_RING_STEPS;
 }
 
 /**
