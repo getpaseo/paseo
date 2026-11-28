@@ -154,7 +154,7 @@
     "which": "^5.0.0",
     "ws": "^8.14.2",
     "yaml": "2.9.1",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.4.0",
