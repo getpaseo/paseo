@@ -42,7 +42,7 @@ await directory.subscription.release();
 
 ## 跟踪 Agent 的后台工作 {#follow-an-agents-background-work}
 
-后台工作是 Agent 的工具调用返回后仍在运行的工作，例如使用 `run_in_background` 启动的 Claude shell 或 `Monitor` 监控。子 Agent 和 workflow 显示在子 Agent 中。
+后台工作是 Agent 的工具调用返回后仍在运行的工作，例如使用 `run_in_background` 启动的 Claude shell 或 `Monitor` 监控。子 Agent 和 workflow 显示在子 Agent 中：用 `agent.subagents.list()` 读取。Agent 空闲后，仍在工作的子 Agent 报告 `status: "running"`。
 
 ```ts
 const agent = client.agents.ref(agentId);

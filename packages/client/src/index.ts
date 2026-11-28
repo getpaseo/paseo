@@ -65,6 +65,7 @@ import type {
   FetchAgentTimelineDirection,
   FetchAgentTimelinePayload,
   FetchAgentTimelineProjection,
+  ProviderSubagentListPayload,
   SendMessageOptions,
   WaitForFinishResult,
 } from "./daemon-client.js";
@@ -399,6 +400,16 @@ export interface PaseoAgentBackgroundWorkHandle {
   ): () => void;
 }
 
+export type PaseoAgentSubagentItem = ProviderSubagentListPayload["subagents"][number];
+
+export interface PaseoAgentSubagentsHandle {
+  /**
+   * Reads the provider subagents the agent started once, including finished ones. A subagent
+   * with `status: "running"` is still working even when the agent itself is idle.
+   */
+  list(options?: { requestId?: string; timeout?: number }): Promise<PaseoAgentSubagentItem[]>;
+}
+
 export interface PaseoAgentBackgroundWorkSubscribeOptions {
   /** Receives the error when reading the agent's current list fails. */
   onError?: (error: unknown) => void;
@@ -435,6 +446,7 @@ export interface PaseoAgentHandle {
   readonly archivedAt: NonNullable<PaseoAgent["archivedAt"]> | null;
   readonly timeline: PaseoAgentTimelineHandle;
   readonly backgroundWork: PaseoAgentBackgroundWorkHandle;
+  readonly subagents: PaseoAgentSubagentsHandle;
   current(): PaseoAgent | null;
   refresh(requestId?: string): Promise<PaseoAgentRefetchResult | null>;
   /**
@@ -1090,6 +1102,15 @@ function createAgentHandleFactory(
                 console.error("Background work subscription cleanup failed", error),
               );
           };
+        },
+      },
+      subagents: {
+        list: async (options) => {
+          // COMPAT(providerSubagents): added in v0.1.107, remove gate after 2027-01-12.
+          if (daemonClient.getLastServerInfoMessage()?.features?.providerSubagents !== true) {
+            throw new Error("Update the host to see an agent's subagents.");
+          }
+          return (await daemonClient.listProviderSubagents(id, options)).subagents;
         },
       },
       get workspaceId() {
