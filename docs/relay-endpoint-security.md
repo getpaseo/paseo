@@ -11,7 +11,7 @@ Fixes [#359](https://github.com/getpaseo/paseo/issues/359): the legacy construct
 | `legacy`    | X25519 + NaCl `box`, random nonces               | none                             |
 | `protected` | `Noise_NK_25519_ChaChaPoly_SHA256` (revision 34) | counters, fresh daemon ephemeral |
 
-Two updated peers always negotiate `protected`. An old peer on either side falls to `legacy` while the daemon permits it. Everything in `packages/relay/src/encrypted-channel.ts` is the legacy construction and is unchanged.
+Two updated peers always negotiate `protected`. An old peer on either side falls to `legacy` while the daemon permits it. `packages/relay/src/encrypted-channel.ts` owns the legacy construction. Both constructions use `plaintext-frame.ts` when payload compression is negotiated.
 
 The shared entry points are `openClientSecureChannel` and `openDaemonSecureChannel`. Callers get a `SecureChannel` and ask it `securityMode()`; nothing outside the module branches on the construction.
 
@@ -22,7 +22,8 @@ The shared entry points are `openClientSecureChannel` and `openDaemonSecureChann
 - **Primitives:** `@noble/curves` x25519, `@noble/ciphers` ChaCha20-Poly1305, `@noble/hashes` SHA-256 and HMAC. The state machine in `packages/relay/src/noise/` is our own implementation of the spec and is checked against vendored third-party vectors in `noise/fixtures/`.
 - **Message 1** (`-> e, es`) travels inside the legacy hello: `{ type: "e2ee_hello", key, capabilities, protected: { v: 1, message: <base64> } }`. `key` is a separate legacy ephemeral so an old daemon still completes a legacy handshake. The Noise payload is the offered parameters.
 - **Message 2** (`<- e, ee`) travels inside the ready: `{ type: "e2ee_ready", protected: { v: 1, message: <base64> } }`. Its payload is the selected parameters. The outer `capabilities` field is ignored in protected mode because it is not authenticated.
-- **Parameters payload:** two bytes, `[0x01 version][flags]`. Flag bit 0 is `binaryCiphertext`. Unknown versions, reserved flag bits, and a selection the client did not offer fail the handshake.
+- **Parameters payload:** two bytes, `[0x01 version][flags]`. Flag bit 0 is `binaryCiphertext`; selection bit 1 is `deflatePayloads` and requires bit 0. Unknown versions, reserved flag bits, and a selection the client did not offer fail the handshake.
+- **Compression negotiation:** the client keeps message 1's parameter bytes at `[1, 1]` so pre-compression protected daemons can read them. It offers compression as the outer `capabilities.deflatePayloads` hint. An updated daemon selects bit 1 in authenticated message 2 only when that hint is present. An old daemon selects only bit 0; an old client's hello has no compression hint. The client ignores outer ready capabilities in protected mode. Stripping the offer can disable compression, but cannot change the security construction or enable compression without an authenticated selection.
 - **Split:** the initiator sends with the first cipher state and receives with the second. The daemon is the mirror. Nonces are 64-bit little-endian in a 12-byte nonce, reserved synchronously before any await, never wrapped. A receiver advances its counter only after the tag verifies.
 
 Nothing else is bound into the handshake. The outer JSON, the relay URL, and session credentials are not authenticated by Noise. Credentials travel in the application `hello` after message 2 verified the daemon.
@@ -40,7 +41,9 @@ wire record     = (u16 BE ciphertextLength || ciphertext)+
 
 The receiver rejects a record whose metadata disagrees between chunks, whose non-final chunks are not full, whose byte total differs from `totalLength`, or that has zero chunks, trailing bytes, reserved flags, or an invalid kind. Partial plaintext never reaches the application. Transport AD is empty, as the Noise spec writes it; framing authenticity comes from the metadata being inside the ciphertext. `packages/relay/src/protected-records.ts` owns this.
 
-Frame kind is preserved on the wire the same way as legacy: text records are base64 WebSocket text, binary records are WebSocket binary when `binaryCiphertext` was negotiated.
+With `deflatePayloads`, the application payload first passes through `plaintext-frame.ts`: an authenticated kind byte identifies binary, UTF-8 text, or raw-DEFLATE text with a bounded inflated length. Every result uses a binary Noise record and a WebSocket binary frame. The receiver authenticates all chunks before reading the payload kind or inflating it. Each application message compresses independently; the compression length side channel is covered in [SECURITY.md](../SECURITY.md).
+
+Without compression, frame kind is preserved the same way as legacy: text records are base64 WebSocket text, binary records are WebSocket binary when `binaryCiphertext` was negotiated.
 
 ## Retries and failures
 

@@ -12,7 +12,13 @@ import {
   type TransportMessage,
 } from "./encrypted-channel.js";
 import { exportPublicKey, generateKeyPair } from "./crypto.js";
-import { MAX_CHUNK_DATA_BYTES } from "./protected-records.js";
+import {
+  MAX_CHUNK_DATA_BYTES,
+  encodeProtectedRecord,
+  decodeProtectedRecord,
+} from "./protected-records.js";
+import { createNoiseResponder } from "./noise/index.js";
+import { base64ToArrayBuffer, arrayBufferToBase64 } from "./base64.js";
 
 interface Frame {
   data: string | ArrayBuffer;
@@ -160,8 +166,16 @@ describe("secure channel: protected mode", () => {
   });
 
   it("keeps text as base64 text frames and binary as binary frames when negotiated", async () => {
-    const pair = await openProtectedPair();
+    const link = createLink();
+    link.setToDaemon((frame) => {
+      if (typeof frame.data !== "string") return frame;
+      const hello = JSON.parse(frame.data);
+      delete hello.capabilities.deflatePayloads;
+      return { data: JSON.stringify(hello), isBinary: false };
+    });
+    const pair = await openProtectedPair({ link });
     pair.link.recordedToDaemon.length = 0;
+    pair.link.setToDaemon((frame) => frame);
     await pair.client.send("text");
     await pair.client.send(bytes(3));
     await settle();
@@ -623,5 +637,114 @@ describe("secure channel: legacy compatibility", () => {
     await client.send("legacy still works");
     await settle();
     expect(daemonReceived).toEqual(["legacy still works"]);
+  });
+});
+
+describe("secure channel: protected compression", () => {
+  it("compresses large text in both directions while preserving binary and concurrent order", async () => {
+    const pair = await openProtectedPair();
+    const page = JSON.stringify({
+      entries: Array.from({ length: 200 }, (_, i) => ({
+        id: i,
+        text: "timeline text ".repeat(20),
+      })),
+    });
+    const binary = bytes(100);
+    pair.link.recordedToDaemon.length = 0;
+    pair.link.recordedToClient.length = 0;
+    await Promise.all([pair.client.send(page), pair.client.send(binary), pair.client.send("tail")]);
+    await pair.daemon.send(page);
+    await settle(100);
+    expect(pair.daemonReceived).toEqual([page, binary, "tail"]);
+    expect(pair.clientReceived).toEqual([page]);
+    expect(pair.link.recordedToDaemon.map((frame) => frame.isBinary)).toEqual([true, true, true]);
+    const wire = pair.link.recordedToDaemon[0].data as ArrayBuffer;
+    expect(wire.byteLength).toBeLessThan(new TextEncoder().encode(page).byteLength / 2);
+    expect(pair.client.outboundWireByteLength(page)).toBeGreaterThanOrEqual(wire.byteLength);
+    expect(pair.client.securityMode()).toBe("protected");
+    expect(pair.daemon.securityMode()).toBe("protected");
+  });
+
+  it("does not enable compression from unauthenticated ready capabilities", async () => {
+    const link = createLink();
+    link.setToDaemon((frame) => {
+      const hello = JSON.parse(frame.data as string);
+      delete hello.capabilities.deflatePayloads;
+      return { data: JSON.stringify(hello), isBinary: false };
+    });
+    link.setToClient((frame) => {
+      const ready = JSON.parse(frame.data as string);
+      ready.capabilities = { binaryCiphertext: true, deflatePayloads: true };
+      return { data: JSON.stringify(ready), isBinary: false };
+    });
+    const pair = await openProtectedPair({ link });
+    link.setToDaemon((frame) => frame);
+    link.setToClient((frame) => frame);
+    await pair.client.send("old protected framing");
+    await settle();
+    expect(pair.daemonReceived).toEqual(["old protected framing"]);
+    expect(link.recordedToDaemon.at(-1)?.isBinary).toBe(false);
+  });
+
+  it("exchanges records with a pre-compression protected daemon's exact two-byte parameters", async () => {
+    const link = createLink();
+    const daemonKeyPair = generateKeyPair();
+    const noise = createNoiseResponder({
+      localStatic: daemonKeyPair,
+      prologue: new TextEncoder().encode("paseo-relay-e2ee/1"),
+    });
+    const received: string[] = [];
+    const opened = deferred();
+    Object.assign(link.daemon, {
+      onmessage: (frame: TransportMessage) => {
+        const hello = JSON.parse(frame.data as string);
+        // The previous daemon rejects any reserved flag or extra parameter byte.
+        const offered = noise.readMessage(
+          new Uint8Array(base64ToArrayBuffer(hello.protected.message)),
+        );
+        expect([...offered]).toEqual([1, 1]);
+        const response = noise.writeMessage(new Uint8Array([1, 1]));
+        const keys = noise.split();
+        Object.assign(link.daemon, {
+          onmessage: (record: TransportMessage) => {
+            expect(record.isBinary).toBe(false);
+            const decoded = decodeProtectedRecord(
+              new Uint8Array(base64ToArrayBuffer(record.data as string)),
+              keys.receive,
+            );
+            expect(decoded.kind).toBe("text");
+            received.push(new TextDecoder().decode(decoded.data));
+          },
+        });
+        void link.daemon.send(
+          JSON.stringify({
+            type: "e2ee_ready",
+            protected: {
+              v: 1,
+              message: arrayBufferToBase64(response.slice().buffer as ArrayBuffer),
+            },
+          }),
+        );
+        setTimeout(() => {
+          const record = encodeProtectedRecord(
+            "text",
+            new TextEncoder().encode("old daemon reply"),
+            keys.send,
+          );
+          void link.daemon.send(arrayBufferToBase64(record.slice().buffer as ArrayBuffer));
+        }, 5);
+      },
+    });
+    const replies: Array<string | ArrayBuffer> = [];
+    const client = await openClientSecureChannel(link.client, {
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      events: { onopen: () => opened.resolve(), onmessage: (data) => replies.push(data) },
+    });
+    await opened.promise;
+    await client.send("new client request");
+    await settle();
+    expect(received).toEqual(["new client request"]);
+    expect(replies).toEqual(["old daemon reply"]);
+    expect(client.securityMode()).toBe("protected");
   });
 });
