@@ -38,8 +38,10 @@ import { readPluginProviderIcon } from "./provider-icon.js";
 import {
   type AgentUsageLookup,
   type ListUsageReportsOptions,
+  type UsageObservation,
   UsageSourceRegistry,
 } from "./usage-sources/index.js";
+import type { UsageReportEntry } from "@getpaseo/protocol/messages";
 
 const BUILTIN_PROVIDER_ID_SET: ReadonlySet<string> = new Set(BUILTIN_PROVIDER_IDS);
 
@@ -278,6 +280,17 @@ export class PluginService {
 
   listLegacyUsage() {
     return this.usageSources.listLegacyUsage();
+  }
+
+  subscribeUsageReports(listener: (entry: UsageReportEntry) => void): () => void {
+    return this.usageSources.subscribe(listener);
+  }
+
+  /** Merges usage an agent observed into its account's report; see UsageSourceRegistry. */
+  observeUsage(agentId: string, observation: UsageObservation): void {
+    void this.usageSources.observeUsage(agentId, observation).catch((error) => {
+      this.logger.warn({ err: error, agentId }, "Failed to apply observed usage");
+    });
   }
 
   subscribeProviderRegistrations(listener: () => void): () => void {

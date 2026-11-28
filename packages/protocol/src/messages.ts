@@ -3611,6 +3611,8 @@ export const SessionEventSubscriptionSchema = z.enum([
   "status.daemon_config_changed",
   "status.plugin_catalog_changed",
   "status.plugin_settings_changed",
+  // COMPAT(usageReportUpdates): subscribe only when server_info.features.usageReportUpdates.
+  "status.usage_report_changed",
   "activity_log",
   "hub.execution.agent.update",
   "hub.execution.agent.stream",
@@ -4169,6 +4171,9 @@ export const ServerInfoStatusPayloadSchema = z
         pluginNotifications: z.boolean().optional(),
         // COMPAT(tunnelProviders): added in v0.18.0, remove gate after 2027-06-01.
         tunnelProviders: z.boolean().optional(),
+        // COMPAT(usageReportUpdates): added in v0.18.2, remove gate after 2027-05-27.
+        // Older hosts reject the `status.usage_report_changed` subscription, so subscribe only here.
+        usageReportUpdates: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
         // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, remove gate after 2027-04-26.
@@ -7278,6 +7283,16 @@ export const UsageReportEntrySchema = z.object({
     )
     .optional(),
 });
+/**
+ * Sent in the `status` envelope when the daemon updates a cached report on its own, e.g. from a
+ * Claude or Codex turn's rate-limit event. Only to sources subscribed to
+ * `status.usage_report_changed`.
+ */
+export const UsageReportChangedStatusPayloadSchema = z.object({
+  status: z.literal("usage_report_changed"),
+  report: UsageReportEntrySchema,
+});
+export type UsageReportChangedStatusPayload = z.infer<typeof UsageReportChangedStatusPayloadSchema>;
 export const UsageListReportsUpdateMessageSchema = z.object({
   type: z.literal("usage.list_reports.update"),
   payload: z.object({ requestId: z.string(), report: UsageReportEntrySchema }),

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { i18n } from "@/i18n/i18next";
 import {
+  applyPushedReport,
+  nextUsagePollDelayMs,
   resolveUsageReport,
   markUsageRefreshFailure,
   displayPercent,
@@ -237,6 +239,67 @@ describe("replaceReport", () => {
 
   it("drops a report the daemon no longer knows", () => {
     expect(replaceReport([alpha, beta], alpha.id, null)).toEqual([beta]);
+  });
+});
+
+describe("applyPushedReport", () => {
+  const pushed = {
+    ...entry({ windows: [{ id: "five_hour", label: "Session", usedPct: 73 }] }),
+    fetchedAt: "2026-01-01T00:05:00.000Z",
+  };
+  const other = { ...entry({}), id: "fixture:account-2" };
+
+  it("moves the report of the pushed account in place", () => {
+    expect(applyPushedReport([other, entry({})], pushed)).toEqual([other, pushed]);
+  });
+
+  it("leaves a list that does not show the account alone", () => {
+    const reports = [other];
+    expect(applyPushedReport(reports, pushed)).toBe(reports);
+    expect(applyPushedReport(undefined, pushed)).toBeUndefined();
+  });
+
+  it("keeps a copy fetched after the push without replacing the list reference", () => {
+    const newer = { ...entry({}), fetchedAt: "2026-01-01T00:06:00.000Z" };
+    const reports = [newer];
+    expect(applyPushedReport(reports, pushed)).toBe(reports);
+  });
+
+  it("keeps the listed copy's defaultEnabled hint", () => {
+    const hidden = { ...entry({}), defaultEnabled: false };
+    expect(applyPushedReport([hidden], pushed)).toEqual([{ ...pushed, defaultEnabled: false }]);
+  });
+});
+
+describe("nextUsagePollDelayMs", () => {
+  const schedule = {
+    intervalMs: 300_000,
+    errorIntervalMs: 60_000,
+  };
+  const failed: UsageReportEntry = {
+    ...entry({}),
+    report: { status: "error", error: "Claude usage API returned 500" },
+  };
+
+  it("counts from the last update, so showing the summary again keeps the schedule", () => {
+    expect(
+      nextUsagePollDelayMs({ ...schedule, reports: [entry({})], updatedAt: 1_000, now: 241_000 }),
+    ).toBe(60_000);
+  });
+
+  it("polls soon when the last update is already older than the interval", () => {
+    expect(
+      nextUsagePollDelayMs({ ...schedule, reports: [entry({})], updatedAt: 1_000, now: 900_000 }),
+    ).toBe(1_000);
+  });
+
+  it("polls a failed report again after a minute", () => {
+    expect(
+      nextUsagePollDelayMs({ ...schedule, reports: [entry({}), failed], updatedAt: 0, now: 5 }),
+    ).toBe(60_000);
+    expect(
+      nextUsagePollDelayMs({ ...schedule, reports: [failed], updatedAt: 10_000, now: 40_000 }),
+    ).toBe(30_000);
   });
 });
 

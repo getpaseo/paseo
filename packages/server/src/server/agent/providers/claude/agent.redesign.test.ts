@@ -1349,6 +1349,86 @@ test("a background subagent's frames never open a turn while the main session is
   await session.close();
 });
 
+test("a rate-limit event reports the account's usage, and each turn's result asks for a refetch", async () => {
+  const session = await createSession();
+  const internal: SessionStateInternals = asInternals(session);
+  const queryMock = createPendingQueryMock();
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  const usageEvents = () => events.filter((event) => event.type === "usage_observed");
+
+  // The shape Claude Code sends once per query: the named window at the top level, every window in
+  // the undocumented `unifiedWindows`, utilization as a 0-1 fraction, resets in epoch seconds.
+  await internal.routeSdkMessageFromPump(
+    {
+      type: "rate_limit_event",
+      rate_limit_info: {
+        status: "allowed_warning",
+        resetsAt: 1795917600,
+        rateLimitType: "seven_day",
+        utilization: 0.9,
+        unifiedWindows: {
+          five_hour: { utilization: 0.73, resetsAt: 1795725600, status: "allowed" },
+          seven_day: { utilization: 0.9, resetsAt: 1795917600, status: "allowed_warning" },
+        },
+      },
+      uuid: "uuid-rate-limit-usage",
+      session_id: "sess-1",
+    },
+    queryMock,
+  );
+  expect(usageEvents()).toEqual([
+    {
+      type: "usage_observed",
+      provider: "claude",
+      sourceId: "claude",
+      windows: [
+        {
+          id: "five_hour",
+          label: "Session",
+          shortLabel: "5h",
+          summary: true,
+          usedPct: 73,
+          remainingPct: 27,
+          durationSeconds: 18_000,
+          resetsAt: "2026-11-26T20:40:00.000Z",
+          tone: "warning",
+        },
+        {
+          id: "weekly",
+          label: "Weekly",
+          shortLabel: "wk",
+          summary: true,
+          usedPct: 90,
+          remainingPct: 10,
+          durationSeconds: 604_800,
+          resetsAt: "2026-11-29T02:00:00.000Z",
+          tone: "warning",
+        },
+      ],
+    },
+  ]);
+
+  // An event without utilization reports nothing; every result asks for the turn's usage.
+  events.length = 0;
+  await internal.routeSdkMessageFromPump(claudeTurnInit(), queryMock);
+  await internal.routeSdkMessageFromPump(rateLimitEvent, queryMock);
+  expect(usageEvents()).toEqual([]);
+  await internal.routeSdkMessageFromPump(successResult(), queryMock);
+  expect(usageEvents()).toEqual([
+    expect.objectContaining({ type: "usage_observed", sourceId: "claude", windows: [] }),
+  ]);
+  // The refetch request follows the turn's own events, so consumers see the turn end first.
+  const types = events.map((event) => event.type);
+  expect(types).toContain("turn_completed");
+  expect(types.at(-1)).toBe("usage_observed");
+  await internal.routeSdkMessageFromPump(claudeTurnInit(), queryMock);
+  await internal.routeSdkMessageFromPump(successResult(), queryMock);
+  expect(usageEvents()).toHaveLength(2);
+
+  await session.close();
+});
+
 test("Claude waking up after a helper finishes gets an autonomous turn that its result closes", async () => {
   const session = await createSession();
   const internal: SessionStateInternals = asInternals(session);

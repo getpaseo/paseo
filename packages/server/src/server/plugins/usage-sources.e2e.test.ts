@@ -7,7 +7,23 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { afterEach, expect, test, vi } from "vitest";
+import { UsageReportChangedStatusPayloadSchema } from "@getpaseo/protocol/messages";
+import type {
+  AgentClient,
+  AgentSession,
+  AgentStreamEvent,
+  AgentStreamEventHandler,
+} from "../agent/agent-sdk-types.js";
 import type { ProviderOverride } from "../agent/provider-launch-config.js";
+import {
+  CLAUDE_USAGE_SOURCE_ID,
+  readClaudeRateLimitUsage,
+} from "../agent/providers/claude/rate-limit-usage.js";
+import {
+  CODEX_USAGE_SOURCE_ID,
+  readCodexRateLimitUsage,
+} from "../agent/providers/codex/rate-limit-usage.js";
+import { createTestAgentClient } from "../test-utils/fake-agent-client.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { BuiltinPluginLoader, resolveBuiltinPluginsRoot } from "./builtin/index.js";
@@ -1159,6 +1175,248 @@ test("#3589: an empty default store and disabled built-in provider do not hide c
     );
     expect(reports.every((x) => x.report.status === "available")).toBe(true);
   } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("live Claude and Codex rate-limit observations push status.usage_report_changed without polling", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-live-usage-push-"));
+  const workspaceDir = path.join(root, "workspace");
+  await mkdir(workspaceDir, { recursive: true });
+  const pluginDir = path.join(root, "live-usage-fixture");
+  await mkdir(pluginDir, { recursive: true });
+  await writeFile(
+    path.join(pluginDir, "paseo-plugin.json"),
+    JSON.stringify({ id: "live-usage-fixture", requirements: { paseo: ">=0.18.0" } }),
+  );
+  const fetchCountFile = path.join(root, "fetch-counts.json");
+  await writeFile(fetchCountFile, JSON.stringify({ claude: 0, codex: 0 }));
+  await writeFile(
+    path.join(pluginDir, "index.server.ts"),
+    `
+import { readFileSync, writeFileSync } from "node:fs";
+import { z } from "zod";
+const countFile = ${JSON.stringify(fetchCountFile)};
+function bump(source) {
+  const counts = JSON.parse(readFileSync(countFile, "utf8"));
+  counts[source] = (counts[source] ?? 0) + 1;
+  writeFileSync(countFile, JSON.stringify(counts));
+  return counts[source];
+}
+export default function contribute(server) {
+  server.registerUsageSource({
+    id: "claude",
+    label: "Claude",
+    input: z.object({}),
+    discover: async (scope) => {
+      if (scope.kind === "session" && scope.provider !== "claude") return [];
+      if (scope.kind === "session" && scope.env.HOME === "/missing-claude") return [];
+      return [{ key: "acct", input: {} }];
+    },
+    fetch: async () => {
+      bump("claude");
+      return {
+        status: "available",
+        windows: [
+          { id: "five_hour", label: "Session", shortLabel: "5h", summary: true, usedPct: 12, remainingPct: 88, tone: "ok" },
+          { id: "weekly", label: "Weekly", shortLabel: "wk", summary: true, usedPct: 24, remainingPct: 76, tone: "ok" },
+        ],
+      };
+    },
+  });
+  server.registerUsageSource({
+    id: "codex",
+    label: "Codex",
+    input: z.object({}),
+    discover: async (scope) => {
+      if (scope.kind === "session" && scope.provider !== "codex") return [];
+      return [{ key: "acct", input: {} }];
+    },
+    fetch: async () => {
+      bump("codex");
+      return {
+        status: "available",
+        planLabel: "plus",
+        windows: [
+          { id: "five_hour", label: "5-hour", shortLabel: "5h", summary: true, usedPct: 8, remainingPct: 92, tone: "ok" },
+          { id: "weekly", label: "Weekly", shortLabel: "wk", summary: true, usedPct: 19, remainingPct: 81, tone: "ok" },
+        ],
+        balances: [{ id: "credits", label: "Credits", remaining: 10, unit: "credits", tone: "ok" }],
+      };
+    },
+  });
+  return () => {};
+}
+`,
+  );
+
+  const emitters = new Map<string, (event: AgentStreamEvent) => void>();
+  function createObservableClient(
+    provider: "claude" | "codex",
+    homeByCwd: Record<string, string>,
+  ): AgentClient {
+    const base = createTestAgentClient(provider);
+    const wrap = (session: AgentSession, cwd: string): AgentSession => {
+      const listeners = new Set<AgentStreamEventHandler>();
+      const home = homeByCwd[cwd] ?? "/discovered";
+      const key = `${provider}:${home}`;
+      emitters.set(key, (event) => {
+        for (const listener of listeners) listener(event);
+      });
+      return new Proxy(session, {
+        get(target, prop, receiver) {
+          if (prop === "subscribe") {
+            return (handler: AgentStreamEventHandler) => {
+              listeners.add(handler);
+              const unsub = target.subscribe(handler);
+              return () => {
+                listeners.delete(handler);
+                unsub();
+              };
+            };
+          }
+          if (prop === "usageSession") {
+            return () => ({ provider, env: { HOME: home }, sessionKey: key });
+          }
+          const value = Reflect.get(target, prop, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    };
+    return {
+      ...base,
+      createSession: async (config, launchContext) =>
+        wrap(await base.createSession(config, launchContext), config.cwd),
+      resumeSession: async (handle, overrides, launchContext) =>
+        wrap(
+          await base.resumeSession(handle, overrides, launchContext),
+          overrides?.cwd ?? workspaceDir,
+        ),
+      fetchCatalog: (options) => base.fetchCatalog(options),
+      isAvailable: () => base.isAvailable(),
+    };
+  }
+
+  const missingWorkspaceDir = path.join(root, "workspace-missing");
+  await mkdir(missingWorkspaceDir, { recursive: true });
+  const daemon = await createTestPaseoDaemon({
+    daemonVersion: "0.18.2",
+    pluginsEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(root, ["live-usage-fixture"]),
+    agentClients: {
+      claude: createObservableClient("claude", {
+        [workspaceDir]: "/discovered-claude",
+        [missingWorkspaceDir]: "/missing-claude",
+      }),
+      codex: createObservableClient("codex", { [workspaceDir]: "/discovered-codex" }),
+    },
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.18.2",
+  });
+  const pushed: Array<{
+    id: string;
+    usedPct: number | null | undefined;
+    planLabel?: string;
+    credits?: number | null;
+  }> = [];
+  let feed: ReturnType<DaemonClient["observeEvents"]> | null = null;
+  try {
+    await client.connect();
+    expect(client.getLastServerInfoMessage()?.features?.usageReportUpdates).toBe(true);
+
+    feed = client.observeEvents(["status.usage_report_changed"]);
+    feed.subscribe({
+      snapshot: () => {},
+      update: (message) => {
+        if (message.type !== "status") return;
+        const parsed = UsageReportChangedStatusPayloadSchema.safeParse(message.payload);
+        if (!parsed.success) return;
+        const { report } = parsed.data;
+        const available = report.report.status === "available" ? report.report : null;
+        pushed.push({
+          id: report.id,
+          usedPct: available?.windows.find((w) => w.id === "five_hour")?.usedPct,
+          planLabel: available?.planLabel,
+          credits: available?.balances?.find((b) => b.id === "credits")?.remaining,
+        });
+      },
+    });
+    await feed.ready;
+
+    // Seed initial cached reports for both discovered accounts.
+    const initial = await client.listUsageReports();
+    expect(initial.reports.map((r) => r.id).sort()).toEqual(["claude:acct", "codex:acct"]);
+
+    // Create discovered Claude & Codex agents plus one Claude agent with no discovered account.
+    await client.createAgent({ provider: "claude", cwd: workspaceDir });
+    await client.createAgent({ provider: "codex", cwd: workspaceDir });
+    await client.createAgent({ provider: "claude", cwd: missingWorkspaceDir });
+
+    const claudeWindows = readClaudeRateLimitUsage({
+      status: "allowed_warning",
+      unifiedWindows: {
+        five_hour: { utilization: 0.73, resetsAt: 1795725600 },
+        seven_day: { utilization: 0.9, resetsAt: 1795917600 },
+      },
+    });
+    expect(claudeWindows).not.toBeNull();
+    emitters.get("claude:/discovered-claude")?.({
+      type: "usage_observed",
+      provider: "claude",
+      sourceId: CLAUDE_USAGE_SOURCE_ID,
+      windows: claudeWindows!,
+    });
+
+    const codexObserved = readCodexRateLimitUsage({
+      limitId: "codex",
+      planType: "pro",
+      primary: { usedPercent: 41, windowDurationMins: 300, resetsAt: 1795725600 },
+      secondary: { usedPercent: 62, windowDurationMins: 10080, resetsAt: 1795917600 },
+      credits: { balance: "19.5" },
+    });
+    expect(codexObserved).not.toBeNull();
+    emitters.get("codex:/discovered-codex")?.({
+      type: "usage_observed",
+      provider: "codex",
+      sourceId: CODEX_USAGE_SOURCE_ID,
+      windows: codexObserved!.windows,
+      balances: codexObserved!.balances,
+      planLabel: codexObserved!.planLabel,
+    });
+
+    // Observation from an agent with no discovered account is ignored cleanly.
+    emitters.get("claude:/missing-claude")?.({
+      type: "usage_observed",
+      provider: "claude",
+      sourceId: CLAUDE_USAGE_SOURCE_ID,
+      windows: claudeWindows!,
+    });
+
+    await expect
+      .poll(() => pushed)
+      .toEqual([
+        { id: "claude:acct", usedPct: 73, planLabel: undefined, credits: undefined },
+        { id: "codex:acct", usedPct: 41, planLabel: "pro", credits: 19.5 },
+      ]);
+
+    // Cached reports reflect the pushed live observations with zero additional vendor fetches.
+    const after = await client.listUsageReports();
+    expect(after.reports.map((r) => r.id).sort()).toEqual(["claude:acct", "codex:acct"]);
+    const claudeAfter = after.reports.find((r) => r.id === "claude:acct");
+    const codexAfter = after.reports.find((r) => r.id === "codex:acct");
+    expect(
+      claudeAfter?.report.status === "available" ? claudeAfter.report.windows[0]?.usedPct : null,
+    ).toBe(73);
+    expect(
+      codexAfter?.report.status === "available" ? codexAfter.report.windows[0]?.usedPct : null,
+    ).toBe(41);
+    expect(JSON.parse(await readFile(fetchCountFile, "utf8"))).toEqual({ claude: 1, codex: 1 });
+  } finally {
+    await feed?.release().catch(() => undefined);
     await client.close();
     await daemon.close();
     await rm(root, { recursive: true, force: true });

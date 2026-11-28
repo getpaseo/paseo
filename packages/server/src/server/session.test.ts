@@ -28,7 +28,7 @@ import {
 } from "../services/github-service.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
-import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
+import type { UsageReportEntry, WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   decodeFileTransferFrame,
   encodeFileTransferFrame,
@@ -609,6 +609,48 @@ test("routes plugin requests and releases its owned catalog subscription on clea
   await session.cleanup();
   expect(listeners.size).toBe(0);
   expect(releasePluginSubscription).toHaveBeenCalledOnce();
+});
+
+test("pushes reports the daemon updates on its own only while a source asks for them", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const listeners = new Set<(report: UsageReportEntry) => void>();
+  const pluginRuntime = {
+    subscribe: () => () => {},
+    subscribeUsageReports: (listener: (report: UsageReportEntry) => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as unknown as NonNullable<SessionOptions["pluginRuntime"]>;
+  const session = createSessionForTest({ messages, pluginRuntime });
+  const report: UsageReportEntry = {
+    id: "claude:account",
+    account: {},
+    fetchedAt: "2026-11-27T12:00:00.000Z",
+    sourceId: "claude",
+    sourceLabel: "Claude",
+    report: { status: "available", windows: [{ id: "five_hour", label: "Session", usedPct: 73 }] },
+  };
+
+  expect(listeners.size).toBe(0);
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "usage",
+    events: ["status.usage_report_changed"],
+  });
+  expect(listeners.size).toBe(1);
+  messages.length = 0;
+  for (const listener of listeners) listener(report);
+  expect(messages).toEqual([
+    { type: "status", payload: { status: "usage_report_changed", report } },
+  ]);
+
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "none",
+    events: [],
+  });
+  expect(listeners.size).toBe(0);
+  await session.cleanup();
 });
 
 test("losing daemon.manage releases the session's plugin subscriptions", async () => {
