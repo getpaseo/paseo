@@ -88,6 +88,22 @@ describe("PluginRegistry", () => {
     expect(snapshots).toEqual([["example"]]);
   });
 
+  // The app keeps painting a stored plugin theme until the host that contributed it has loaded
+  // its catalog, so a host with no plugins still counts as loaded, and a removed one no longer does.
+  it("reports a host as loaded from its first catalog until it is removed", () => {
+    expect([...registry.getLoadedHosts()]).toEqual([]);
+
+    pluginRegistry.installCatalog("host-a", []);
+    const loaded = registry.getLoadedHosts();
+    pluginRegistry.installCatalog("host-a", [{ id: "example", clientBundle: bundle("one") }]);
+
+    expect([...registry.getLoadedHosts()]).toEqual(["host-a"]);
+    expect(registry.getLoadedHosts()).toBe(loaded);
+
+    pluginRegistry.removeHost("host-a");
+    expect([...registry.getLoadedHosts()]).toEqual([]);
+  });
+
   it("reports timeline contribution changes", () => {
     const first = timelineBundle("one");
     expect(pluginRegistry.installCatalog("host-a", [{ id: "reports", clientBundle: first }])).toBe(
