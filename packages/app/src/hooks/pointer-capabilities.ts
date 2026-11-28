@@ -62,13 +62,18 @@ function browserMatchMedia(): MatchMedia | null {
 // Native builds run on iOS and Android touch screens. A paired mouse or pen is
 // filtered per gesture event by its pointer type, not by this capability.
 const NATIVE_POINTER_CAPABILITIES: PointerCapabilities = { finePointer: false, touchScreen: true };
-const nativeSource: PointerCapabilitiesSource = {
-  getSnapshot: () => NATIVE_POINTER_CAPABILITIES,
-  subscribe: () => () => {},
-  hasTouchPrimaryPointer: () => true,
-};
 
-const source = isWeb ? createPointerCapabilitiesSource(browserMatchMedia()) : nativeSource;
+export function createNativePointerCapabilitiesSource(): PointerCapabilitiesSource {
+  return {
+    getSnapshot: () => NATIVE_POINTER_CAPABILITIES,
+    subscribe: () => () => {},
+    hasTouchPrimaryPointer: () => true,
+  };
+}
+
+const source = isWeb
+  ? createPointerCapabilitiesSource(browserMatchMedia())
+  : createNativePointerCapabilitiesSource();
 const SERVER_SNAPSHOT: PointerCapabilities = { finePointer: false, touchScreen: false };
 
 function getServerSnapshot(): PointerCapabilities {

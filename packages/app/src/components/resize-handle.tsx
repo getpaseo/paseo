@@ -2,7 +2,12 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { View, type PointerEvent as RNPointerEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { startResizeHandleDrag, type ResizeHandleDrag } from "@/components/resize-handle-drag";
+import {
+  resolveResizeHandleInteraction,
+  startResizeHandleDrag,
+  type ResizeHandleDrag,
+} from "@/components/resize-handle-drag";
+import { isWeb } from "@/constants/platform";
 import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
@@ -48,6 +53,7 @@ export function ResizeHandle({
 }: ResizeHandleProps) {
   const { theme } = useUnistyles();
   const { finePointer } = usePointerCapabilities();
+  const interaction = resolveResizeHandleInteraction({ finePointer, isWeb });
   const pointerStatesRef = useRef(new Map<number, PointerState>());
   const touchStateRef = useRef<PointerState | null>(null);
   const cursorBeforeDragRef = useRef<string | null>(null);
@@ -225,8 +231,12 @@ export function ResizeHandle({
         ...(direction === "horizontal"
           ? { left: hitAreaAlignment === "end" ? 0 : -5 }
           : { top: hitAreaAlignment === "end" ? 0 : -5 }),
-        cursor: direction === "horizontal" ? "col-resize" : "row-resize",
-        touchAction: "none",
+        ...(isWeb
+          ? {
+              cursor: direction === "horizontal" ? "col-resize" : "row-resize",
+              touchAction: "none",
+            }
+          : {}),
       } as object,
     ],
     [direction, hitAreaAlignment],
@@ -254,6 +264,32 @@ export function ResizeHandle({
     [direction, highlighted, theme.colors.foreground],
   );
 
+  const ariaOrientation = direction === "horizontal" ? "vertical" : "horizontal";
+  const separatorHitArea =
+    interaction === "web-pointer" ? (
+      <View
+        role="separator"
+        aria-orientation={ariaOrientation}
+        style={hitAreaStyle}
+        onPointerDown={handlePointerDown}
+        onPointerEnter={handlePointerEnter}
+        onPointerLeave={handlePointerLeave}
+      />
+    ) : (
+      <GestureDetector gesture={touchGesture}>
+        <View
+          role="separator"
+          aria-orientation={ariaOrientation}
+          collapsable={false}
+          style={interaction === "native-pointer" ? hitAreaStyle : touchHitAreaStyle}
+          onPointerEnter={interaction === "native-pointer" ? handlePointerEnter : undefined}
+          onPointerLeave={interaction === "native-pointer" ? handlePointerLeave : undefined}
+        >
+          {interaction === "touch" ? <View pointerEvents="none" style={touchGripStyle} /> : null}
+        </View>
+      </GestureDetector>
+    );
+
   return (
     <View style={handleStyle} testID={testID}>
       {highlighted && (
@@ -263,27 +299,7 @@ export function ResizeHandle({
           testID={testID ? `${testID}-highlight` : undefined}
         />
       )}
-      {finePointer ? (
-        <View
-          role="separator"
-          aria-orientation={direction === "horizontal" ? "vertical" : "horizontal"}
-          style={hitAreaStyle}
-          onPointerDown={handlePointerDown}
-          onPointerEnter={handlePointerEnter}
-          onPointerLeave={handlePointerLeave}
-        />
-      ) : (
-        <GestureDetector gesture={touchGesture}>
-          <View
-            role="separator"
-            aria-orientation={direction === "horizontal" ? "vertical" : "horizontal"}
-            collapsable={false}
-            style={touchHitAreaStyle}
-          >
-            <View pointerEvents="none" style={touchGripStyle} />
-          </View>
-        </GestureDetector>
-      )}
+      {separatorHitArea}
     </View>
   );
 }

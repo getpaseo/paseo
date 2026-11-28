@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { createPointerCapabilitiesSource } from "./pointer-capabilities";
+import {
+  createNativePointerCapabilitiesSource,
+  createPointerCapabilitiesSource,
+} from "./pointer-capabilities";
+import {
+  hasFinePointer as hasGpuiFinePointer,
+  hasTouchPrimaryPointer as hasGpuiTouchPrimaryPointer,
+  usePointerCapabilities as useGpuiPointerCapabilities,
+} from "./pointer-capabilities.gpui";
 
 class FakeMediaQueryList {
   private readonly listeners = new Set<() => void>();
@@ -103,5 +111,30 @@ describe("hasTouchPrimaryPointer", () => {
 
   it("is false without media queries", () => {
     expect(createPointerCapabilitiesSource(null).hasTouchPrimaryPointer()).toBe(false);
+  });
+});
+
+describe("pointer capabilities per target", () => {
+  it("reports a coarse touch primary pointer on native iOS/Android", () => {
+    const nativeSource = createNativePointerCapabilitiesSource();
+    expect(nativeSource.getSnapshot()).toEqual({ finePointer: false, touchScreen: true });
+    expect(nativeSource.hasTouchPrimaryPointer()).toBe(true);
+  });
+
+  it("reports fine pointer without touch screen on desktop web/Electron", () => {
+    const desktopDisplay = createFakeDisplay({
+      finePointer: true,
+      touchScreen: false,
+      touchPrimaryPointer: false,
+    });
+    const desktopSource = createPointerCapabilitiesSource(desktopDisplay.matchMedia);
+    expect(desktopSource.getSnapshot()).toEqual({ finePointer: true, touchScreen: false });
+    expect(desktopSource.hasTouchPrimaryPointer()).toBe(false);
+  });
+
+  it("reports fine pointer without touch screen on GPUI", () => {
+    expect(useGpuiPointerCapabilities()).toEqual({ finePointer: true, touchScreen: false });
+    expect(hasGpuiFinePointer()).toBe(true);
+    expect(hasGpuiTouchPrimaryPointer()).toBe(false);
   });
 });
