@@ -265,6 +265,40 @@ export async function expectWholeCompletedCard(page: Page): Promise<void> {
   await expect(page.getByTestId("assistant-message")).toHaveCount(0);
 }
 
+export async function trackTimelineNativeRowSamples(page: Page) {
+  await page.addInitScript(() => {
+    const samples: Array<{ at: number; nativeRows: number }> = [];
+    Reflect.set(window, "timelinePaintSamples", samples);
+    const observer = new MutationObserver(() => {
+      const nativeRows = document.querySelectorAll('[data-testid="assistant-message"]').length;
+      samples.push({ at: performance.now(), nativeRows });
+    });
+    observer.observe(document, { subtree: true, childList: true });
+  });
+  return {
+    async expectNoSourceRowsAppeared(info: TestInfo) {
+      const samples = await page.evaluate(() => {
+        const raw = Reflect.get(window, "timelinePaintSamples");
+        if (!Array.isArray(raw)) return [];
+        return raw.flatMap((entry) =>
+          entry &&
+          typeof entry === "object" &&
+          "nativeRows" in entry &&
+          typeof entry.nativeRows === "number"
+            ? [{ nativeRows: entry.nativeRows }]
+            : [],
+        );
+      });
+      await info.attach("catalog-delayed-dom-samples", {
+        body: JSON.stringify(samples),
+        contentType: "application/json",
+      });
+      expect(samples.every((sample) => sample.nativeRows === 0)).toBe(true);
+      await expect(page.getByTestId("assistant-message")).toHaveCount(0);
+    },
+  };
+}
+
 export async function expectBothConsecutiveTools(page: Page): Promise<void> {
   // read and grep are consecutive source calls in the fixture. Overview used to
   // send only the later call to the plugin, so the read card never existed.
