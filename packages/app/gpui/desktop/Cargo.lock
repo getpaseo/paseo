@@ -5528,8 +5528,11 @@ dependencies = [
 name = "react-native-gpui-paseo-gpui"
 version = "0.1.0"
 dependencies = [
+ "gpui",
+ "gpui_platform",
  "react-native-gpui",
  "rn-gpui-autolink",
+ "rn-gpui-enriched-markdown",
  "rn-gpui-module",
  "rn-gpui-module-build",
  "rusqlite",

@@ -37,6 +37,11 @@ visual-capture = ["react-native-gpui/visual-capture"]
 test-driver = ["react-native-gpui/test-driver"]
 runtime-shaders = ["react-native-gpui/runtime-shaders"]
 
+[dev-dependencies]
+rn_gpui_enriched_markdown = { package = "rn-gpui-enriched-markdown", path = "../../../react-native-enriched-markdown/desktop" }
+gpui = { git = "https://github.com/streetwriters/gpui-fast", rev = "1ad3cc3" }
+gpui_platform = { git = "https://github.com/streetwriters/gpui-fast", rev = "1ad3cc3", features = ["test-support"] }
+
 [dependencies]
 serde_json = "1"
 sha2 = "0.10"
