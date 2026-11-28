@@ -133,6 +133,49 @@ export function applyCodexToolPolicy(
   return next;
 }
 
+/**
+ * Auto-approves a single tool on an already-configured Codex MCP server without
+ * narrowing `enabled_tools` or changing `default_tools_approval_mode`, so other
+ * tools on the same server keep their existing visibility and approval policy.
+ */
+export function applyCodexMcpToolApproval(
+  config: Record<string, unknown>,
+  server: string,
+  tool: string,
+): Record<string, unknown> {
+  const approveServerTool = (serverConfig: Record<string, unknown>): Record<string, unknown> => {
+    const existingTools = readRecord(serverConfig.tools);
+    let enabledTools: unknown[] | undefined;
+    if (Array.isArray(serverConfig.enabled_tools)) {
+      enabledTools = serverConfig.enabled_tools.includes(tool)
+        ? serverConfig.enabled_tools
+        : [...serverConfig.enabled_tools, tool];
+    }
+    return {
+      ...serverConfig,
+      ...(enabledTools ? { enabled_tools: enabledTools } : {}),
+      tools: {
+        ...existingTools,
+        [tool]: { approval_mode: "approve" },
+      },
+    };
+  };
+
+  if ("mcp_servers" in config) {
+    const mcpServers = readRecord(config.mcp_servers);
+    if (!(server in mcpServers)) return config;
+    mcpServers[server] = approveServerTool(readRecord(mcpServers[server]));
+    return { ...config, mcp_servers: mcpServers };
+  }
+
+  const key = `${MCP_SERVERS_PREFIX}${server}`;
+  if (!(key in config)) return config;
+  return {
+    ...config,
+    [key]: approveServerTool(readRecord(config[key])),
+  };
+}
+
 function readRecord(value: unknown): Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value) ? { ...value } : {};
 }

@@ -185,6 +185,8 @@ export interface AgentCapabilityFlags {
   supportsSessionListing?: boolean;
   supportsDynamicModes: boolean;
   supportsMcpServers: boolean;
+  /** When false, HTTP MCP servers (such as Paseo's loopback endpoint) are not supported even if stdio MCP works. */
+  supportsHttpMcpServers?: boolean;
   supportsNativePaseoTools?: boolean;
   supportsReasoningStream: boolean;
   supportsToolInvocations: boolean;
@@ -694,6 +696,8 @@ export interface AgentLaunchContext {
    * AgentSessionConfig; providers may adapt it to their native tool surface.
    */
   paseoTools?: PaseoToolCatalog;
+  /** True while Paseo voice mode is active for this session launch (never persisted). */
+  voiceToolsEnabled?: boolean;
 }
 
 export interface AgentCreateSessionOptions {

@@ -1875,6 +1875,38 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("auto-approves paseo speak tool during active voice sessions without restricting enabled_tools", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = await createProviderWithFakeAppServer(appServer).createSession(
+      createConfig({
+        modeId: "auto",
+        mcpServers: {
+          paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1" },
+        },
+      }),
+      { voiceToolsEnabled: true },
+    );
+    try {
+      await session.startTurn("say hello");
+      const threadStart = appServer.requests().find((req) => req.method === "thread/start");
+      const startConfig = (threadStart?.params as { config?: Record<string, unknown> } | undefined)
+        ?.config;
+      expect(startConfig).toEqual({
+        "mcp_servers.paseo": {
+          url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+          tools: { speak: { approval_mode: "approve" } },
+        },
+      });
+      expect(startConfig).not.toHaveProperty("mcp_servers");
+      expect(startConfig?.["mcp_servers.paseo"]).not.toHaveProperty("enabled_tools");
+      expect(startConfig?.["mcp_servers.paseo"]).not.toHaveProperty("default_tools_approval_mode");
+      appServer.completeTurn();
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("preapproves only granted tools on the injected Codex MCP server", async () => {
     const session = createSession({
       modeId: undefined,

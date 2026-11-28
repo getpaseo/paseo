@@ -102,7 +102,7 @@ import { formatAttachmentContentDisposition } from "./file-download/content-disp
 import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/config.js";
 import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.js";
 import type { RequestedSpeechProviders } from "./speech/speech-types.js";
-import { createSpeechService } from "./speech/speech-runtime.js";
+import { createSpeechService, type SpeechService } from "./speech/speech-runtime.js";
 import { createSpeechSettingsOwner } from "./speech/speech-settings.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
@@ -133,7 +133,7 @@ import {
   type ResolvedDaemonSettings,
   type CliConfigOverrides,
 } from "./config.js";
-import { resolvePaseoToolPolicy } from "./agent/paseo-tool-policy.js";
+import { isPaseoToolPolicyEnabled, resolvePaseoToolPolicy } from "./agent/paseo-tool-policy.js";
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { DaemonConfigBrowserToolsPolicy } from "./browser-tools/policy.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
@@ -441,6 +441,7 @@ export interface PaseoDaemon {
 export interface PaseoDaemonDependencies {
   builtinPlugins?: BuiltinPluginLoader;
   lazyTerminalWorker?: boolean;
+  speechService?: SpeechService;
   getTailscaleNetwork?: () => TailscaleNetwork;
   hubRelationshipRemote?: HubRelationshipRemote;
   hubRelationshipClock?: HubRelationshipClock;
@@ -586,11 +587,13 @@ export async function createPaseoDaemon(
   const elapsed = () => `${(performance.now() - bootstrapStart).toFixed(0)}ms`;
   const daemonVersion = config.daemonVersion ?? resolveDaemonVersion(import.meta.url);
   const initialMutableConfig = createInitialMutableDaemonConfig(config);
-  const speechService = createSpeechService({
-    logger,
-    openaiConfig: config.openai,
-    speechConfig: config.speech,
-  });
+  const speechService =
+    dependencies.speechService ??
+    createSpeechService({
+      logger,
+      openaiConfig: config.openai,
+      speechConfig: config.speech,
+    });
   logger.info({ elapsed: elapsed() }, "Speech service created");
   const daemonConfigStore = new DaemonConfigStore(config.paseoHome, initialMutableConfig, logger, {
     relayEnabledMutable: config.relayEnabledMutable ?? true,
@@ -992,6 +995,8 @@ export async function createPaseoDaemon(
     const git = daemonConfigStore.get().git;
     if (git) configureGitProcessPolicy(git);
   });
+  const hasActiveVoiceTools = (agentId: string): boolean =>
+    wsServer?.resolveVoiceCallerContext(agentId)?.enableVoiceTools === true;
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
     pluginLifecycle: pluginRuntime,
@@ -1004,6 +1009,7 @@ export async function createPaseoDaemon(
       workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);
     },
     mcpAuthToken: agentMcpAuthToken,
+    hasActiveVoiceTools,
     resolvePaseoToolPolicy: (provider) =>
       resolvePaseoToolPolicy(provider, daemonConfigStore.get().providers),
     logger,
@@ -1640,7 +1646,6 @@ export async function createPaseoDaemon(
   setAgentProviderToolsEnabled(config.mcpEnabled !== false && config.mcpInjectIntoAgents !== false);
 
   let mcpEnabled = config.mcpEnabled ?? true;
-  let agentMcpBaseUrl: string | null = null;
   {
     const agentMcpRoute = "/mcp/agents";
 
@@ -1649,14 +1654,20 @@ export async function createPaseoDaemon(
     // 2025-era clients through its stateless legacy fallback. No per-session
     // state is retained between requests, matching the previous
     // `sessionIdGenerator: undefined` transport.
-    const createAgentMcpSession = async (callerAgentId?: string) => {
-      if (callerAgentId) await agentManager.refreshPluginTools(callerAgentId);
+    const createAgentMcpSession = async (
+      callerAgentId?: string,
+      options?: { voiceOnly?: boolean },
+    ) => {
+      if (callerAgentId && !options?.voiceOnly) {
+        await agentManager.refreshPluginTools(callerAgentId);
+      }
       const agentMcpServer = await createAgentMcpServer(
         createAgentToolHostDependencies({
           callerAgentId,
           paseoToolPolicy: callerAgentId
             ? agentManager.getPaseoToolPolicy(callerAgentId)
             : undefined,
+          voiceOnly: options?.voiceOnly,
         }),
       );
 
@@ -1673,7 +1684,17 @@ export async function createPaseoDaemon(
       req: express.Request,
       res: express.Response,
     ): Promise<void> => {
-      if (!mcpEnabled) {
+      const callerAgentIdRaw = req.query.callerAgentId;
+      let callerAgentId: string | undefined;
+      if (typeof callerAgentIdRaw === "string") {
+        callerAgentId = callerAgentIdRaw;
+      } else if (Array.isArray(callerAgentIdRaw) && typeof callerAgentIdRaw[0] === "string") {
+        callerAgentId = callerAgentIdRaw[0];
+      }
+      const voiceActive = Boolean(callerAgentId && hasActiveVoiceTools(callerAgentId));
+      const isActiveLoopbackVoiceRequest =
+        voiceActive && isLoopbackRemoteAddress(req.socket.remoteAddress);
+      if (!mcpEnabled && !isActiveLoopbackVoiceRequest) {
         res.status(404).json({ error: "Agent MCP endpoint disabled" });
         return;
       }
@@ -1718,14 +1739,11 @@ export async function createPaseoDaemon(
           });
           return;
         }
-        const callerAgentIdRaw = req.query.callerAgentId;
-        let callerAgentId: string | undefined;
-        if (typeof callerAgentIdRaw === "string") {
-          callerAgentId = callerAgentIdRaw;
-        } else if (Array.isArray(callerAgentIdRaw) && typeof callerAgentIdRaw[0] === "string") {
-          callerAgentId = callerAgentIdRaw[0];
-        }
-        const { handler } = await createAgentMcpSession(callerAgentId);
+        const policy = callerAgentId ? agentManager.getPaseoToolPolicy(callerAgentId) : undefined;
+        const generalPaseoToolsEnabled =
+          mcpEnabled && agentManager.isPaseoToolsEnabled() && isPaseoToolPolicyEnabled(policy);
+        const voiceOnly = voiceActive && !generalPaseoToolsEnabled;
+        const { handler } = await createAgentMcpSession(callerAgentId, { voiceOnly });
         try {
           // express.json() already consumed the stream, so hand the parsed body over.
           await toNodeHandler(handler)(
@@ -1826,21 +1844,18 @@ export async function createPaseoDaemon(
               );
             }
             const mcpBaseUrl = loopbackAgentEndpoint.getMcpBaseUrl();
-            agentMcpBaseUrl =
-              !mcpEnabled || config.mcpInjectIntoAgents === false ? null : mcpBaseUrl;
-            agentManager.setMcpBaseUrl(agentMcpBaseUrl);
+            agentManager.setMcpBaseUrl(mcpBaseUrl);
             agentManager.setPaseoToolsEnabled(mcpEnabled && config.mcpInjectIntoAgents !== false);
             daemonConfigStore.onFieldChange("mcp.enabled", (value) => {
               mcpEnabled = value !== false;
               const inject = daemonConfigStore.get().mcp.injectIntoAgents !== false;
-              agentManager.setMcpBaseUrl(mcpEnabled && inject ? mcpBaseUrl : null);
               agentManager.setPaseoToolsEnabled(mcpEnabled && inject);
               setAgentProviderToolsEnabled(mcpEnabled && inject);
             });
             daemonConfigStore.onFieldChange("mcp.injectIntoAgents", (value) => {
-              agentManager.setMcpBaseUrl(mcpEnabled && value ? mcpBaseUrl : null);
-              agentManager.setPaseoToolsEnabled(mcpEnabled && value !== false);
-              setAgentProviderToolsEnabled(mcpEnabled && value !== false);
+              const inject = value !== false;
+              agentManager.setPaseoToolsEnabled(mcpEnabled && inject);
+              setAgentProviderToolsEnabled(mcpEnabled && inject);
             });
             daemonConfigStore.onFieldChange("appendSystemPrompt", (value) => {
               agentManager.setAppendSystemPrompt(typeof value === "string" ? value : "");

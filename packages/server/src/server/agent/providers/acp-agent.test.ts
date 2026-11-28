@@ -3561,6 +3561,92 @@ describe("ACPAgentSession", () => {
     expect(asInternals<ACPSessionInternals>(session).acpMcpServers()).toEqual([]);
   });
 
+  test("gates HTTP MCP servers and supportsHttpMcpServers on agentCapabilities.mcpCapabilities.http without breaking stdio MCP", async () => {
+    const newSession = vi.fn().mockResolvedValue({
+      sessionId: "acp-http-cap-session",
+      modes: null,
+      models: null,
+      configOptions: [],
+    });
+
+    class CapabilityTestSession extends ACPAgentSession {
+      constructor(
+        private readonly httpCap: boolean | undefined,
+        config: AgentSessionConfig,
+      ) {
+        super(config, {
+          provider: "test-acp",
+          logger: createTestLogger(),
+          defaultCommand: ["test-acp", "serve"],
+          defaultModes: [],
+          capabilities: {
+            supportsStreaming: true,
+            supportsSessionPersistence: true,
+            supportsDynamicModes: true,
+            supportsMcpServers: true,
+            supportsReasoningStream: true,
+            supportsToolInvocations: true,
+          },
+        });
+      }
+
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: createProbeChildStub(),
+          connection: {
+            newSession,
+          } as unknown as ClientSideConnection,
+          initialize: {
+            protocolVersion: PROTOCOL_VERSION,
+            agentCapabilities:
+              this.httpCap === undefined ? {} : { mcpCapabilities: { http: this.httpCap } },
+          },
+        };
+      }
+    }
+
+    const mcpServers: AgentSessionConfig["mcpServers"] = {
+      paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1" },
+      local: { type: "stdio", command: "node", args: ["mcp.js"] },
+    };
+
+    const unsupported = new CapabilityTestSession(false, {
+      provider: "test-acp",
+      cwd: "/tmp/paseo-acp-test",
+      mcpServers,
+    });
+    await unsupported.initializeNewSession();
+
+    expect(unsupported.capabilities.supportsMcpServers).toBe(true);
+    expect(unsupported.capabilities.supportsHttpMcpServers).toBe(false);
+    expect(newSession).toHaveBeenLastCalledWith({
+      cwd: "/tmp/paseo-acp-test",
+      mcpServers: [{ name: "local", command: "node", args: ["mcp.js"], env: [] }],
+    });
+
+    const supported = new CapabilityTestSession(true, {
+      provider: "test-acp",
+      cwd: "/tmp/paseo-acp-test",
+      mcpServers,
+    });
+    await supported.initializeNewSession();
+
+    expect(supported.capabilities.supportsMcpServers).toBe(true);
+    expect(supported.capabilities.supportsHttpMcpServers).toBe(true);
+    expect(newSession).toHaveBeenLastCalledWith({
+      cwd: "/tmp/paseo-acp-test",
+      mcpServers: [
+        {
+          type: "http",
+          name: "paseo",
+          url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+          headers: [],
+        },
+        { name: "local", command: "node", args: ["mcp.js"], env: [] },
+      ],
+    });
+  });
+
   test("summarizes JSON-RPC error details without stringifying objects", () => {
     const summary = summarizeACPRequestError(
       new RequestError(-32603, "Internal error", {

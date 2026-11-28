@@ -8,7 +8,11 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
 import { validateProviderOptions } from "./provider-options.js";
 import { applyClaudeToolPolicy, ClaudeProviderOptionsSchema } from "./providers/claude/options.js";
-import { applyCodexToolPolicy, CodexProviderOptionsSchema } from "./providers/codex/options.js";
+import {
+  applyCodexMcpToolApproval,
+  applyCodexToolPolicy,
+  CodexProviderOptionsSchema,
+} from "./providers/codex/options.js";
 import {
   buildOpenCodePermissionRules,
   OpenCodeProviderOptionsSchema,
@@ -193,6 +197,52 @@ describe("exact MCP preapproval mappings", () => {
           tools: { ping: { approval_mode: "approve" } },
         },
       },
+    });
+  });
+
+  test("Codex speak approval sets tools.speak.approval_mode without restricting enabled_tools", () => {
+    expect(
+      applyCodexMcpToolApproval(
+        {
+          "mcp_servers.paseo": { url: "http://127.0.0.1/mcp/agents?callerAgentId=a1" },
+          "mcp_servers.other": { command: "node" },
+        },
+        "paseo",
+        "speak",
+      ),
+    ).toEqual({
+      "mcp_servers.paseo": {
+        url: "http://127.0.0.1/mcp/agents?callerAgentId=a1",
+        tools: { speak: { approval_mode: "approve" } },
+      },
+      "mcp_servers.other": { command: "node" },
+    });
+
+    expect(
+      applyCodexMcpToolApproval(
+        {
+          mcp_servers: {
+            paseo: { url: "http://127.0.0.1/mcp/agents?callerAgentId=a1" },
+            "my.dotted": { url: "http://127.0.0.1/other" },
+          },
+        },
+        "paseo",
+        "speak",
+      ),
+    ).toEqual({
+      mcp_servers: {
+        paseo: {
+          url: "http://127.0.0.1/mcp/agents?callerAgentId=a1",
+          tools: { speak: { approval_mode: "approve" } },
+        },
+        "my.dotted": { url: "http://127.0.0.1/other" },
+      },
+    });
+
+    expect(
+      applyCodexMcpToolApproval({ "mcp_servers.other": { command: "node" } }, "paseo", "speak"),
+    ).toEqual({
+      "mcp_servers.other": { command: "node" },
     });
   });
 

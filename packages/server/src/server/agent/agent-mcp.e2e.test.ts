@@ -1,7 +1,9 @@
+import { EventEmitter } from "node:events";
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { describe, expect, test } from "vitest";
@@ -17,6 +19,8 @@ import pino from "pino";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { hashDaemonPassword } from "../auth.js";
 import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
+import type { SpeechService } from "../speech/speech-runtime.js";
+import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import type {
   AgentClient,
@@ -1187,4 +1191,279 @@ describe("agent MCP protocol negotiation", () => {
       await daemon.stop();
     }
   }, 30_000);
+});
+
+describe("voice-only speak MCP delivery", () => {
+  function createFakeVoiceSpeechService(spokenTexts: string[]): SpeechService {
+    const ready = {
+      enabled: true,
+      available: true,
+      retryable: false,
+      reasonCode: "ready" as const,
+      message: "Ready",
+      missingModelIds: [],
+    };
+    return {
+      resolveStt: () => ({
+        id: "local",
+        createSession: () => {
+          const session = new EventEmitter();
+          return Object.assign(session, {
+            requiredSampleRate: 16000,
+            async connect() {},
+            appendPcm16() {},
+            commit() {},
+            clear() {},
+            close() {},
+          });
+        },
+      }),
+      resolveSttLanguage: () => "en",
+      resolveTts: () => ({
+        async synthesizeSpeech(text: string) {
+          spokenTexts.push(text);
+          return { stream: Readable.from([Buffer.from("pcm")]), format: "pcm;rate=24000" };
+        },
+      }),
+      resolveTurnDetection: () => ({
+        id: "local",
+        createSession: () => {
+          const session = new EventEmitter();
+          return Object.assign(session, {
+            requiredSampleRate: 16000,
+            async connect() {},
+            appendPcm16() {},
+            flush() {},
+            reset() {},
+            close() {},
+          });
+        },
+      }),
+      resolveDictationStt: () => null,
+      resolveDictationSttLanguage: () => "en",
+      getReadiness: () => ({
+        voiceFeature: ready,
+        realtimeVoice: ready,
+        dictation: ready,
+        localModels: [],
+      }),
+      onReadinessChange: () => () => {},
+      reconfigure: () => {},
+      listLocalModels: async () => [],
+      downloadLocalModel: () => {},
+      deleteLocalModel: async () => {},
+      start: () => {},
+      stop: async () => {},
+    };
+  }
+
+  async function listMcpToolsAndCallSpeak(
+    mcpUrl: string,
+    authToken: string | null,
+    text?: string,
+  ): Promise<{ toolNames: string[]; speakResult?: unknown }> {
+    const client = new StandardMcpClient({ name: "voice-mcp-e2e", version: "0.0.0" });
+    await client.connect(
+      new StandardMcpHttpTransport(new URL(mcpUrl), {
+        requestInit: authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : undefined,
+      }),
+    );
+    try {
+      const tools = await client.listTools();
+      const toolNames = tools.tools.map((tool) => tool.name);
+      let speakResult: unknown;
+      if (text !== undefined) {
+        speakResult = await client.callTool({ name: "speak", arguments: { text } });
+      }
+      return { toolNames, speakResult };
+    } finally {
+      await client.close();
+    }
+  }
+
+  class VoiceRecordingAgentClient implements AgentClient {
+    readonly provider: AgentClient["provider"];
+    readonly capabilities: AgentClient["capabilities"];
+
+    constructor(
+      private readonly inner: AgentClient,
+      readonly launches: AgentSessionConfig[],
+      supportsMcpServers: boolean,
+    ) {
+      this.provider = inner.provider;
+      this.capabilities = {
+        ...inner.capabilities,
+        supportsMcpServers,
+        supportsNativePaseoTools: false,
+      };
+    }
+
+    private wrapSession(session: AgentSession): AgentSession {
+      return Object.assign(Object.create(Object.getPrototypeOf(session)), session, {
+        capabilities: this.capabilities,
+      }) as AgentSession;
+    }
+
+    async createSession(
+      ...args: Parameters<AgentClient["createSession"]>
+    ): ReturnType<AgentClient["createSession"]> {
+      this.launches.push(args[0]);
+      return this.wrapSession(await this.inner.createSession(...args));
+    }
+
+    async resumeSession(
+      ...args: Parameters<AgentClient["resumeSession"]>
+    ): ReturnType<AgentClient["resumeSession"]> {
+      this.launches.push({
+        provider: this.provider,
+        cwd: args[1]?.cwd ?? String(args[0].metadata?.cwd ?? ""),
+        ...args[1],
+      });
+      return this.wrapSession(await this.inner.resumeSession(...args));
+    }
+
+    fetchCatalog(
+      ...args: Parameters<AgentClient["fetchCatalog"]>
+    ): ReturnType<AgentClient["fetchCatalog"]> {
+      return this.inner.fetchCatalog(...args);
+    }
+
+    isAvailable(): Promise<boolean> {
+      return this.inner.isAvailable();
+    }
+  }
+
+  test.each([
+    {
+      name: "default config (mcp.injectIntoAgents=false, mcp.enabled=true)",
+      mcpEnabled: true,
+      mcpInjectIntoAgents: false,
+      providerOverrides: undefined,
+    },
+    {
+      name: "mcp.enabled=false on loopback",
+      mcpEnabled: false,
+      mcpInjectIntoAgents: false,
+      providerOverrides: undefined,
+    },
+    {
+      name: "per-provider paseoTools.enabled=false",
+      mcpEnabled: true,
+      mcpInjectIntoAgents: true,
+      providerOverrides: { claude: { paseoTools: { enabled: false } } },
+    },
+  ])(
+    "delivers only speak on voice enable under $name and rejects unsupported providers",
+    async ({ mcpEnabled, mcpInjectIntoAgents, providerOverrides }) => {
+      const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-voice-home-"));
+      const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-voice-static-"));
+      const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-voice-cwd-"));
+      const port = await getAvailablePort();
+      const spokenTexts: string[] = [];
+      const claudeLaunches: AgentSessionConfig[] = [];
+      const codexLaunches: AgentSessionConfig[] = [];
+      const baseClients = createTestAgentClients();
+      const claudeBase = baseClients.claude!;
+      const codexBase = baseClients.codex!;
+
+      const daemon = await createPaseoDaemon(
+        {
+          listen: `127.0.0.1:${port}`,
+          paseoHome,
+          corsAllowedOrigins: [],
+          hostnames: true,
+          mcpEnabled,
+          mcpInjectIntoAgents,
+          providerOverrides,
+          staticDir,
+          mcpDebug: false,
+          agentClients: {
+            ...baseClients,
+            claude: new VoiceRecordingAgentClient(claudeBase, claudeLaunches, true),
+            codex: new VoiceRecordingAgentClient(codexBase, codexLaunches, false),
+          },
+          agentStoragePath: path.join(paseoHome, "agents"),
+        },
+        pino({ level: "silent" }),
+        { speechService: createFakeVoiceSpeechService(spokenTexts) },
+      );
+      await daemon.start();
+
+      const wsClient = new DaemonClient({ url: `ws://127.0.0.1:${port}/ws` });
+      wsClient.on("audio_output", (msg) => {
+        if (msg.type === "audio_output" && msg.payload.id) {
+          void wsClient.sendSessionMessage({ type: "audio_played", id: msg.payload.id });
+        }
+      });
+
+      try {
+        await wsClient.connect();
+
+        // Non-voice agent receives zero Paseo MCP servers.
+        const claudeAgent = await daemon.agentManager.createAgent(
+          {
+            provider: "claude",
+            cwd: agentCwd,
+            model: "claude-test-model",
+            modeId: "bypassPermissions",
+          },
+          undefined,
+          { workspaceId: undefined },
+        );
+        expect(claudeLaunches.at(-1)?.mcpServers?.paseo).toBeUndefined();
+
+        // When mcp.enabled=false, non-voice /mcp/agents requests still get 404.
+        if (!mcpEnabled) {
+          const nonVoiceRes = await fetch(
+            `http://127.0.0.1:${port}/mcp/agents?callerAgentId=${claudeAgent.id}`,
+            { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+          );
+          expect(nonVoiceRes.status).toBe(404);
+        }
+
+        // Enabling voice mode injects loopback paseo MCP and exposes ONLY speak.
+        await wsClient.setVoiceMode(true, claudeAgent.id);
+        const injected = claudeLaunches.at(-1)?.mcpServers?.paseo;
+        expect(injected).toBeDefined();
+        expect(injected?.type).toBe("http");
+        if (!injected || injected.type !== "http") {
+          throw new Error("Expected HTTP paseo MCP server");
+        }
+
+        const { toolNames } = await listMcpToolsAndCallSpeak(
+          injected.url,
+          daemon.agentManager.getMcpAuthToken(),
+          "Hello from voice mode",
+        );
+        expect(toolNames).toEqual(["speak"]);
+        expect(spokenTexts).toEqual(["Hello from voice mode"]);
+
+        // Disabling voice mode drops paseo MCP on the restored non-voice session.
+        await wsClient.setVoiceMode(false, claudeAgent.id);
+        expect(claudeLaunches.at(-1)?.mcpServers?.paseo).toBeUndefined();
+
+        // Provider without MCP/native tools rejects set_voice_mode cleanly.
+        const unsupportedAgent = await daemon.agentManager.createAgent(
+          { provider: "codex", cwd: agentCwd },
+          undefined,
+          { workspaceId: undefined },
+        );
+        await expect(wsClient.setVoiceMode(true, unsupportedAgent.id)).rejects.toThrow(/speak/i);
+        if (!mcpEnabled) {
+          const rejectedRes = await fetch(
+            `http://127.0.0.1:${port}/mcp/agents?callerAgentId=${unsupportedAgent.id}`,
+            { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+          );
+          expect(rejectedRes.status).toBe(404);
+        }
+      } finally {
+        await wsClient.close();
+        await daemon.stop();
+        await rm(paseoHome, { recursive: true, force: true });
+        await rm(staticDir, { recursive: true, force: true });
+        await rm(agentCwd, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
 });

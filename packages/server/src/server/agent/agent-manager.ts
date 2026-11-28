@@ -437,6 +437,7 @@ export interface AgentManagerOptions {
   pluginSessions?: PluginSessionsRuntime;
   paseoToolsEnabled?: boolean;
   paseoToolCatalogFactory?: PaseoToolCatalogFactory;
+  hasActiveVoiceTools?: (agentId: string) => boolean;
   resolvePaseoToolPolicy?: (provider: AgentProvider) => ProviderPaseoToolsPolicy | undefined;
   appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
@@ -975,6 +976,7 @@ export class AgentManager {
   private readonly pluginSessions: PluginSessionsRuntime | undefined;
   private paseoToolsEnabled = true;
   private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
+  private hasActiveVoiceTools: (agentId: string) => boolean = () => false;
   private readonly paseoToolPolicies = new Map<string, ProviderPaseoToolsPolicy | undefined>();
   private readonly resolvePaseoToolPolicy: (
     provider: AgentProvider,
@@ -1027,6 +1029,7 @@ export class AgentManager {
   private configurePaseoTools(options: AgentManagerOptions): void {
     this.paseoToolsEnabled = options.paseoToolsEnabled ?? true;
     this.paseoToolCatalogFactory = options.paseoToolCatalogFactory ?? null;
+    this.hasActiveVoiceTools = options.hasActiveVoiceTools ?? (() => false);
   }
 
   registerClient(provider: AgentProvider, client: AgentClient): void {
@@ -1089,6 +1092,10 @@ export class AgentManager {
 
   setPaseoToolsEnabled(enabled: boolean): void {
     this.paseoToolsEnabled = enabled;
+  }
+
+  isPaseoToolsEnabled(): boolean {
+    return this.paseoToolsEnabled;
   }
 
   setPaseoToolCatalogFactory(factory: PaseoToolCatalogFactory | null): void {
@@ -2067,7 +2074,7 @@ export class AgentManager {
   reloadAgentSession(
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
-    options?: { rehydrateFromDisk?: boolean },
+    options?: { rehydrateFromDisk?: boolean; requireVoiceSpeak?: boolean },
   ): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(
       this.runLifecycleMutation(agentId, () =>
@@ -2079,7 +2086,7 @@ export class AgentManager {
   private reloadAgentSessionInternal(
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
-    options?: { rehydrateFromDisk?: boolean },
+    options?: { rehydrateFromDisk?: boolean; requireVoiceSpeak?: boolean },
   ): Promise<ManagedAgent> {
     return this.launchAgent(agentId, () => this.reopenAgentSession(agentId, overrides, options));
   }
@@ -2101,7 +2108,7 @@ export class AgentManager {
   private async reopenAgentSession(
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
-    options?: { rehydrateFromDisk?: boolean },
+    options?: { rehydrateFromDisk?: boolean; requireVoiceSpeak?: boolean },
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     let existing = this.requireSessionAgent(agentId);
@@ -2150,6 +2157,7 @@ export class AgentManager {
       existing,
       launchConfig,
       launchContext,
+      options,
     );
 
     let session: AgentSession | undefined;
@@ -2171,6 +2179,7 @@ export class AgentManager {
         ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
         : await client.createSession(providerLaunchConfig, launchContext);
       await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
+      this.assertVoiceSpeakSupportIfRequired(session, providerLaunchConfig, launchContext, options);
       this.assertAcceptingAgentRegistrations();
 
       if (rehydrateFromDisk) {
@@ -2233,6 +2242,7 @@ export class AgentManager {
     existing: ActiveManagedAgent,
     launchConfig: AgentSessionConfig,
     launchContext: AgentLaunchContext,
+    options?: { requireVoiceSpeak?: boolean },
   ): AgentSessionConfig {
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const mcpServers = stripInternalPaseoMcpServer(providerLaunchConfig).mcpServers ?? {};
@@ -2242,6 +2252,12 @@ export class AgentManager {
     ) {
       throw this.unsupportedMcpError(providerLaunchConfig, launchContext);
     }
+    this.assertVoiceSpeakSupportIfRequired(
+      existing.session,
+      providerLaunchConfig,
+      launchContext,
+      options,
+    );
     return providerLaunchConfig;
   }
 
@@ -4877,6 +4893,29 @@ export class AgentManager {
     return new Error(`Provider '${config.provider}' does not support MCP servers${source}`);
   }
 
+  private assertVoiceSpeakSupportIfRequired(
+    session: AgentSession,
+    launchConfig: AgentSessionConfig,
+    launchContext: AgentLaunchContext,
+    options?: { requireVoiceSpeak?: boolean },
+  ): void {
+    if (!options?.requireVoiceSpeak) {
+      return;
+    }
+    const hasNativeSpeak = launchContext.paseoTools?.tools.has("speak") === true;
+    const supportsHttpMcp =
+      session.capabilities.supportsMcpServers === true &&
+      session.capabilities.supportsHttpMcpServers !== false;
+    const hasMcpSpeak =
+      Boolean(launchConfig.mcpServers?.[PASEO_MCP_SERVER_NAME]) && supportsHttpMcp;
+    if (hasNativeSpeak || hasMcpSpeak) {
+      return;
+    }
+    throw new Error(
+      `Voice mode is unavailable for provider '${launchConfig.provider}': the session does not expose Paseo's 'speak' tool (requires native Paseo tool support or HTTP MCP server support).`,
+    );
+  }
+
   private async initializeAgentTimelineForRegister(params: {
     agentId: string;
     now: Date;
@@ -6644,17 +6683,16 @@ export class AgentManager {
       purpose: options.purpose,
       resolveDefaultModel: options.resolveDefaultModel,
     });
+    const voiceActive = this.hasActiveVoiceTools(agentId);
     const paseoToolPolicy = this.paseoToolsEnabled
       ? this.resolvePaseoToolPolicy(storedConfig.provider)
       : { enabled: false };
+    const generalEnabled = this.paseoToolsEnabled && isPaseoToolPolicyEnabled(paseoToolPolicy);
     const launchConfig = this.applyDaemonAppendSystemPrompt(
       withRuntimePaseoMcpServer({
         config: storedConfig,
         agentId,
-        mcpBaseUrl:
-          this.paseoToolsEnabled && isPaseoToolPolicyEnabled(paseoToolPolicy)
-            ? this.mcpBaseUrl
-            : null,
+        mcpBaseUrl: generalEnabled || voiceActive ? this.mcpBaseUrl : null,
         mcpAuthToken: this.mcpAuthToken,
       }),
     );
@@ -6731,10 +6769,23 @@ export class AgentManager {
         ...agentIdentityEnv({ agentId, cwd, opening }),
       },
     };
+    await this.attachLaunchPaseoTools(context, agentId, client, paseoToolPolicy);
+    return context;
+  }
+
+  private async attachLaunchPaseoTools(
+    context: AgentLaunchContext,
+    agentId: string,
+    client: AgentClient,
+    paseoToolPolicy: ProviderPaseoToolsPolicy | undefined,
+  ): Promise<void> {
+    const voiceActive = this.hasActiveVoiceTools(agentId);
+    if (voiceActive) {
+      context.voiceToolsEnabled = true;
+    }
+    const generalEnabled = this.paseoToolsEnabled && isPaseoToolPolicyEnabled(paseoToolPolicy);
     const useNativeTools =
-      this.paseoToolsEnabled &&
-      isPaseoToolPolicyEnabled(paseoToolPolicy) &&
-      client.capabilities.supportsNativePaseoTools;
+      (generalEnabled || voiceActive) && client.capabilities.supportsNativePaseoTools;
     if (
       this.paseoToolCatalogFactory &&
       (useNativeTools || this.getPluginTools(agentId).length > 0)
@@ -6743,10 +6794,10 @@ export class AgentManager {
       const catalog = await this.paseoToolCatalogFactory({
         callerAgentId: agentId,
         paseoToolPolicy,
+        ...(useNativeTools && voiceActive && !generalEnabled ? { voiceOnly: true } : {}),
       });
       if (useNativeTools) context.paseoTools = catalog;
     }
-    return context;
   }
 
   private resolveProviderLaunchConfig(
