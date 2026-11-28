@@ -5,6 +5,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { expect, test } from "vitest";
 import type { AgentPromptInput } from "../agent/agent-sdk-types.js";
 import type { PaseoToolCatalog } from "../agent/tools/types.js";
+import { parseAgentMessages } from "../agent/agent-messages/index.js";
 import { createTestAgentClient } from "../test-utils/fake-agent-client.js";
 import { createDaemonTestContext } from "../test-utils/index.js";
 import { githubWatchFixture } from "./test-utils/github-watch-fixture.js";
@@ -364,15 +365,12 @@ test("GitHub PR watches batch with child messages and survive restart", async ({
   expect(nextTurn).toContain(review.inline);
   expect(nextTurn).toContain(page101);
   expect(nextTurn).toContain(`Check failed on ${failed.head.sha}`);
-  const envelopes = nextTurn?.match(/<paseo-system [^>]+>\n[\s\S]*?\n<\/paseo-system>/g);
-  const childEnvelope = envelopes?.find((envelope) => envelope.includes(childReport));
-  expect(childEnvelope).toContain(`kind="agent-message" source-agent-id="${childId}"`);
-  expect(childEnvelope).toContain('source-agent-title="QA child"');
-  expect(childEnvelope).not.toContain(url);
-  const prEnvelope = envelopes?.find((envelope) => envelope.includes(failedCheck.details_url));
-  expect(prEnvelope).toContain('kind="change-request-update"');
-  expect(prEnvelope).toContain(`source-url="${url}"`);
-  expect(prEnvelope).not.toContain(childReport);
+  expectChildReportBesideUpdate(nextTurn!, {
+    childId,
+    childReport,
+    url,
+    detailsUrl: failedCheck.details_url,
+  });
   expect((await client.waitForFinish(busy.id)).status).toBe("idle");
   await client.sendMessage(busy.id, "Hold while I unsubscribe");
   await client.waitForAgentUpsert(busy.id, (agent) => agent.status === "running");
@@ -446,11 +444,7 @@ test("GitHub PR watches batch with child messages and survive restart", async ({
   expect(turns.filter(({ text }) => baselineComments.some((link) => text.includes(link)))).toEqual(
     [],
   );
-  expect(
-    updates(idleDir).every(({ text }) =>
-      text.startsWith(`<paseo-system version="1" kind="change-request-update" source-url="${url}"`),
-    ),
-  ).toBe(true);
+  expect(updates(idleDir).every(({ text }) => isChangeRequestUpdateFor(text, url))).toBe(true);
   expect(busyTurns()).toHaveLength(4);
   expect(updates(busyDir).some(({ text }) => text.includes(discarded))).toBe(false);
   expect(turns.filter(({ text }) => text.includes(page101))).toHaveLength(3);
@@ -464,3 +458,28 @@ test("GitHub PR watches batch with child messages and survive restart", async ({
     JSON.stringify(turns.map(({ cwd, text, at }) => ({ recipient: path.basename(cwd), text, at }))),
   );
 }, 1_200_000);
+
+function isChangeRequestUpdateFor(prompt: string, url: string): boolean {
+  const messages = parseAgentMessages(prompt) ?? [];
+  return messages.every(
+    ({ source }) => source?.kind === "change-request-update" && source.url === url,
+  );
+}
+
+/** A child's report and the pull request update share one turn as separate messages. */
+function expectChildReportBesideUpdate(
+  prompt: string,
+  expected: { childId: string; childReport: string; url: string; detailsUrl: string },
+) {
+  const messages = parseAgentMessages(prompt) ?? [];
+  const child = messages.find((message) => message.text.includes(expected.childReport));
+  expect(child?.source).toMatchObject({
+    kind: "agent-message",
+    agentId: expected.childId,
+    title: "QA child",
+  });
+  expect(child?.text).not.toContain(expected.url);
+  const update = messages.find((message) => message.text.includes(expected.detailsUrl));
+  expect(update?.source).toEqual({ kind: "change-request-update", url: expected.url });
+  expect(update?.text).not.toContain(expected.childReport);
+}

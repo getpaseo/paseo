@@ -93,7 +93,7 @@ describe("daemon E2E (real claude) - finish notification across a background wak
       expect(interim.source).toMatchObject({
         kind: "agent-notification",
         agentId: childId,
-        event: "message",
+        event: "still-working",
       });
       expect(interim.text).toContain("ended its turn but is still working");
       expect(interim.text).toContain("background work that will wake it");

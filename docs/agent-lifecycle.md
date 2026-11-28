@@ -199,7 +199,7 @@ notification. Clean shutdown can also flush an already queued callback while ret
 so that callback can repeat after restart. This is an at-least-once wakeup, without turn attribution or exactly-once delivery.
 
 A turn end is not always a settled child. When the child ends its turn with work that will start its
-next turn by itself, the caller gets one `message` notice ("ended its turn but is still working") and
+next turn by itself, the caller gets one `still-working` notice ("ended its turn but is still working") and
 the subscription keeps following the child. That work is a running turn, queued messages, a pending
 provider wake-up (`AgentSession.hasPendingWakeup`: Claude background tasks, task notifications, and
 one-shot wake-ups), or the child's own outstanding finish subscriptions as a caller. Heartbeats,

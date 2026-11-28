@@ -13,8 +13,12 @@ import { test, expect } from "../support/fixtures";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { withDirectoryPlugin } from "../support/helpers/plugin-timeline";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { getE2EDaemonPort } from "../support/helpers/daemon-port";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 test.use({
+  e2eInjectPaseoTools: true,
   e2eDaemonConfig: {
     version: 1,
     agents: {
@@ -287,6 +291,73 @@ test("received messages show their sender and open that agent", async ({ page })
     await expect.poll(() => getActiveTabTestId(page)).toContain(sender.id);
   } finally {
     await recipient.cleanup();
+  }
+});
+
+/** Calls a Paseo MCP tool as `callerAgentId`, the way that agent's provider would. */
+async function callPaseoToolAs(
+  callerAgentId: string,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const mcp = new Client({ name: "turn-collapse-e2e", version: "1" });
+  await mcp.connect(
+    new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:${getE2EDaemonPort()}/mcp/agents?callerAgentId=${callerAgentId}`),
+    ),
+  );
+  try {
+    const response = await mcp.callTool({ name, arguments: args });
+    expect(response, name).not.toMatchObject({ isError: true });
+    return response.structuredContent as Record<string, unknown>;
+  } finally {
+    await mcp.close();
+  }
+}
+
+test("a delegated child's notices are compact tool calls, not received messages", async ({
+  page,
+}, testInfo) => {
+  const frames: string[] = [];
+  page.on("websocket", (socket) => {
+    socket.on("framereceived", ({ payload }) => {
+      if (typeof payload === "string") frames.push(payload);
+    });
+  });
+  const parent = await seedMockAgentWorkspace({ repoPrefix: "child-notices-", title: "Lead" });
+  try {
+    const child = await callPaseoToolAs(parent.agentId, "create_agent", {
+      workspaceId: parent.workspaceId,
+      title: "Child",
+      provider: "mock/e2e-fast-stream",
+      settings: { modeId: "load-test" },
+      initialPrompt: "Delegate the slow part",
+    });
+    // The child's own delegate outlives the child's turn, so that turn ends while still working.
+    await callPaseoToolAs(String(child.agentId), "create_agent", {
+      workspaceId: parent.workspaceId,
+      title: "Grandchild",
+      provider: "mock/ten-second-stream",
+      settings: { modeId: "load-test" },
+      initialPrompt: "Take your time",
+    });
+    await openAgentRoute(page, parent);
+    await expectComposerVisible(page);
+
+    const stillWorking = page.getByRole("button", { name: /^Agent still working.*Child/ });
+    await expect(stillWorking).toBeVisible({ timeout: 30_000 });
+    const finished = page.getByRole("button", { name: /^Agent finished.*Child/ });
+    await expect(finished).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText(/Sent by/)).toHaveCount(0);
+    await expect(page.getByText(/<agent-response>/)).toHaveCount(0);
+    await finished.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath("child-notices.png") });
+    // Notification events stay on the daemon: clients get only plain tool calls.
+    expect(frames.filter((frame) => frame.includes('"agentMessage"'))).toEqual([]);
+    expect(frames.some((frame) => frame.includes('"name":"agent_still_working"'))).toBe(true);
+    expect(frames.some((frame) => frame.includes('"name":"agent_finished"'))).toBe(true);
+  } finally {
+    await parent.cleanup();
   }
 });
 

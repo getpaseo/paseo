@@ -22,11 +22,9 @@ export const finishNotificationEvents = {
   "needs permission": "permission-required",
   "was closed": "closed",
   "is unavailable": "closed",
-  // Use the existing failure event so older clients still parse agent-message metadata.
   "was canceled": "errored",
-  // Not a finish: the existing neutral event keeps older clients parsing the metadata.
-  "ended its turn but is still working": "message",
-  "is still working": "message",
+  "ended its turn but is still working": "still-working",
+  "is still working": "still-working",
 } as const;
 
 /** Permission requests and the still-working notice leave the subscription in place. */

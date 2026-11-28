@@ -77,11 +77,8 @@ describe("canonical turn membership", () => {
     delete trigger.turnId;
     expect(continuesTurn(previous, trigger)).toBe(false);
     trigger.payload.data.name = "agent_message";
-    trigger.payload.data.agentMessage = {
-      event: "finished",
-      sender: { id: "worker" },
-      text: "Done",
-    };
+    expect(continuesTurn(previous, trigger)).toBe(false);
+    trigger.payload.data.name = "agent_still_working";
     expect(continuesTurn(previous, trigger)).toBe(false);
   });
 

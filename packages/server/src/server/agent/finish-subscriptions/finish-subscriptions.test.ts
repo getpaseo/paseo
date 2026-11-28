@@ -579,7 +579,7 @@ describe("a child that ends its turn while it is still working", () => {
     expect(interim).toContain("Waiting for the build");
     expect(interim).not.toContain("Child) finished.");
     expect(parseAgentMessage(state.delivery.enqueued[0]!)).toMatchObject({
-      source: { kind: "agent-notification", event: "message" },
+      source: { kind: "agent-notification", event: "still-working" },
     });
     expect(await state.store.list()).toEqual([
       expect.objectContaining({ followingSince: expect.any(String) }),

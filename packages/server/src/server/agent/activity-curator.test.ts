@@ -118,10 +118,38 @@ describe("curateAgentActivity", () => {
         { kind: "agent-notification", agentId: "agt_child", event: "finished" },
         "Child is done.",
       ),
+      delivered(
+        {
+          kind: "agent-notification",
+          agentId: "agt_child",
+          title: "Child",
+          event: "still-working",
+        },
+        "Child is waiting on CI.",
+      ),
+      // A row an older daemon persisted with notification metadata.
+      {
+        type: "tool_call",
+        callId: "legacy",
+        name: "agent_message",
+        status: "completed",
+        error: null,
+        agentMessage: { event: "errored", sender: { id: "agt_old" }, text: "Old failure." },
+        detail: { type: "plain_text", text: "Old failure.", icon: "bot" },
+      },
     ];
 
     expect(curateAgentActivity(timeline)).toBe(
-      "[Message received] CI lead\nTake ownership.\nRead the handoff.\n[Agent finished] agt_child\nChild is done.",
+      [
+        "[Message received] CI lead",
+        "Take ownership.\nRead the handoff.",
+        "[Agent finished] agt_child",
+        "Child is done.",
+        "[Agent still working] Child",
+        "Child is waiting on CI.",
+        "[Agent errored] agt_old",
+        "Old failure.",
+      ].join("\n"),
     );
   });
 

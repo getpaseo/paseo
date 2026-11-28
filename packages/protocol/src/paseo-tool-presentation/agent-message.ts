@@ -1,31 +1,30 @@
 import type { AgentMessage } from "../agent-message.js";
 import type { ToolCallDetail } from "../agent-types.js";
-import { toSummaryText } from "./summary-text.js";
 
-export interface AgentMessageDisplay {
-  displayName: string;
-  summary?: string;
-  detail: ToolCallDetail;
-}
-
-/** Events read noun-first ("Agent finished"); the sender goes in the summary. */
-const EVENT_LABELS: Record<AgentMessage["event"], string> = {
-  message: "Message received",
-  finished: "Agent finished",
-  errored: "Agent errored",
-  "permission-required": "Agent needs permission",
-  closed: "Agent closed",
+const LEGACY_NOTIFICATION_TOOL_NAMES: Record<Exclude<AgentMessage["event"], "message">, string> = {
+  finished: "agent_finished",
+  errored: "agent_errored",
+  "permission-required": "agent_needs_permission",
+  closed: "agent_closed",
 };
 
-/** Presentation shared by clients; never used to encode provider prompts. */
-export function buildAgentMessageDisplay(message: AgentMessage): AgentMessageDisplay {
-  const summary = toSummaryText(message.sender.title ?? message.sender.id);
+/**
+ * COMPAT(agentNotificationMetadata): added in v0.18.1, remove after 2027-06-01. Older daemons,
+ * and rows they persisted, send lifecycle notifications as `agent_message` calls with
+ * `agentMessage` metadata. Current daemons send the plain tool call this returns.
+ * Returns null for a peer message, which keeps its metadata.
+ */
+export function legacyAgentNotificationToolCall(
+  message: AgentMessage,
+): { name: string; detail: ToolCallDetail } | null {
+  if (message.event === "message") return null;
   return {
-    displayName: EVENT_LABELS[message.event],
-    ...(summary ? { summary } : {}),
+    name: LEGACY_NOTIFICATION_TOOL_NAMES[message.event],
     detail: {
       type: "plain_text",
-      text: `From agent: ${message.sender.id}\n\n${message.text}`,
+      label: message.sender.title ?? message.sender.id,
+      text: message.text,
+      icon: "bot",
     },
   };
 }

@@ -330,19 +330,35 @@ that starts or accepts them. Received messages retain sender attribution, while 
 notifications remain visible events. Collapse, timing and locally mounted history share
 these boundaries.
 
-Agent-message XML belongs to the daemon's `agent/agent-messages` boundary. Prompt delivery encodes
+Agent-message markup belongs to the daemon's `agent/agent-messages` boundary. Prompt delivery encodes
 provenance; acceptance, provider echoes, import, and replay share its projection. The delivery ID is
 also the projected call ID, so a provider echo cannot create a second row. Sender IDs are opaque and
 do not imply local ownership or authorization. Capture the sender title at delivery: archived or
 removed senders must remain understandable without a live directory lookup.
 
-The optional `agentMessage` payload carries event, sender, and delivered text. Shared client
-presentation (`protocol/paseo-tool-presentation`) owns its heading and expanded details, next to the
-labels for every Paseo MCP tool. The daemon
-must not construct UI labels or prepend sender labels to the semantic message body. The existing
-`tool_call` / `plain_text` envelope is a compatibility adapter: older clients still parse the row and
-expand its body. New clients use the typed payload, never infer the event from a tool name or parse
-XML. Stream reduction and disk-cache serialization preserve the payload without rendering it.
+Each delivered message keeps its text first and ends with a `<paseo-message … length="N"/>` marker.
+Text at character 0 stays the sender's, so a provider still reads a slash command there, and bodies
+are never escaped. `length` bounds the text before the marker, so marker syntax inside a body cannot
+split it, and a batch splits back into rows by reading markers from the end. A person's prompt gets a
+marker only when it shares a provider turn with other deliveries or contains `<paseo-message` or
+`<paseo-system`. Transcripts written before markers open with a `<paseo-system>` envelope; the
+projection still reads those (`COMPAT(leadingPaseoSystemEnvelope)`).
+
+The daemon decides whether a delivery is a message or a tool call, and clients render what it sends:
+
+- A person's text is a `user_message`.
+- A peer message is an `agent_message` tool call whose `agentMessage` carries sender and text. The
+  wire has no sender on `user_message`, so clients present it as a "Sent by" bubble.
+- Lifecycle notifications (`agent_finished`, `agent_errored`, `agent_needs_permission`,
+  `agent_closed`, `agent_still_working`), schedule fires (`heartbeat`), and change-request updates
+  are plain tool calls. `plain_text` detail carries the sender in `label`, the body in `text`, and
+  the icon. Clients render the heading from the tool name, so no notification event reaches them.
+
+`isTimelineTurnTrigger` (`packages/protocol/src/timeline-turn.ts`) lists the delivered tool names that
+start a turn. Add a name there when the daemon projects a new delivery. Rows that older daemons stored
+with notification `agentMessage` metadata are rewritten to the plain call at presentation
+(`COMPAT(agentNotificationMetadata)`). Stream reduction and disk-cache serialization preserve the
+payload without rendering it.
 
 The compatibility boundary for older daemons is snapshot normalization: running/idle status becomes an
 anonymous active turn or idle state once, and downstream code consumes the same activity shape. The app

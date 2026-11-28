@@ -4930,13 +4930,15 @@ describe("send_agent_prompt MCP tool", () => {
 
       const pending = invokeToolWithParsedInput(tool, {
         agentId: child.id,
-        prompt: "Follow up",
+        prompt: "/review the diff",
       });
       await vi.waitFor(() => expect(childSession.prompts).toHaveLength(1));
+      // The provider reads the sender's command at character 0; the marker trails it.
+      expect(String(childSession.prompts[0])).toMatch(/^\/review the diff\n\n<paseo-message /);
       expect(parseAgentMessage(childSession.prompts[0])).toEqual({
         id: expect.any(String),
         source: { kind: "agent-message", agentId: parent.id },
-        text: "Follow up",
+        text: "/review the diff",
       });
       acknowledgeTurnStart();
       const response = await pending;
@@ -5467,7 +5469,7 @@ describe("finish notifications for a child that ends its turn while still workin
       );
       expect(parentPrompts()[0]).toContain("WAITING for the build");
       expect(parseAgentMessage(parentPrompts()[0]!)).toMatchObject({
-        source: { kind: "agent-notification", agentId: child.id, event: "message" },
+        source: { kind: "agent-notification", agentId: child.id, event: "still-working" },
       });
 
       // Claude publishes the empty roster before the turn its task notification starts.

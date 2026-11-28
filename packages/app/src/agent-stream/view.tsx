@@ -827,7 +827,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               cwd={context.cwd}
               serverId={resolvedServerId}
               metadata={data.metadata}
-              agentMessage={data.agentMessage}
               isLastInSequence={isLastInSequence}
               onOpenFilePath={handleToolCallOpenFile}
               standalone={options.standalone}

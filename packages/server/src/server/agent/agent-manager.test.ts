@@ -14878,24 +14878,18 @@ test.each(["live", "history", "accepted"] as const)(
         manager
           .getTimeline(agent.id)
           .filter((row) => row.type === "tool_call")
-          .map((row) => ({ callId: row.callId, agentMessage: row.agentMessage })),
+          .map((row) => ({ callId: row.callId, name: row.name, agentMessage: row.agentMessage })),
       ).toEqual([
         {
           callId: "paseo-agent-message:report",
+          name: "agent_message",
           agentMessage: {
             event: "message",
             sender: { id: "worker", serverId: "remote-host" },
             text: "Result <ready>",
           },
         },
-        {
-          callId: "paseo-agent-message:finish",
-          agentMessage: {
-            event: "finished",
-            sender: { id: "worker", serverId: "remote-host" },
-            text: "Worker finished",
-          },
-        },
+        { callId: "paseo-agent-message:finish", name: "agent_finished", agentMessage: undefined },
       ]);
       expect(manager.getTimeline(agent.id).filter((row) => row.type === "user_message")).toEqual(
         [],
