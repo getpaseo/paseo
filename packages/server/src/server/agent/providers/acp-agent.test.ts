@@ -1346,6 +1346,54 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
+  test("applies the new model's thought-level selector after switching models", async () => {
+    const session = createSession();
+    const availableModels = [
+      { modelId: "grok-4.7", name: "Grok 4.7" },
+      { modelId: "claude-opus-5-5", name: "Opus 5.5" },
+    ];
+    const modelIds = availableModels.map((model) => model.modelId);
+    const opusModel = selectConfigOption("model", modelIds, "claude-opus-5-5");
+    const opusEffort = {
+      ...selectConfigOption("thought_level", ["medium", "xhigh"]),
+      id: "effort",
+    };
+    const setSessionConfigOption = vi
+      .fn()
+      .mockResolvedValueOnce({ configOptions: [opusModel, opusEffort] })
+      .mockResolvedValueOnce({
+        configOptions: [opusModel, { ...opusEffort, currentValue: "xhigh" }],
+      });
+    const { unstableSetSessionModel } = prepareConfiguredOverrideSession(session, {
+      availableModels,
+      currentModel: "grok-4.7",
+      configOptions: [
+        selectConfigOption("model", modelIds),
+        {
+          ...selectConfigOption("thought_level", ["high", "xhigh"], "xhigh"),
+          id: "reasoning_effort",
+        },
+      ],
+      connection: { setSessionConfigOption },
+    });
+
+    await session.setModel("claude-opus-5-5");
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      model: "claude-opus-5-5",
+      thinkingOptionId: "medium",
+    });
+    await session.setThinkingOption("xhigh");
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      model: "claude-opus-5-5",
+      thinkingOptionId: "xhigh",
+    });
+    expect(unstableSetSessionModel).not.toHaveBeenCalled();
+    expect(setSessionConfigOption.mock.calls).toEqual([
+      [{ sessionId: "session-1", configId: "model-option", value: "claude-opus-5-5" }],
+      [{ sessionId: "session-1", configId: "effort", value: "xhigh" }],
+    ]);
+  });
+
   test("uses canonical thinking option returned by setSessionConfigOption response", async () => {
     const session = createSession();
     const internals = asInternals<ACPModelSelectionInternals>(session);

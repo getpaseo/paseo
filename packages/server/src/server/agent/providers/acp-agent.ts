@@ -2664,7 +2664,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
+    // The config selector returns the new model's options for subsequent writes.
     if (
+      !selection.configChoice &&
       selection.availableModel &&
       typeof this.connection.unstable_setSessionModel === "function"
     ) {
@@ -2710,6 +2712,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         value: modelId,
       }),
     );
+    const previousThinkingOptionId = this.thinkingOptionId;
     this.currentModel = this.applyConfigOptionResponse({
       response,
       configId: modelOption.id,
@@ -2717,12 +2720,22 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       requestedValue: modelId,
       label: "model",
     });
+    this.thinkingOptionId =
+      deriveCurrentConfigValue(this.configOptions, "thought_level") ??
+      (this.thinkingOptionWriter ? previousThinkingOptionId : null);
     this.reportFeatureChanges(before);
     this.pushEvent({
       type: "model_changed",
       provider: this.provider,
       runtimeInfo: this.runtimeInfo(),
     });
+    if (this.thinkingOptionId !== previousThinkingOptionId) {
+      this.pushEvent({
+        type: "thinking_option_changed",
+        provider: this.provider,
+        thinkingOptionId: this.thinkingOptionId,
+      });
+    }
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
