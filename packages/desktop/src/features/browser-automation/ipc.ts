@@ -16,7 +16,11 @@ import {
   promptShimRestoreScript,
 } from "./dialog-handling.js";
 import { BrowserTabClosedError, executeAutomationCommand, hasPaintedPixels } from "./service.js";
-import { guardHostPointerFocus, type PointerFocusGuardResult } from "./focus-guard.js";
+import {
+  guardHostPointerFocus,
+  type FocusGuardHostWebContents,
+  type PointerFocusGuardResult,
+} from "./focus-guard.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import {
   listRegisteredPaseoBrowserIds,
@@ -36,21 +40,18 @@ interface IpcHandlerRegistry {
   handle(channel: string, listener: (event: unknown, ...args: unknown[]) => unknown): void;
 }
 
-interface HostWebContents {
+interface SnapshotHostWebContents {
   readonly id: number;
-  isDestroyed?(): boolean;
-  send?(channel: string, payload: unknown): void;
   once(event: "destroyed", listener: () => void): void;
-  removeListener?(event: "destroyed", listener: () => void): void;
 }
 
 export class HostSnapshotEngineRegistry {
   private readonly entries = new Map<
     number,
-    { hostContents: HostWebContents; snapshotEngine: BrowserSnapshotEngine }
+    { hostContents: SnapshotHostWebContents; snapshotEngine: BrowserSnapshotEngine }
   >();
 
-  public get(hostContents: HostWebContents): BrowserSnapshotEngine {
+  public get(hostContents: SnapshotHostWebContents): BrowserSnapshotEngine {
     const existing = this.entries.get(hostContents.id);
     if (existing) {
       return existing.snapshotEngine;
@@ -445,17 +446,7 @@ function normalizeConsoleMessage(input: {
   };
 }
 
-function canGuardHostFocus(
-  hostContents: HostWebContents,
-): hostContents is Required<HostWebContents> {
-  return (
-    typeof hostContents.isDestroyed === "function" &&
-    typeof hostContents.send === "function" &&
-    typeof hostContents.removeListener === "function"
-  );
-}
-
-function createRegistry(hostContents: HostWebContents): BrowserRegistry {
+function createRegistry(hostContents: FocusGuardHostWebContents): BrowserRegistry {
   const hostWebContentsId = hostContents.id;
   return {
     listRegisteredBrowserIds: listRegisteredPaseoBrowserIds,
@@ -465,18 +456,13 @@ function createRegistry(hostContents: HostWebContents): BrowserRegistry {
       if (!contents) {
         return null;
       }
-      return adaptWebContents(
-        contents,
-        canGuardHostFocus(hostContents)
-          ? {
-              guardPointerFocus: () =>
-                guardHostPointerFocus({
-                  hostContents,
-                  browserId,
-                }),
-            }
-          : undefined,
-      );
+      return adaptWebContents(contents, {
+        guardPointerFocus: () =>
+          guardHostPointerFocus({
+            hostContents,
+            browserId,
+          }),
+      });
     },
     getBrowserWorkspaceId: getPaseoBrowserWorkspaceId,
     getWorkspaceActiveBrowserId(workspaceId: string): string | null {
@@ -489,7 +475,7 @@ export function registerBrowserAutomationIpc(options?: { ipc?: IpcHandlerRegistr
   const ipc = options?.ipc ?? ipcMain;
 
   ipc.handle("paseo:browser:execute-automation-command", async (event, rawRequest: unknown) => {
-    const hostContents = (event as { sender?: HostWebContents }).sender;
+    const hostContents = (event as { sender?: FocusGuardHostWebContents }).sender;
     const hostWebContentsId = hostContents?.id;
     if (!hostContents || typeof hostWebContentsId !== "number") {
       return {

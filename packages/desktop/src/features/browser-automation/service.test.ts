@@ -95,6 +95,7 @@ class FakeTab implements TabContents {
   public canNavigateBack = true;
   public canNavigateForward = false;
   public keypressTargetEditable = false;
+  public focusAcceptsTarget = true;
   public focusGuardMode: "none" | "ready" | "composing" | "unavailable" = "none";
   public focusGuardEvents: string[] = [];
   public failFocusEmulation = false;
@@ -154,7 +155,7 @@ class FakeTab implements TabContents {
       return { x: 640, y: 400 };
     }
     if (code.includes("element.focus({ preventScroll: true })")) {
-      return { focused: true, editable: this.keypressTargetEditable };
+      return { focused: this.focusAcceptsTarget, editable: this.keypressTargetEditable };
     }
     if (code.includes("__PASEO_BROWSER_EVALUATE__")) {
       if (this.evaluateScriptThrows) {
@@ -2380,12 +2381,17 @@ describe("executeAutomationCommand", () => {
 
     // Verify <input> caret placement at end.
     const inputCalls: unknown[] = [];
+    const inputDoc: { activeElement: unknown } = { activeElement: null };
     const inputElement = {
       isConnected: true,
       tagName: "INPUT",
       value: "hello",
+      ownerDocument: inputDoc,
       getAttribute: (name: string) => (name === "type" ? "text" : null),
-      focus: (opts: unknown) => inputCalls.push(["focus", opts]),
+      focus: (opts: unknown) => {
+        inputCalls.push(["focus", opts]);
+        inputDoc.activeElement = inputElement;
+      },
       setSelectionRange: (start: number, end: number) => inputCalls.push(["range", start, end]),
     };
     const inputResult = runInContext(
@@ -2414,15 +2420,24 @@ describe("executeAutomationCommand", () => {
       removeAllRanges: () => rangeCalls.push(["removeAllRanges"]),
       addRange: (r: unknown) => rangeCalls.push(["addRange", r]),
     };
+    const editableDoc: {
+      activeElement: unknown;
+      createRange: () => typeof range;
+      defaultView: { getSelection: () => typeof selection };
+    } = {
+      activeElement: null,
+      createRange: () => range,
+      defaultView: { getSelection: () => selection },
+    };
     const editableDiv = {
       isConnected: true,
       tagName: "DIV",
       isContentEditable: true,
-      focus: (opts: unknown) => rangeCalls.push(["focus", opts]),
-      ownerDocument: {
-        createRange: () => range,
-        defaultView: { getSelection: () => selection },
+      focus: (opts: unknown) => {
+        rangeCalls.push(["focus", opts]);
+        editableDoc.activeElement = editableDiv;
       },
+      ownerDocument: editableDoc,
     };
     const editableResult = runInContext(
       focusScript!,
@@ -2442,5 +2457,49 @@ describe("executeAutomationCommand", () => {
       ["removeAllRanges"],
       ["addRange", range],
     ]);
+
+    // Verify non-focusable element reports focused: false rather than silently succeeding.
+    const unfocusableDoc = { activeElement: null };
+    const unfocusable = {
+      isConnected: true,
+      tagName: "DIV",
+      focus: () => {},
+      ownerDocument: unfocusableDoc,
+    };
+    const unfocusableResult = runInContext(
+      focusScript!,
+      createContext({
+        window: {
+          __PASEO_BROWSER_AUTOMATION__: {
+            resolve: () => ({ ok: true, element: unfocusable }),
+          },
+        },
+      }),
+    );
+    expect(unfocusableResult).toEqual({ focused: false });
+  });
+
+  test("type fails clearly without inserting text when the ref element refuses DOM focus", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    browser.tab.focusAcceptsTarget = false;
+    requireSnapshotRefs(await browser.snapshot());
+
+    const result = await browser.execute({
+      command: "type",
+      args: { browserId: BROWSER_A, ref: "@e1", text: "Ada" },
+    });
+
+    expect(result).toEqual({
+      requestId: "req-type",
+      ok: false,
+      error: {
+        code: "browser_timeout",
+        message:
+          "Browser element @e1 did not accept focus for typing. Click it first and try again.",
+        retryable: true,
+      },
+    });
+    expect(browser.tab.insertedText).toEqual([]);
   });
 });

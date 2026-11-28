@@ -1151,9 +1151,17 @@ async function executeType(
       if (!actionable.ok) {
         return actionabilityFailure(requestId, ref, actionable);
       }
-      const focused = await focusElementForKeyboardInput(target.contents, elementExpression);
-      if (!focused) {
+      const focusOutcome = await focusElementForKeyboardInput(target.contents, elementExpression);
+      if (focusOutcome === "stale_ref") {
         return staleRefFailure(requestId, ref);
+      }
+      if (focusOutcome === "not_focused") {
+        return fail(
+          requestId,
+          "browser_timeout",
+          `Browser element ${ref} did not accept focus for typing. Click it first and try again.`,
+          true,
+        );
       }
     }
     await target.contents.insertText(text);
@@ -1200,8 +1208,8 @@ async function executeKeypress(
       if (!actionable.ok) {
         return actionabilityFailure(requestId, ref, actionable);
       }
-      const focused = await focusElementForKeyboardInput(target.contents, elementExpression);
-      if (!focused) {
+      const focusOutcome = await focusElementForKeyboardInput(target.contents, elementExpression);
+      if (focusOutcome === "stale_ref") {
         return staleRefFailure(requestId, ref);
       }
     }
@@ -1685,12 +1693,22 @@ function buildEvaluateScript(
 async function focusElementForKeyboardInput(
   contents: TabContents,
   elementExpression: string,
-): Promise<boolean> {
+): Promise<"focused" | "not_focused" | "stale_ref"> {
   const result = await contents.executeJavaScript(String.raw`(() => {
     const element = ${elementExpression};
     if (!element || !element.isConnected) return { staleRef: true };
     if (typeof element.focus === 'function') {
       element.focus({ preventScroll: true });
+    }
+    const root = typeof element.getRootNode === 'function' ? element.getRootNode() : element.ownerDocument;
+    const active = root && 'activeElement' in root ? root.activeElement : element.ownerDocument?.activeElement;
+    const focused = Boolean(
+      active &&
+        (active === element ||
+          (typeof element.contains === 'function' && element.contains(active))),
+    );
+    if (!focused) {
+      return { focused: false };
     }
     const tagName = element.tagName ? element.tagName.toLowerCase() : '';
     const inputType = tagName === 'input'
@@ -1720,10 +1738,13 @@ async function focusElementForKeyboardInput(
     return { focused: true };
   })()`);
   if (!result || typeof result !== "object") {
-    return false;
+    return "stale_ref";
   }
   const record = result as Record<string, unknown>;
-  return record.staleRef !== true && record.focused === true;
+  if (record.staleRef === true) {
+    return "stale_ref";
+  }
+  return record.focused === true ? "focused" : "not_focused";
 }
 
 function readString(value: unknown): string | null {
