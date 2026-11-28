@@ -1354,7 +1354,7 @@ export const ko: TranslationResources = {
     sections: {
       sessions: "기록",
       search: "검색",
-      schedules: "일정",
+      schedules: "예약",
     },
     worktreeSetup: {
       title: "워크트리 스크립트 설정",
@@ -3110,7 +3110,7 @@ export const ko: TranslationResources = {
         unavailable: "오케스트레이션을 관리하려면 이 호스트에 연결하세요",
         enableTools: {
           title: "Paseo 도구 활성화",
-          hint: "에이전트가 워크트리, 에이전트, 일정을 관리할 수 있습니다",
+          hint: "에이전트가 워크트리, 에이전트, 예약 작업을 관리할 수 있습니다",
           accessibilityLabel: "Paseo 도구 주입",
           updateFailed: "Paseo 도구를 업데이트할 수 없습니다.",
         },
