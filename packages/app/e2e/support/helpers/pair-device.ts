@@ -635,6 +635,11 @@ export async function expectPairingDisconnected(page: Page): Promise<void> {
 }
 
 export async function switchPairDeviceToHost(page: Page, serverId: string): Promise<void> {
+  const sheet = page.getByTestId("devices-pair-sheet");
+  if (await sheet.isVisible()) {
+    await sheet.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(sheet).toHaveCount(0);
+  }
   await selectSettingsHost(page, serverId);
   await expectAppRoute(page, buildSettingsHostSectionRoute(serverId, "devices"));
   await openPairDeviceWaysSheet(page);

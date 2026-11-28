@@ -29,6 +29,8 @@ export function PairDeviceHeaderAction({ serverId }: { serverId: string }) {
   }, []);
   const handleClose = useCallback(() => {
     setVisible(false);
+  }, []);
+  const handleDismiss = useCallback(() => {
     setStep("ways");
   }, []);
   const handleOpenRelay = useCallback(() => setStep("relay"), []);
@@ -64,6 +66,7 @@ export function PairDeviceHeaderAction({ serverId }: { serverId: string }) {
         header={header}
         visible={visible}
         onClose={handleClose}
+        onDismiss={handleDismiss}
         snapPoints={SNAP_POINTS}
         desktopMaxWidth={480}
         desktopHeight={520}
