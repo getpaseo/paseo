@@ -158,6 +158,7 @@ import {
   assertPluginTimelineDataSize,
   assertPluginTimelineKind,
 } from "./agent/agent-timeline-content.js";
+import { DEFAULT_TIMELINE_FETCH_LIMIT } from "./agent/agent-timeline-store.js";
 import { parsePluginClientId } from "./plugins/plugin-session-identity.js";
 import { buildAgentForkContextAttachment } from "./agent/activity-curator.js";
 import { buildAgentPrompt, resolveAgentPrompt } from "./agent/prompt-attachments.js";
@@ -8985,7 +8986,11 @@ export class Session {
       const fetchedControlTimeline = this.agentManager.fetchTimeline(msg.agentId, {
         direction,
         cursor,
-        limit: msg.limit,
+        // A missing limit means the store default; restore that default at
+        // the RPC boundary so the contract does not depend on a single layer
+        // (the handler lost its pageLimit in a25f4f506). Explicit 0 stays
+        // unlimited for released CLI clients.
+        limit: msg.limit ?? DEFAULT_TIMELINE_FETCH_LIMIT,
         wholeTurns: msg.wholeTurns,
       });
       const selectedTimeline = {

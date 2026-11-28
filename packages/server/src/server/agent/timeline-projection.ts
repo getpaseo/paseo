@@ -340,6 +340,19 @@ interface ProjectedTimelinePageOptions {
   limit?: number;
 }
 
+/**
+ * One timeline fetch is emitted as a single WebSocket message, so a page must
+ * stay far below the smallest client frame limit (1 MiB for CFNetwork). The
+ * requested limit bounds the window, but whole-turn expansion can pull in an
+ * entire turn: a turn can span an agent's whole history (observed: 1,957
+ * entries serializing to ~1.1 MB, past the limit). Whole-turn pages are
+ * therefore capped at this many entries; the store's default fetch limit is
+ * the same size. The non-whole-turn path still honors explicit limits, and
+ * hasOlder stays true so the client can page back with direction=before and
+ * the returned startCursor.
+ */
+export const MAX_TIMELINE_PAGE_ENTRIES = 200;
+
 /** Owns projected state; source events are consumed, never retained. */
 export class TimelineProjection {
   private readonly rows: ProjectedTimelineRow[] = [];
@@ -468,7 +481,12 @@ export class TimelineProjection {
     const limit = Math.max(0, Math.floor(input.limit ?? 0));
     const requestedStart = limit === 0 ? 0 : Math.max(0, this.rows.length - limit);
     const coveredStart = this.spans[this.spanIndex(requestedStart)].start;
-    const start = input.wholeTurns ? this.wholeTurnWindowStart(coveredStart) : coveredStart;
+    const start = input.wholeTurns
+      ? Math.max(
+          this.wholeTurnWindowStart(coveredStart),
+          this.rows.length - MAX_TIMELINE_PAGE_ENTRIES,
+        )
+      : coveredStart;
     return {
       entries: this.rows.slice(start),
       startSeq: this.rows[start].seqStart,
@@ -537,11 +555,21 @@ export class TimelineProjection {
       }
       const limit = Math.max(0, Math.floor(input.limit ?? 0));
       const requestedStart = limit === 0 ? 0 : Math.max(0, low - limit);
-      const start = input.wholeTurns ? this.wholeTurnWindowStart(requestedStart) : requestedStart;
+      const start = input.wholeTurns
+        ? Math.max(this.wholeTurnWindowStart(requestedStart), low - MAX_TIMELINE_PAGE_ENTRIES)
+        : requestedStart;
       // Choose the window before extending the right edge, so a prompt jump
       // cannot lose its target when the next turn is arbitrarily large.
+      // The extension is also bounded by the page maximum: the turn past the
+      // cursor can be arbitrarily large, and completing it must not push the
+      // page past the cap. The jump target sits at the window's right edge,
+      // so it stays on the page.
       if (input.wholeTurns) {
-        while (low < this.rows.length && continuesProjectedTurn(this.rows[low - 1], this.rows[low]))
+        while (
+          low < this.rows.length &&
+          low - start < MAX_TIMELINE_PAGE_ENTRIES &&
+          continuesProjectedTurn(this.rows[low - 1], this.rows[low])
+        )
           low++;
       }
       let selectedEnd = endSeq;

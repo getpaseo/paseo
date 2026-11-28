@@ -704,6 +704,76 @@ describe("selectProjectedTimelinePage", () => {
     ).toEqual([25, 26]);
   });
 
+  // A single turn can span an agent's whole history (plain tool calls without
+  // turnIds keep continuing the same turn). Whole-turn expansion must not
+  // return it all in one page: one fetch is one WebSocket message, and the
+  // 1,957-item turn observed in production serializes to ~1.1 MB, past the
+  // 1 MiB frame limit of CFNetwork clients.
+  function giantTurnRows(count: number): AgentTimelineRow[] {
+    return Array.from({ length: count }, (_, index) => ({
+      seq: index + 1,
+      timestamp: new Date(1000 + index).toISOString(),
+      item: {
+        type: "tool_call",
+        callId: `tool-${index}`,
+        name: "shell",
+        status: "completed",
+        error: null,
+        detail: { type: "unknown", input: null, output: { stdout: "x".repeat(480) } },
+      },
+    }));
+  }
+
+  test("whole-turn tail caps a giant single turn at the page maximum", () => {
+    const rows = giantTurnRows(1957);
+    const page = selectProjectedTimelinePage({
+      rows,
+      direction: "tail",
+      limit: 40,
+      wholeTurns: true,
+    });
+    expect(page.entries).toHaveLength(200);
+    expect(page).toMatchObject({ startSeq: 1758, endSeq: 1957, hasOlder: true, hasNewer: false });
+    expect(JSON.stringify(page.entries).length).toBeLessThan(1024 * 1024);
+  });
+
+  test("whole-turn tail without a limit caps at the page maximum", () => {
+    const rows = giantTurnRows(1957);
+    const page = selectProjectedTimelinePage({ rows, direction: "tail", wholeTurns: true });
+    expect(page.entries).toHaveLength(200);
+    expect(page).toMatchObject({ startSeq: 1758, endSeq: 1957, hasOlder: true, hasNewer: false });
+  });
+
+  test("whole-turn before pages stay capped and page further back", () => {
+    const rows = giantTurnRows(1957);
+    const tail = selectProjectedTimelinePage({
+      rows,
+      direction: "tail",
+      limit: 40,
+      wholeTurns: true,
+    });
+    expect(tail.entries).toHaveLength(200);
+    expect(tail.startSeq).toBe(1758);
+    const older = selectProjectedTimelinePage({
+      rows,
+      direction: "before",
+      cursorSeq: 1758,
+      limit: 40,
+      wholeTurns: true,
+    });
+    expect(older.entries).toHaveLength(200);
+    expect(older).toMatchObject({ startSeq: 1558, endSeq: 1757, hasOlder: true, hasNewer: true });
+    const oldest = selectProjectedTimelinePage({
+      rows,
+      direction: "before",
+      cursorSeq: 1558,
+      limit: 40,
+      wholeTurns: true,
+    });
+    expect(oldest.entries).toHaveLength(200);
+    expect(oldest).toMatchObject({ startSeq: 1358, endSeq: 1557, hasOlder: true, hasNewer: true });
+  });
+
   test("whole-turn tails close interleaved source coverage without changing forward catch-up", () => {
     const rows: AgentTimelineRow[] = [
       {
