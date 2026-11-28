@@ -4,9 +4,11 @@ import path from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import { setImmediate as waitForImmediate } from "node:timers/promises";
 import pino from "pino";
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, onTestFinished, test, vi } from "vitest";
 
+import { PiRpcAgentClient } from "./agent.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import type { PiRuntimeLaunch } from "./runtime.js";
 
@@ -493,6 +495,97 @@ describe("PiCliRuntime", () => {
     const command = await steerCommand;
     expect(command).toMatchObject({ type: "steer", message: "focus on error handling" });
     expect(command.images).toBeUndefined();
+  });
+
+  test.each([
+    { disposition: "started", agentInvoked: true },
+    { disposition: "queued", agentInvoked: true },
+  ])(
+    "maps a $disposition prompt disposition to agentInvoked $agentInvoked",
+    async ({ disposition, agentInvoked }) => {
+      const child = createPiChild();
+      replyToCommands(child, (command) => (command.type === "prompt" ? { disposition } : {}));
+      const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+      await expect(session.prompt("summarize README.md")).resolves.toMatchObject({ agentInvoked });
+    },
+  );
+
+  test("preserves an explicit agentInvoked result in a prompt response", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({ disposition: "started", agentInvoked: false }));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await expect(session.prompt("hello")).resolves.toEqual({
+      requestId: expect.any(String),
+      agentInvoked: false,
+    });
+  });
+
+  test("completes when an input extension handles a prompt without a model run", async () => {
+    const child = createPiChild();
+    replyToCommands(child, (command) => {
+      if (command.type === "prompt") {
+        const notification = {
+          type: "extension_ui_request",
+          id: "handled",
+          method: "notify",
+          message: "Handled by extension",
+        };
+        child.stdout.write(`${JSON.stringify(notification)}\n`);
+        return { disposition: "handled" };
+      }
+      return { sessionId: "pi-session-1", isStreaming: false };
+    });
+    const client = new PiRpcAgentClient({
+      logger: pino({ level: "silent" }),
+      runtime: createRuntime(child),
+    });
+    const session = await client.createSession({ provider: "pi", cwd: "/workspace/project" });
+    onTestFinished(() => session.close());
+
+    await expect(session.run("hello")).resolves.toMatchObject({
+      timeline: expect.arrayContaining([
+        expect.objectContaining({ type: "notification", message: "Handled by extension" }),
+      ]),
+    });
+  });
+
+  test("waits for the reply when a handled slash command starts a model run", async () => {
+    const child = createPiChild();
+    let isStreaming = false;
+    replyToCommands(child, (command) => {
+      if (command.type === "prompt") {
+        isStreaming = true;
+        return { disposition: "handled" };
+      }
+      return { sessionId: "pi-session-1", isStreaming };
+    });
+    const client = new PiRpcAgentClient({
+      logger: pino({ level: "silent" }),
+      runtime: createRuntime(child),
+    });
+    const session = await client.createSession({ provider: "pi", cwd: "/workspace/project" });
+    onTestFinished(() => session.close());
+
+    const reply = session.run("/ask hello");
+    // Pi acknowledges the command while its model run is starting, before agent_start.
+    await waitForImmediate();
+    await waitForImmediate();
+    child.stdout.write(`${JSON.stringify({ type: "agent_start" })}\n`);
+    const message = { role: "assistant", content: [{ type: "text", text: "Hello" }] };
+    const update = {
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_delta", delta: "Hello" },
+    };
+    child.stdout.write(`${JSON.stringify(update)}\n`);
+    child.stdout.write(
+      `${JSON.stringify({ type: "agent_end", messages: [message], willRetry: false })}\n`,
+    );
+    child.stdout.write(`${JSON.stringify({ type: "agent_settled" })}\n`);
+
+    await expect(reply).resolves.toMatchObject({ finalText: "Hello" });
   });
 
   test("sends the clear_queue RPC frame", async () => {

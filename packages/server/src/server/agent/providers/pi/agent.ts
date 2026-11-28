@@ -1336,7 +1336,6 @@ export class PiRpcAgentSession implements AgentSession {
     if (this.closed) throw new Error("Pi session is closed");
     if (this.activeTurnId !== turnId) return { turnId };
     this.activeNoTurnPromptText = payload.text;
-    const shouldProbeForNoTurnPrompt = this.parseSlashCommandInput(payload.text) !== null;
 
     void (async () => {
       try {
@@ -1362,7 +1361,11 @@ export class PiRpcAgentSession implements AgentSession {
           await this.completeNoTurnPrompt(turnId);
           return;
         }
-        if (agentInvoked === undefined && shouldProbeForNoTurnPrompt) {
+        // Pi can acknowledge a prompt as handled even when the extension starts a run.
+        if (
+          agentInvoked === undefined &&
+          (ack.handledByExtension || this.parseSlashCommandInput(payload.text) !== null)
+        ) {
           await this.completePromptIfHandledWithoutTurn(turnId);
         }
       } catch (error) {

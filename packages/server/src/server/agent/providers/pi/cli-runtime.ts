@@ -137,9 +137,15 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     });
     const data = await promise;
     if (typeof data === "object" && data !== null && !Array.isArray(data)) {
-      const { agentInvoked } = data as Record<string, unknown>;
+      const { agentInvoked, disposition } = data as Record<string, unknown>;
       if (typeof agentInvoked === "boolean") {
         return { requestId, agentInvoked };
+      }
+      if (disposition === "handled") {
+        return { requestId, handledByExtension: true };
+      }
+      if (disposition === "started" || disposition === "queued") {
+        return { requestId, agentInvoked: true };
       }
     }
     return { requestId };

@@ -6,12 +6,9 @@ export interface PiImageContent {
   mimeType: string;
 }
 export interface PiPromptAck {
-  agentInvoked?: boolean;
-}
-
-export interface PiPromptAck {
   requestId?: string;
   agentInvoked?: boolean;
+  handledByExtension?: true;
 }
 
 export interface PiTextContent {
