@@ -396,6 +396,94 @@ test("keeps a durable baseline across restart and drops undelivered digests", as
   }
 });
 
+test("wakes the owner once for an edited summary and preserves revisions across restart", async () => {
+  vi.useFakeTimers();
+  const home = await createTestHome();
+  let h = createHarness(home);
+  const comment = {
+    id: "summary",
+    kind: "comment" as const,
+    url: `${url}#issuecomment-1`,
+    updatedAt: "2026-11-27T10:00:00Z",
+  };
+  try {
+    await h.watches.start();
+    await h.watches.subscribe("owner", url);
+    await h.observations.get(url)!.snapshot({ ...initial, activity: [comment] });
+    await vi.advanceTimersByTimeAsync(32_000);
+    h.turns.length = 0;
+    h.busy.add("owner");
+    const edited = { ...comment, updatedAt: "2026-11-27T11:00:00Z" };
+    await h.observations.get(url)!.snapshot({ ...initial, activity: [edited] });
+    await h.observations.get(url)!.snapshot({ ...initial, activity: [edited] });
+    await vi.advanceTimersByTimeAsync(32_000);
+    expect(h.turns).toEqual([]);
+    h.idle("owner");
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(h.turns).toHaveLength(1);
+    expect(h.turns[0]).toMatchObject({ recipientId: "owner" });
+    expect(h.turns[0]!.prompt).toContain(`Updated comment: ${comment.url}`);
+    expect(h.turns[0]!.prompt.match(/Updated comment:/g)).toHaveLength(1);
+    await h.close();
+
+    h = createHarness(home);
+    await h.watches.start();
+    await h.observations.get(url)!.snapshot({ ...initial, activity: [edited] });
+    await h.observations.get(url)!.snapshot({ ...initial, activity: [comment] });
+    await h.observations.get(url)!.snapshot({ ...initial, activity: [edited] });
+    await vi.advanceTimersByTimeAsync(32_000);
+    expect(h.turns).toEqual([]);
+    await h.observations.get(url)!.snapshot({
+      ...initial,
+      activity: [{ ...edited, updatedAt: "2026-11-27T12:00:00Z" }],
+    });
+    await vi.advanceTimersByTimeAsync(32_000);
+    expect(h.turns).toHaveLength(1);
+    expect(h.turns[0]!.prompt).toContain(`Updated comment: ${comment.url}`);
+  } finally {
+    await h.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("reconciles legacy ID-only baselines once without replaying every old comment", async () => {
+  vi.useFakeTimers();
+  const home = await createTestHome();
+  const { activity: _activity, ...snapshot } = initial;
+  await writeFile(
+    join(home, "change-request-watches.json"),
+    JSON.stringify([
+      {
+        url,
+        snapshot,
+        seenActivity: ["first", "second"],
+        watchers: [{ agentId: "owner" }],
+      },
+    ]),
+  );
+  const h = createHarness(home);
+  const activity = ["first", "second"].map((id) => ({
+    id,
+    kind: "comment" as const,
+    url: `${url}#issuecomment-${id}`,
+    updatedAt: "2026-11-27T10:00:00Z",
+  }));
+  try {
+    await h.watches.start();
+    await h.observations.get(url)!.snapshot({ ...initial, activity });
+    await vi.advanceTimersByTimeAsync(32_000);
+    expect(h.turns).toHaveLength(1);
+    expect(h.turns[0]!.prompt).toContain("recheck current status");
+    expect(h.turns[0]!.prompt).not.toContain("#issuecomment-");
+    await h.observations.get(url)!.snapshot({ ...initial, activity });
+    await vi.advanceTimersByTimeAsync(32_000);
+    expect(h.turns).toHaveLength(1);
+  } finally {
+    await h.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("recovers active watches even when pruning archived watchers cannot be written", async () => {
   const home = await createTestHome();
   const file = join(home, "change-request-watches.json");

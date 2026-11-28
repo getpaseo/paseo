@@ -19,6 +19,7 @@ const changeRequestSnapshotSchema = changeRequestStatusSchema.extend({
       id: z.string(),
       kind: z.enum(["comment", "inline comment", "review", "approval"]),
       url: z.string(),
+      updatedAt: z.string().optional(),
       message: z.string().optional(),
     }),
   ),
@@ -38,6 +39,7 @@ export interface ChangeRequestSource {
       error(error: unknown): void;
       /** Activity the daemon has committed to its baseline. */
       knownActivity?(): ReadonlySet<string>;
+      knownActivityRevisions?(): Readonly<Record<string, string>> | undefined;
     },
   ): () => void;
 }

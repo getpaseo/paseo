@@ -23,6 +23,7 @@ const persistedWatchGroupSchema = z.object({
   url: z.url(),
   snapshot: changeRequestStatusSchema,
   seenActivity: z.array(z.string()),
+  activityUpdatedAt: z.record(z.string(), z.string()).optional(),
   watchers: z.array(z.object({ agentId: z.string(), startedAt: z.string().optional() })),
 });
 type PersistedWatchGroup = z.infer<typeof persistedWatchGroupSchema>;
@@ -61,6 +62,8 @@ function describeUpdate(group: WatchGroup, next: ChangeRequestSnapshot) {
     previous.checks.filter((check) => check.state === "failed").map((check) => check.id),
   );
   const seen = new Set(group.seenActivity);
+  const activityUpdatedAt = { ...group.activityUpdatedAt };
+  let reconciledLegacyActivity = false;
   const changes = next.checks
     .filter(
       (check) =>
@@ -77,12 +80,31 @@ function describeUpdate(group: WatchGroup, next: ChangeRequestSnapshot) {
     changes.push(`Checks passed on ${next.headSha}.`);
   }
   for (const activity of next.activity) {
-    if (seen.has(activity.id)) continue;
-    changes.push(activity.message ?? `New ${activity.kind}: ${activity.url}`);
+    const known = seen.has(activity.id);
+    const previousRevision = activityUpdatedAt[activity.id];
+    const revised =
+      activity.updatedAt !== undefined &&
+      (previousRevision === undefined || activity.updatedAt > previousRevision);
+    if (known && !revised) continue;
+    if (known && previousRevision === undefined) {
+      // An ID-only baseline cannot tell which edits happened before upgrade.
+      // Reconcile once per watch, rather than replaying every historical comment.
+      reconciledLegacyActivity = true;
+    } else {
+      changes.push(
+        activity.message ?? `${known ? "Updated" : "New"} ${activity.kind}: ${activity.url}`,
+      );
+    }
     seen.add(activity.id);
+    if (activity.updatedAt !== undefined) activityUpdatedAt[activity.id] = activity.updatedAt;
+  }
+  if (reconciledLegacyActivity) {
+    changes.push(
+      `Existing review activity reconciled after watcher upgrade; recheck current status: ${group.url}`,
+    );
   }
   if (next.state !== "open") changes.push(`Change request ${next.state}.`);
-  return { changes, seenActivity: [...seen] };
+  return { changes, seenActivity: [...seen], activityUpdatedAt };
 }
 
 export type ChangeRequestWatches = ReturnType<typeof createChangeRequestWatches>;
@@ -270,6 +292,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
     void ready.catch(() => undefined);
     const release = source.observe(url, {
       knownActivity: () => new Set(groups.get(url)?.seenActivity),
+      knownActivityRevisions: () => groups.get(url)?.activityUpdatedAt,
       snapshot: (snapshot) =>
         serialize(async () => {
           if (closed || observations.get(url) !== observation) return;
@@ -279,7 +302,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
             resolve(snapshot);
             return;
           }
-          const { changes, seenActivity } = describeUpdate(group, snapshot);
+          const { changes, seenActivity, activityUpdatedAt } = describeUpdate(group, snapshot);
           const { activity: _activity, ...status } = snapshot;
           if (!changes.length) {
             if (JSON.stringify(status) !== JSON.stringify(group.snapshot)) {
@@ -294,6 +317,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
             ...group,
             snapshot: status,
             seenActivity,
+            activityUpdatedAt,
             watchers: status.state === "open" ? group.watchers : [],
           });
           if (!closed) recordChanges(url, group.watchers, changes, observedAt);
@@ -395,6 +419,13 @@ export function createChangeRequestWatches(deps: Dependencies) {
             url,
             snapshot,
             seenActivity: group?.seenActivity ?? activity.map(({ id }) => id),
+            activityUpdatedAt:
+              group?.activityUpdatedAt ??
+              Object.fromEntries(
+                activity
+                  .filter((item) => item.updatedAt !== undefined)
+                  .map((item) => [item.id, item.updatedAt!]),
+              ),
             watchers: [
               ...(group?.watchers ?? []),
               { agentId, startedAt: new Date().toISOString() },
