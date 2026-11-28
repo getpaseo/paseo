@@ -14219,8 +14219,11 @@ test("commandMayHaveChangedExternalState matches remote-state commands", () => {
   // GitHub PR operations (remote, no local file changes)
   expect(commandMayHaveChangedExternalState("gh pr merge 123")).toBe(true);
   expect(commandMayHaveChangedExternalState("gh pr close 123")).toBe(true);
+  expect(commandMayHaveChangedExternalState("gh pr reopen 123")).toBe(true);
   expect(commandMayHaveChangedExternalState("gh pr create")).toBe(true);
   expect(commandMayHaveChangedExternalState("gh pr edit 123")).toBe(true);
+  expect(commandMayHaveChangedExternalState("gh pr ready 123")).toBe(true);
+  expect(commandMayHaveChangedExternalState("gh pr ready 123 --undo")).toBe(true);
   expect(commandMayHaveChangedExternalState('gh pr comment 123 -b "lgtm"')).toBe(true);
   expect(commandMayHaveChangedExternalState("gh pr review 123 -a")).toBe(true);
   // Git remote operations (local refs unchanged)

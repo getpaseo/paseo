@@ -6991,8 +6991,8 @@ export function commandMayHaveChangedExternalState(command: string): boolean {
   // watchers. Local git mutations (commit, checkout, merge, rebase, reset,
   // pull) are already caught by watchers on .git/HEAD and refs/heads/.
   return (
-    // GitHub PR operations (merge, close, create, edit, comment, review)
-    /\bgh\s+pr\s+(merge|close|create|edit|comment|review)\b/.test(normalized) ||
+    // GitHub PR operations (merge, close, reopen, create, edit, ready, comment, review)
+    /\bgh\s+pr\s+(merge|close|reopen|create|edit|ready|comment|review)\b/.test(normalized) ||
     // Pushes to remote — local refs unchanged, but remote state (PR checks,
     // mergeable status) may shift immediately after.
     /\bgit\s+push\b/.test(normalized) ||
