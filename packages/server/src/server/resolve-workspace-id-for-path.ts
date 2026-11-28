@@ -18,6 +18,20 @@ export function resolveWorkspaceIdForPath(
   cwd: string,
   workspaces: Iterable<PersistedWorkspaceRecord>,
 ): string | null {
+  return resolveWorkspaceRecordForPath(cwd, workspaces)?.workspaceId ?? null;
+}
+
+/**
+ * Record-returning variant of {@link resolveWorkspaceIdForPath}: resolves a raw
+ * filesystem path to the workspace record whose cwd is the exact or deepest
+ * enclosing directory. Callers that need the record (e.g. the shared project
+ * context's cwd → projectId lookup) use this instead of re-deriving the
+ * workspace id and looking it up again.
+ */
+export function resolveWorkspaceRecordForPath(
+  cwd: string,
+  workspaces: Iterable<PersistedWorkspaceRecord>,
+): PersistedWorkspaceRecord | null {
   const workspaceRecords = Array.from(workspaces);
   const resolvedCwd = resolve(cwd);
   const exactMatches = workspaceRecords.filter(
@@ -25,7 +39,7 @@ export function resolveWorkspaceIdForPath(
   );
   const exactMatch = exactMatches.find((workspace) => !workspace.archivedAt) ?? exactMatches[0];
   if (exactMatch) {
-    return exactMatch.workspaceId;
+    return exactMatch;
   }
 
   const userHome = resolve(homedir());
@@ -45,5 +59,5 @@ export function resolveWorkspaceIdForPath(
     }
   }
 
-  return bestMatch?.workspaceId ?? null;
+  return bestMatch;
 }
