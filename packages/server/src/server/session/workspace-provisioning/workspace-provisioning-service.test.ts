@@ -876,6 +876,39 @@ test("runInImportWorkspace leaves a reused workspace intact when import fails", 
   expect(await projectRegistry.get(workspace.projectId)).toEqual(project);
 });
 
+test("runInImportWorkspace keeps an archived workspace archived when an untargeted import fails", async () => {
+  const cwd = path.join(tmpDir, "failed-archived-import");
+  mkdirSync(cwd);
+  let unarchivedWorkspaceAgentsCount = 0;
+  const trackedProvisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {
+      unarchivedWorkspaceAgentsCount += 1;
+    },
+    workspaceRegistry,
+    projectRegistry,
+    workspaceGitService: gitService(),
+    isDirectory,
+    logger,
+  });
+  const workspace = await trackedProvisioning.createWorkspaceForDirectory(
+    cwd,
+    "Archived task title",
+  );
+  await workspaceRegistry.archive(workspace.workspaceId, ARCHIVED_AT);
+  const archivedWorkspace = await workspaceRegistry.get(workspace.workspaceId);
+  const project = await projectRegistry.get(workspace.projectId);
+
+  await expect(
+    trackedProvisioning.runInImportWorkspace({ cwd }, async () => {
+      throw new Error("thread already has an active writer");
+    }),
+  ).rejects.toThrow("thread already has an active writer");
+
+  expect(await workspaceRegistry.listAll()).toEqual([archivedWorkspace]);
+  expect(await projectRegistry.get(workspace.projectId)).toEqual(project);
+  expect(unarchivedWorkspaceAgentsCount).toBe(0);
+});
+
 test.each(["missing", "archived"] as const)(
   "runInImportWorkspace rejects a %s requested workspace before importing",
   async (state) => {
@@ -1069,6 +1102,7 @@ test("a failed import keeps an archived worktree's placement when its directory 
     worktreeRoot: worktreeCwd,
     mainRepoRoot,
     isPaseoOwnedWorktree: true,
+    archivedAt: ARCHIVED_AT,
   });
 });
 

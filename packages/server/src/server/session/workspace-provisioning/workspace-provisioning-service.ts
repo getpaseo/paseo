@@ -156,29 +156,43 @@ export function createWorkspaceProvisioningService(deps: {
       };
     }
 
-    const [projectsBeforeImport, workspacesBeforeImport] = await Promise.all([
-      projectRegistry.list(),
-      // Import rollback must distinguish restored records from newly allocated workspaces.
-      workspaceRegistry.listAll(),
-    ]);
-    const workspace = await findOrCreateWorkspaceForDirectory(input.cwd);
-    const createdWorkspace = workspacesBeforeImport.some(
-      (candidate) => candidate.workspaceId === workspace.workspaceId,
-    )
-      ? null
-      : workspace;
+    const normalizedCwd = resolve(input.cwd);
+    const existing = await findExistingWorkspaceForDirectory(normalizedCwd);
+    if (existing?.kind === "active") {
+      const workspace = await refreshWorkspaceRecord(existing.workspace);
+      return {
+        value: await operation(workspace),
+        createdWorkspace: null,
+      };
+    }
+    if (existing?.kind === "archived") {
+      // Wait for the import to succeed before unarchiving the workspace (and its
+      // agents), so a failed import does not resurrect an archived workspace.
+      const value = await operation(existing.workspace);
+      const latest =
+        (await workspaceRegistry.get(existing.workspace.workspaceId)) ?? existing.workspace;
+      if (latest.archivedAt) {
+        await ensureWorkspaceRecordUnarchived(latest);
+      }
+      return {
+        value,
+        createdWorkspace: null,
+      };
+    }
+
+    const projectsBeforeImport = await projectRegistry.list();
+    const createdWorkspace = await createWorkspaceForDirectory(normalizedCwd);
     const previousProject =
-      projectsBeforeImport.find((project) => project.projectId === workspace.projectId) ?? null;
+      projectsBeforeImport.find((project) => project.projectId === createdWorkspace.projectId) ??
+      null;
 
     try {
       return {
-        value: await operation(workspace),
+        value: await operation(createdWorkspace),
         createdWorkspace,
       };
     } catch (error) {
-      if (createdWorkspace) {
-        await rollbackFailedImportWorkspace(createdWorkspace, previousProject);
-      }
+      await rollbackFailedImportWorkspace(createdWorkspace, previousProject);
       throw error;
     }
   }
@@ -390,10 +404,14 @@ export function createWorkspaceProvisioningService(deps: {
     return refreshProjectKind(project);
   }
 
-  async function findOrCreateWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord> {
-    const normalizedCwd = resolve(cwd);
+  async function findExistingWorkspaceForDirectory(
+    normalizedCwd: string,
+  ): Promise<
+    | { kind: "active"; workspace: PersistedWorkspaceRecord }
+    | { kind: "archived"; workspace: PersistedWorkspaceRecord }
+    | null
+  > {
     // Path-based discovery selects public work; explicit-ID recovery bypasses this selector.
-    // Opening a directory explicitly recovers an archived workspace at that path.
     const workspaces = (await workspaceRegistry.listAll())
       .filter(
         (workspace) => !workspace.background && areEquivalentPaths(workspace.cwd, normalizedCwd),
@@ -404,12 +422,21 @@ export function createWorkspaceProvisioningService(deps: {
           left.workspaceId.localeCompare(right.workspaceId),
       );
     const active = workspaces.find((workspace) => !workspace.archivedAt);
-    if (active) return refreshWorkspaceRecord(active);
+    if (active) return { kind: "active", workspace: active };
     const archived = workspaces.find((workspace) => workspace.archivedAt);
     if (archived) {
       const project = await projectRegistry.get(archived.projectId);
-      if (project && !project.archivedAt) return ensureWorkspaceRecordUnarchived(archived);
+      if (project && !project.archivedAt) return { kind: "archived", workspace: archived };
     }
+    return null;
+  }
+
+  async function findOrCreateWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord> {
+    const normalizedCwd = resolve(cwd);
+    // Opening a directory explicitly recovers an archived workspace at that path.
+    const existing = await findExistingWorkspaceForDirectory(normalizedCwd);
+    if (existing?.kind === "active") return refreshWorkspaceRecord(existing.workspace);
+    if (existing?.kind === "archived") return ensureWorkspaceRecordUnarchived(existing.workspace);
     return createWorkspaceForDirectory(normalizedCwd);
   }
 
