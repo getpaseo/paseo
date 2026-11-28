@@ -120,6 +120,9 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   webUtils: {
     getPathForFile: (file: File) => webUtils.getPathForFile(file),
   },
+  clipboard: {
+    readFilePaths: () => ipcRenderer.invoke("paseo:clipboard:read-file-paths"),
+  },
   menu: {
     showContextMenu: (input?: Record<string, unknown>) =>
       ipcRenderer.invoke("paseo:menu:showContextMenu", input),
