@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   unavailable,
   type UsageAccount,
+  type UsageScope,
   type UsageReport,
   type UsageDetail,
 } from "@getpaseo/plugin/server/usage";
@@ -89,19 +90,47 @@ async function readToken(input: UsageInput): Promise<string | undefined> {
   }
 }
 
-export async function discover(): Promise<UsageAccount[]> {
-  for (const locator of ["Z_AI_API_KEY", "ZAI_API_KEY", "GLM_API_KEY"]) {
-    if (process.env[locator]) return [{ key: "default", input: { store: "env", locator } }];
-  }
+const OPENCODE_ZAI_PROVIDERS = new Set([
+  "zai",
+  "zai-coding-plan",
+  "zhipuai",
+  "zhipuai-coding-plan",
+]);
 
+async function discoverFromEnv(
+  env: NodeJS.ProcessEnv,
+  { matchHostEnv = false }: { matchHostEnv?: boolean } = {},
+): Promise<UsageAccount[]> {
+  for (const locator of ["Z_AI_API_KEY", "ZAI_API_KEY", "GLM_API_KEY"]) {
+    const value = env[locator];
+    if (value && (!matchHostEnv || value === process.env[locator])) {
+      return [{ key: "default", input: { store: "env", locator } }];
+    }
+  }
+  // File store reflects the host CLI login (matching Host -> Usage).
+  const home = matchHostEnv ? env.HOME || env.USERPROFILE || homedir() : homedir();
   const credentialsPath = join(
-    process.env.XDG_CONFIG_HOME || join(homedir(), ".config"),
+    env.XDG_CONFIG_HOME || join(home, ".config"),
     "glm-acp-agent",
     "credentials.json",
   );
   if (await readToken({ store: "file", locator: credentialsPath })) {
     return [{ key: "default", input: { store: "file", locator: credentialsPath } }];
   }
-
   return [];
+}
+
+export async function discover(): Promise<UsageAccount[]> {
+  return discoverFromEnv(process.env);
+}
+
+export async function discoverSession(
+  scope: Extract<UsageScope, { kind: "session" }>,
+): Promise<UsageAccount[]> {
+  const modelProvider = scope.model?.includes("/") ? scope.model.split("/", 1)[0] : undefined;
+  const matches =
+    scope.provider === "zai" ||
+    (scope.provider === "opencode" && OPENCODE_ZAI_PROVIDERS.has(modelProvider ?? ""));
+  if (!matches) return [];
+  return discoverFromEnv(scope.env, { matchHostEnv: true });
 }

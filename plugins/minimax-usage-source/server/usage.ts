@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   unavailable,
   type UsageAccount,
+  type UsageScope,
   windowFromUsedPct,
   type UsageReport,
   type UsageWindow,
@@ -239,14 +240,47 @@ async function readAuth(
     return undefined;
   }
 }
-export async function discover(): Promise<UsageAccount[]> {
-  const candidates: UsageInput[] = [
-    { store: "env", locator: "MINIMAX_API_KEY" },
-    { store: "credentials", locator: join(homedir(), ".mmx", "credentials.json") },
-    { store: "config", locator: join(homedir(), ".mmx", "config.json") },
-  ];
+const OPENCODE_MINIMAX_PROVIDERS = new Set([
+  "minimax",
+  "minimax-cn",
+  "minimax-coding-plan",
+  "minimax-cn-coding-plan",
+]);
+
+async function discoverFromEnv(
+  env: NodeJS.ProcessEnv,
+  { matchHostEnv = false }: { matchHostEnv?: boolean } = {},
+): Promise<UsageAccount[]> {
+  const home = matchHostEnv ? env.HOME || env.USERPROFILE || homedir() : homedir();
+  const candidates: UsageInput[] = [];
+  if (
+    !matchHostEnv ||
+    (env.MINIMAX_API_KEY && env.MINIMAX_API_KEY === process.env.MINIMAX_API_KEY)
+  ) {
+    candidates.push({ store: "env", locator: "MINIMAX_API_KEY" });
+  }
+  // File stores reflect the host CLI login (matching Host -> Usage).
+  candidates.push(
+    { store: "credentials", locator: join(home, ".mmx", "credentials.json") },
+    { store: "config", locator: join(home, ".mmx", "config.json") },
+  );
   const accounts: UsageAccount[] = [];
   for (const input of candidates)
     if (await readAuth(input)) accounts.push({ key: "default", input });
   return accounts;
+}
+
+export async function discover(): Promise<UsageAccount[]> {
+  return discoverFromEnv(process.env);
+}
+
+export async function discoverSession(
+  scope: Extract<UsageScope, { kind: "session" }>,
+): Promise<UsageAccount[]> {
+  const modelProvider = scope.model?.includes("/") ? scope.model.split("/", 1)[0] : undefined;
+  const matches =
+    scope.provider === "minimax" ||
+    (scope.provider === "opencode" && OPENCODE_MINIMAX_PROVIDERS.has(modelProvider ?? ""));
+  if (!matches) return [];
+  return discoverFromEnv(scope.env, { matchHostEnv: true });
 }

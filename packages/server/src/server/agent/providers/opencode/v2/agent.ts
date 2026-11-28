@@ -57,6 +57,8 @@ interface PreparedLaunch {
   launch: AgentLaunchContext | undefined;
   /** The complete shell environment, when the launch sets one. */
   environment: Record<string, string> | undefined;
+  /** The complete environment the session runs under for usage discovery. */
+  harnessEnvironment: Record<string, string>;
   mcp?: SessionMcp;
 }
 
@@ -211,26 +213,29 @@ export class OpenCodeV2AgentClient implements AgentClient {
     launch: AgentLaunchContext | undefined,
     historyOnly: boolean,
   ): Promise<PreparedLaunch> {
-    const environment = launch?.env
-      ? createProviderEnv({ runtimeSettings: this.options.settings, overlays: [launch.env] })
-      : undefined;
+    const harnessEnvironment = createProviderEnv({
+      runtimeSettings: this.options.settings,
+      overlays: [launch?.env],
+    });
+    const environment = launch?.env ? harnessEnvironment : undefined;
     const servers = config.mcpServers ?? {};
-    if (historyOnly || Object.keys(servers).length === 0) return { launch, environment };
+    if (historyOnly || Object.keys(servers).length === 0)
+      return { launch, environment, harnessEnvironment };
     if (!this.options.bridge)
       throw new Error("OpenCode MCP servers require the Paseo tool bridge, which is not running");
     const mcp = await SessionMcp.connect({
       servers,
       cwd: config.cwd,
-      env: environment ?? createProviderEnv({ runtimeSettings: this.options.settings }),
+      env: harnessEnvironment,
       wrap: launch?.wrap,
     });
-    return { launch, environment, mcp };
+    return { launch, environment, harnessEnvironment, mcp };
   }
   private async attach(
     connection: V2Connection,
     info: SessionInfo,
     config: AgentSessionConfig,
-    { launch, environment, mcp }: PreparedLaunch,
+    { launch, environment, harnessEnvironment, mcp }: PreparedLaunch,
     persist: boolean,
     historyOnly = false,
   ) {
@@ -280,6 +285,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
       persist,
       requiresPaseoPlugin: Boolean(bridge),
       environment,
+      harnessEnvironment,
       mcp,
       unbind: releaseBindings,
       bindChild,

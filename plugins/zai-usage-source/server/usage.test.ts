@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { discover, fetchUsage } from "./usage.js";
+import { discover, discoverSession, fetchUsage } from "./usage.js";
 import type { UsageReport } from "@getpaseo/plugin/server/usage";
 
 function mockFetch(handlers: Map<string, () => Response>): typeof fetch {
@@ -225,4 +225,39 @@ it.each([401, 403])("reports an existing login rejected with HTTP %i", async (st
     if (previous === undefined) delete process.env["ZAI_API_KEY"];
     else process.env["ZAI_API_KEY"] = previous;
   }
+});
+
+describe("session discovery", () => {
+  it.each([
+    "zai/glm-4.7",
+    "zai-coding-plan/glm-4.7",
+    "zhipuai/glm-4.7",
+    "zhipuai-coding-plan/glm-4.7",
+  ])("discovers Z.ai accounts for OpenCode model %s", async (model) => {
+    const dir = mkdtempSync(join(tmpdir(), "zai-session-"));
+    const previous = process.env["ZAI_API_KEY"];
+    try {
+      process.env["ZAI_API_KEY"] = "session-zai-key";
+      expect(
+        await discoverSession({
+          kind: "session",
+          provider: "opencode",
+          model,
+          env: { HOME: dir, ZAI_API_KEY: "session-zai-key" },
+        }),
+      ).toEqual([{ key: "default", input: { store: "env", locator: "ZAI_API_KEY" } }]);
+      expect(
+        await discoverSession({
+          kind: "session",
+          provider: "opencode",
+          model: "openai/gpt-5.4",
+          env: { HOME: dir, ZAI_API_KEY: "session-zai-key" },
+        }),
+      ).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env["ZAI_API_KEY"];
+      else process.env["ZAI_API_KEY"] = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

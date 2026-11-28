@@ -3022,3 +3022,131 @@ test("keeps a live background shell visible and stoppable after its launch is re
     await session.close();
   }
 });
+
+describe("OpenCode v2 usageSession()", () => {
+  test("reports provider, model, harness env, and stable sessionKey across model switches, reconnects, and resume", async () => {
+    const harness = new V2Harness();
+    harness.info.model = { providerID: "opencode-go", id: "deepseek-v4.1-flash" };
+    harness.api.model.list = async () => ({
+      location: harness.info.location,
+      data: [
+        {
+          id: "MiniMax-M2.7",
+          providerID: "minimax-coding-plan",
+          name: "MiniMax M2.7",
+          enabled: true,
+          limit: { context: 200_000, output: 16_000 },
+          capabilities: { input: ["text"], tools: true },
+          variants: [],
+        } as unknown as ModelInfo,
+        {
+          id: "gpt-5.4",
+          providerID: "openai",
+          name: "GPT-5.4",
+          enabled: true,
+          limit: { context: 200_000, output: 16_000 },
+          capabilities: { input: ["text"], tools: true },
+          variants: [],
+        } as unknown as ModelInfo,
+      ],
+    });
+    harness.api.model.default = async () => ({
+      location: harness.info.location,
+      data: { providerID: "openai", id: "gpt-5.4" },
+    });
+    harness.api.session.switchModel = async () => ({ ...harness.info });
+
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      settings: { env: { XDG_DATA_HOME: "/tmp/opencode-settings-data", MINIMAX_API_KEY: "k-set" } },
+      runtime: harness.runtime,
+    });
+
+    // Without a per-session launch env, usageSession() still reports provider settings env
+    // without forcing a session.environment() RPC.
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+    });
+    try {
+      expect(harness.environments).toEqual([]);
+      const initial = session.usageSession?.();
+      expect(initial).toMatchObject({
+        provider: "opencode",
+        model: "opencode-go/deepseek-v4.1-flash",
+        sessionKey: expect.any(String),
+      });
+      expect(initial?.env).toMatchObject({
+        XDG_DATA_HOME: "/tmp/opencode-settings-data",
+        MINIMAX_API_KEY: "k-set",
+      });
+
+      // Switching models updates model while preserving sessionKey.
+      await session.setModel!("minimax-coding-plan/MiniMax-M2.7");
+      const switched = session.usageSession?.();
+      expect(switched?.sessionKey).toBe(initial?.sessionKey);
+      expect(switched?.model).toBe("minimax-coding-plan/MiniMax-M2.7");
+
+      // Clearing explicit model resolves OpenCode's default model.
+      await session.setModel!(null);
+      const defaulted = session.usageSession?.();
+      expect(defaulted?.sessionKey).toBe(initial?.sessionKey);
+      expect(defaulted?.model).toBe("openai/gpt-5.4");
+
+      // Reconnecting keeps the same usage session descriptor.
+      harness.push({ id: "reconnect-usage", created: 2, type: "server.connected", data: {} });
+      await expect.poll(() => session.usageSession?.()).toEqual(defaulted);
+
+      const handle = session.describePersistence()!;
+      await session.close();
+      expect(session.usageSession?.()).toBeNull();
+
+      // Resuming with launch env overlays launch env over provider settings env and issues a fresh sessionKey.
+      const resumed = await client.resumeSession(handle, undefined, {
+        env: { OPENCODE_DB: "custom.db", XDG_DATA_HOME: "/tmp/opencode-launch-data" },
+      });
+      try {
+        const resumedUsage = resumed.usageSession?.();
+        expect(resumedUsage).toMatchObject({
+          provider: "opencode",
+          model: "openai/gpt-5.4",
+          sessionKey: expect.any(String),
+        });
+        expect(resumedUsage?.sessionKey).not.toBe(initial?.sessionKey);
+        expect(resumedUsage?.env).toMatchObject({
+          XDG_DATA_HOME: "/tmp/opencode-launch-data",
+          OPENCODE_DB: "custom.db",
+          MINIMAX_API_KEY: "k-set",
+        });
+      } finally {
+        await resumed.close();
+        expect(resumed.usageSession?.()).toBeNull();
+      }
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("falls back to config.model when session info omits model", async () => {
+    const harness = new V2Harness();
+    harness.info.model = undefined;
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      model: "minimax/MiniMax-M2.7",
+    });
+    try {
+      expect(session.usageSession?.()).toMatchObject({
+        provider: "opencode",
+        model: "minimax/MiniMax-M2.7",
+        sessionKey: expect.any(String),
+      });
+    } finally {
+      await session.close();
+    }
+  });
+});

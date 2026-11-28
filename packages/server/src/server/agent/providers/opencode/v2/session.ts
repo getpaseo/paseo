@@ -10,6 +10,7 @@ import { waitForLocationReady, awaitPaseoPlugin } from "./readiness.js";
 
 import type { SessionInfo, SessionMessageInfo } from "@opencode/client";
 
+import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
 import type {
@@ -21,9 +22,11 @@ import type {
   AgentSession,
   AgentSessionConfig,
   AgentStreamEvent,
+  AgentUsageSession,
   SteerActiveTurnOptions,
   SteerResult,
 } from "../../../agent-sdk-types.js";
+import { createProviderEnv } from "../../../provider-launch-config.js";
 
 import { toDiagnosticErrorMessage } from "../../diagnostic-utils.js";
 
@@ -57,6 +60,8 @@ export interface OpenCodeV2SessionOptions {
   requiresPaseoPlugin: boolean;
   /** The complete shell environment for this session and its descendants. */
   environment?: Record<string, string>;
+  /** Effective provider environment for usage discovery. */
+  harnessEnvironment?: Record<string, string>;
   /** MCP servers Paseo hosts for this session; the session closes them. */
   mcp?: SessionMcp;
   unbind?: () => void;
@@ -102,6 +107,8 @@ export class OpenCodeV2Session implements AgentSession {
   private readonly requiresPaseoPlugin: boolean;
   // OpenCode replaces the whole local shell environment, rather than overlaying it.
   private readonly environment: Record<string, string> | undefined;
+  private readonly harnessEnvironment: Record<string, string>;
+  private readonly usageSessionKey = randomUUID();
   private readonly mcp: SessionMcp | undefined;
   private readonly unbind: (() => void) | undefined;
   private readonly acquire: (() => Promise<V2Connection>) | undefined;
@@ -117,6 +124,8 @@ export class OpenCodeV2Session implements AgentSession {
     this.persist = options.persist;
     this.requiresPaseoPlugin = options.requiresPaseoPlugin;
     this.environment = options.environment;
+    this.harnessEnvironment =
+      options.harnessEnvironment ?? options.environment ?? createProviderEnv();
     this.mcp = options.mcp;
     this.unbind = options.unbind;
     this.acquire = options.acquire;
@@ -201,6 +210,18 @@ export class OpenCodeV2Session implements AgentSession {
   }
   get controls() {
     return controls;
+  }
+  usageSession(): AgentUsageSession | null {
+    if (this.closed) return null;
+    const model = this.info.model
+      ? `${this.info.model.providerID}/${this.info.model.id}`
+      : this.config.model;
+    return {
+      provider: "opencode",
+      model,
+      env: this.harnessEnvironment,
+      sessionKey: this.usageSessionKey,
+    };
   }
   private get client() {
     return this.connection.client;

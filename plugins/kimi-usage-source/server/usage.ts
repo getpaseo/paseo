@@ -8,6 +8,7 @@ import {
   toneFromUsedPct,
   unavailable,
   type UsageAccount,
+  type UsageScope,
   windowFromUsedPct,
   type UsageReport,
   type UsageWindow,
@@ -321,24 +322,31 @@ async function readCredentials(input: UsageInput): Promise<KimiCredentials | und
     return undefined;
   }
 }
-export async function discover(): Promise<UsageAccount[]> {
+const OPENCODE_KIMI_PROVIDERS = new Set(["kimi-for-coding", "kimi"]);
+
+async function discoverFromEnv(
+  env: NodeJS.ProcessEnv,
+  { matchHostEnv = false }: { matchHostEnv?: boolean } = {},
+): Promise<UsageAccount[]> {
   for (const locator of ["KIMI_TOKEN", "KIMI_API_KEY"]) {
-    const input: UsageInput = { store: "env", locator };
-    if (await readCredentials(input)) return [{ key: "default", input }];
+    const value = env[locator];
+    if (value && (!matchHostEnv || value === process.env[locator])) {
+      const input: UsageInput = { store: "env", locator };
+      if (await readCredentials(input)) return [{ key: "default", input }];
+    }
   }
-  const homes = [
-    process.env.KIMI_CODE_HOME || join(homedir(), ".kimi-code"),
-    join(homedir(), ".kimi"),
-  ];
+  // File stores reflect the host CLI login (matching Host -> Usage).
+  const home = matchHostEnv ? env.HOME || env.USERPROFILE || homedir() : homedir();
+  const homes = [env.KIMI_CODE_HOME || join(home, ".kimi-code"), join(home, ".kimi")];
   // A login to another deployment leaves the old slot behind with a dead token.
   // Within each home, prefer the latest expiry. Keep the configured home ahead
   // of the legacy fallback, even if that fallback holds a newer token.
-  for (const home of homes) {
+  for (const candidateHome of homes) {
     let found: { input: UsageInput; expiresAt: number } | undefined;
     for (const deployment of KIMI_CODE_DEPLOYMENTS) {
       const input: UsageInput = {
         store: "file",
-        locator: join(home, "credentials", `${credentialSlot(deployment)}.json`),
+        locator: join(candidateHome, "credentials", `${credentialSlot(deployment)}.json`),
         baseUrl: deployment.baseUrl,
       };
       const credentials = await readCredentials(input);
@@ -349,4 +357,19 @@ export async function discover(): Promise<UsageAccount[]> {
     if (found) return [{ key: "default", input: found.input }];
   }
   return [];
+}
+
+export async function discover(): Promise<UsageAccount[]> {
+  return discoverFromEnv(process.env);
+}
+
+export async function discoverSession(
+  scope: Extract<UsageScope, { kind: "session" }>,
+): Promise<UsageAccount[]> {
+  const modelProvider = scope.model?.includes("/") ? scope.model.split("/", 1)[0] : undefined;
+  const matches =
+    scope.provider === "kimi" ||
+    (scope.provider === "opencode" && OPENCODE_KIMI_PROVIDERS.has(modelProvider ?? ""));
+  if (!matches) return [];
+  return discoverFromEnv(scope.env, { matchHostEnv: true });
 }

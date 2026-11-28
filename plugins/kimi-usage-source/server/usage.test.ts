@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { discover, fetchUsage } from "./usage.js";
+import { discover, discoverSession, fetchUsage } from "./usage.js";
 import type { UsageReport } from "@getpaseo/plugin/server/usage";
 
 // The slot the Kimi CLI writes for a login to the global (.ai) deployment.
@@ -569,4 +569,37 @@ it("does not infer a duration from an unfamiliar time-unit name containing HOUR"
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+describe("session discovery", () => {
+  it.each(["kimi-for-coding/k2p5", "kimi/k2p5"])(
+    "discovers Kimi accounts for OpenCode model %s",
+    async (model) => {
+      const dir = mkdtempSync(join(tmpdir(), "kimi-session-"));
+      const previous = process.env["KIMI_TOKEN"];
+      try {
+        process.env["KIMI_TOKEN"] = "session-kimi-token";
+        expect(
+          await discoverSession({
+            kind: "session",
+            provider: "opencode",
+            model,
+            env: { HOME: dir, KIMI_TOKEN: "session-kimi-token" },
+          }),
+        ).toEqual([{ key: "default", input: { store: "env", locator: "KIMI_TOKEN" } }]);
+        expect(
+          await discoverSession({
+            kind: "session",
+            provider: "opencode",
+            model: "openai/gpt-5.4",
+            env: { HOME: dir, KIMI_TOKEN: "session-kimi-token" },
+          }),
+        ).toEqual([]);
+      } finally {
+        if (previous === undefined) delete process.env["KIMI_TOKEN"];
+        else process.env["KIMI_TOKEN"] = previous;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });

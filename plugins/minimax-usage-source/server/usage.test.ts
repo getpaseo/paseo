@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { discover, fetchUsage } from "./usage.js";
+import { discover, discoverSession, fetchUsage } from "./usage.js";
 import type { UsageReport } from "@getpaseo/plugin/server/usage";
 
 function writeMiniMaxConfig(dir: string, payload: Record<string, unknown>): void {
@@ -375,4 +375,70 @@ it.each([401, 403])("reports an existing login rejected with HTTP %i", async (st
     if (previous === undefined) delete process.env["MINIMAX_API_KEY"];
     else process.env["MINIMAX_API_KEY"] = previous;
   }
+});
+
+describe("session discovery", () => {
+  it.each([
+    "minimax/MiniMax-M2.7",
+    "minimax-cn/MiniMax-M2.7",
+    "minimax-coding-plan/MiniMax-M2.7",
+    "minimax-cn-coding-plan/MiniMax-M2.7",
+  ])("discovers MiniMax accounts for OpenCode model %s", async (model) => {
+    const dir = mkdtempSync(join(tmpdir(), "minimax-session-"));
+    const previous = process.env["MINIMAX_API_KEY"];
+    try {
+      process.env["MINIMAX_API_KEY"] = "session-minimax-key";
+      writeMiniMaxConfig(dir, { api_key: "config-key" });
+      const accounts = await discoverSession({
+        kind: "session",
+        provider: "opencode",
+        model,
+        env: { HOME: dir, MINIMAX_API_KEY: "session-minimax-key" },
+      });
+      expect(accounts).toEqual([
+        { key: "default", input: { store: "env", locator: "MINIMAX_API_KEY" } },
+        { key: "default", input: { store: "config", locator: join(dir, ".mmx", "config.json") } },
+      ]);
+    } finally {
+      if (previous === undefined) delete process.env["MINIMAX_API_KEY"];
+      else process.env["MINIMAX_API_KEY"] = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores non-MiniMax models, foreign providers, and mismatched session env keys", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "minimax-session-other-"));
+    const previous = process.env["MINIMAX_API_KEY"];
+    try {
+      process.env["MINIMAX_API_KEY"] = "host-key";
+      expect(
+        await discoverSession({
+          kind: "session",
+          provider: "opencode",
+          model: "openai/gpt-5.4",
+          env: { HOME: dir, MINIMAX_API_KEY: "host-key" },
+        }),
+      ).toEqual([]);
+      expect(
+        await discoverSession({
+          kind: "session",
+          provider: "opencode",
+          model: "minimax/MiniMax-M2.7",
+          env: { HOME: dir, MINIMAX_API_KEY: "different-session-key" },
+        }),
+      ).toEqual([]);
+      expect(
+        await discoverSession({
+          kind: "session",
+          provider: "claude",
+          model: "minimax/MiniMax-M2.7",
+          env: { HOME: dir, MINIMAX_API_KEY: "host-key" },
+        }),
+      ).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env["MINIMAX_API_KEY"];
+      else process.env["MINIMAX_API_KEY"] = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

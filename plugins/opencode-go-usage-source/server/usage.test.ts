@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { inputSchema } from "../shared/input.js";
 import { installedOpenCode, type OpenCodeInstall } from "./opencode.js";
-import { discover, fetchUsage } from "./usage.js";
+import { discover, discoverSession, fetchUsage } from "./usage.js";
 
 // Stands in for the OpenCode CLI: it answers the two commands the source runs, the way the real
 // OpenCode 1.19.5 and 2.4.1 answer them, and logs every call.
@@ -661,3 +661,67 @@ test("reads a key's usage within the refresh deadline when the Console does not 
   // The daemon gives a usage refresh 20 seconds, and the usage API keeps 15 of them.
   expect(Date.now() - started).toBeLessThan(5_000);
 }, 20_000);
+
+test("session discovery matches opencode-go models on opencode and ignores other models and providers", async () => {
+  await openCode2([goKey("session-go-key")]);
+  const baseEnv = { ...process.env };
+  const accounts = await discoverSession(
+    {
+      kind: "session",
+      provider: "opencode",
+      model: "opencode-go/deepseek-v4.1-flash",
+      env: baseEnv,
+    },
+    install,
+  );
+  expect(accounts).toEqual([account("credentials")]);
+
+  // Non-Go models and non-OpenCode providers return nothing without invoking the CLI.
+  for (const scope of [
+    { kind: "session" as const, provider: "opencode", model: "openai/gpt-5.4", env: baseEnv },
+    { kind: "session" as const, provider: "opencode", model: "minimax/MiniMax-M2.7", env: baseEnv },
+    {
+      kind: "session" as const,
+      provider: "opencode",
+      model: "opencode/deepseek-v4.1-flash-free",
+      env: baseEnv,
+    },
+    { kind: "session" as const, provider: "opencode", env: baseEnv },
+    {
+      kind: "session" as const,
+      provider: "claude",
+      model: "opencode-go/deepseek-v4.1-flash",
+      env: baseEnv,
+    },
+  ]) {
+    expect(await discoverSession(scope, install)).toEqual([]);
+  }
+});
+
+test("session discovery carries custom XDG_DATA_HOME so fetchUsage reads the session's store", async () => {
+  const customData = join(fixtureDirectory, "custom-xdg");
+  const { mkdir } = await import("node:fs/promises");
+  await mkdir(join(customData, "opencode"), { recursive: true });
+  await writeFile(
+    join(customData, "opencode", "auth.json"),
+    JSON.stringify({ "opencode-go": { type: "api", key: "custom-xdg-key" } }),
+  );
+  const env = { ...process.env, XDG_DATA_HOME: customData, PATH: "" };
+  const accounts = await discoverSession({
+    kind: "session",
+    provider: "opencode",
+    model: "opencode-go/deepseek-v4.1-flash",
+    env,
+  });
+  expect(accounts).toEqual([
+    {
+      key: expect.stringMatching(/^[a-f0-9]{64}$/),
+      input: { store: "file", dataHome: customData },
+    },
+  ]);
+  const report = await fetchUsage(inputSchema.parse(accounts[0]!.input), async (_url, init) => {
+    expect(bearer(init)).toBe("Bearer custom-xdg-key");
+    return Response.json(upstreamResponse);
+  });
+  expect(report.status).toBe("available");
+});
