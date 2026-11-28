@@ -12,6 +12,8 @@ export class ClaudeRuntimeSafety {
   // has neither been sent a prompt nor reported init (a resumed chat that only answered
   // control requests) owns no background work.
   private turnSeen = false;
+  /** Whether this process ever announced a turn of its own via system/init. */
+  private initSeen = false;
   private liveTasks: readonly ClaudeBackgroundTask[] = [];
   private published: AgentBackgroundWorkInput[] | undefined;
   private readonly awaitingNotifications = new Set<string>();
@@ -32,6 +34,7 @@ export class ClaudeRuntimeSafety {
     this.sessionCronsUnknown = false;
     this.inventoryState = "unknown";
     this.turnSeen = false;
+    this.initSeen = false;
     this.liveTasks = [];
     this.published = undefined;
     this.awaitingNotifications.clear();
@@ -48,6 +51,15 @@ export class ClaudeRuntimeSafety {
   /** Called before a prompt is written to this process. */
   notePromptSent(): void {
     this.turnSeen = true;
+  }
+
+  /**
+   * Called when a cancel withdrew every prompt sent to a process that never started a turn.
+   * Restores the untouched stoppable state unless the process already announced an init.
+   */
+  notePromptWithdrawn(): void {
+    if (this.initSeen) return;
+    this.turnSeen = false;
   }
 
   /** Called with the session crons of each main-thread Stop hook. Older CLIs omit them. */
@@ -138,6 +150,7 @@ export class ClaudeRuntimeSafety {
     }
     if (message.subtype === "init") {
       this.turnSeen = true;
+      this.initSeen = true;
       const version = parseClaudeCodeVersion(message.claude_code_version ?? "");
       if (
         version &&

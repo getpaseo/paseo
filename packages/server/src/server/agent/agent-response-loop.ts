@@ -35,6 +35,26 @@ export interface StructuredGenerationAttempt {
   model: string | null;
   available: boolean;
   error: string | null;
+  // Never run because an earlier candidate spent the shared deadline. Distinct
+  // from `available: false`, which means the provider itself is unusable.
+  skipped?: boolean;
+}
+
+// Metadata generation runs headless on an internal agent with no UI, so a
+// stalled turn (for example an unanswerable permission prompt) never reaches
+// the `finally` cleanup block and pins the provider CLI child (~250MB for
+// `claude`) forever. Generous default so large prompts (e.g. 200k-char PR
+// patches) still complete while bounding any hang.
+export const DEFAULT_STRUCTURED_GENERATION_TIMEOUT_MS = 300_000;
+
+export class StructuredAgentTimeoutError extends Error {
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`Structured generation timed out after ${timeoutMs}ms`);
+    this.name = "StructuredAgentTimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
 }
 
 export class StructuredAgentFallbackError extends Error {
@@ -44,6 +64,9 @@ export class StructuredAgentFallbackError extends Error {
     const summary = attempts
       .map((attempt) => {
         const modelSuffix = attempt.model ? ` (${attempt.model})` : "";
+        if (attempt.skipped) {
+          return `${attempt.provider}${modelSuffix}: skipped${attempt.error ? ` (${attempt.error})` : ""}`;
+        }
         if (!attempt.available) {
           return `${attempt.provider}${modelSuffix}: unavailable${attempt.error ? ` (${attempt.error})` : ""}`;
         }
@@ -78,6 +101,7 @@ export interface StructuredAgentGenerationOptions<T> {
   schema: z.ZodType<T> | JsonSchema;
   maxRetries?: number;
   schemaName?: string;
+  timeoutMs?: number;
 }
 
 export interface StructuredAgentGenerationWithFallbackOptions<T> {
@@ -93,6 +117,7 @@ export interface StructuredAgentGenerationWithFallbackOptions<T> {
   persistSession?: boolean;
   maxRetries?: number;
   schemaName?: string;
+  timeoutMs?: number;
   logger?: StructuredGenerationLogger;
   runner?: <TResult>(options: StructuredAgentGenerationOptions<TResult>) => Promise<TResult>;
 }
@@ -356,12 +381,18 @@ export async function generateStructuredAgentResponse<T>(
 ): Promise<T> {
   const { manager, agentConfig, agentId, persistSession, prompt, schema, maxRetries, schemaName } =
     options;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_STRUCTURED_GENERATION_TIMEOUT_MS;
   const agent = await manager.createAgent(agentConfig, agentId, {
     persistSession,
     workspaceId: undefined,
   });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
   try {
     const caller: AgentCaller = async (nextPrompt) => {
+      if (timedOut) {
+        throw new StructuredAgentTimeoutError(timeoutMs);
+      }
       const result = await manager.runAgent(agent.id, nextPrompt);
       if (typeof result.finalText === "string" && result.finalText.length > 0) {
         return result.finalText;
@@ -370,14 +401,25 @@ export async function generateStructuredAgentResponse<T>(
       const lastAssistant = result.timeline.findLast((item) => item.type === "assistant_message");
       return lastAssistant?.text ?? "";
     };
-    return await getStructuredAgentResponse({
-      caller,
-      prompt,
-      schema,
-      maxRetries,
-      schemaName,
-    });
+    // One deadline covers every retry, so a model that stalls or keeps returning
+    // invalid JSON cannot extend the run past the bound.
+    return await Promise.race([
+      getStructuredAgentResponse({
+        caller,
+        prompt,
+        schema,
+        maxRetries,
+        schemaName,
+      }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          reject(new StructuredAgentTimeoutError(timeoutMs));
+        }, timeoutMs);
+      }),
+    ]);
   } finally {
+    clearTimeout(timer);
     try {
       await manager.closeAgent(agent.id);
     } catch {
@@ -408,6 +450,7 @@ export async function generateStructuredAgentResponseWithFallback<T>(
     persistSession,
     maxRetries,
     schemaName,
+    timeoutMs,
     logger,
     runner,
   } = options;
@@ -416,12 +459,35 @@ export async function generateStructuredAgentResponseWithFallback<T>(
     throw new StructuredAgentFallbackError([]);
   }
 
+  // One shared deadline across the whole waterfall so an outage or hang does
+  // not multiply the wait across every fallback candidate.
+  const deadline = Date.now() + (timeoutMs ?? DEFAULT_STRUCTURED_GENERATION_TIMEOUT_MS);
+
   const runStructured =
     runner ??
     ((input: StructuredAgentGenerationOptions<T>) => generateStructuredAgentResponse<T>(input));
   const attempts: StructuredGenerationAttempt[] = [];
 
+  const recordDeadlineSkip = (candidate: StructuredGenerationProvider, available: boolean) => {
+    attempts.push({
+      provider: candidate.provider,
+      model: candidate.model ?? null,
+      available,
+      error: "structured generation deadline exceeded",
+      skipped: true,
+    });
+    logger?.warn(
+      { provider: candidate.provider, model: candidate.model, schemaName },
+      "Structured generation: deadline spent, skipping remaining provider",
+    );
+  };
+
   for (const candidate of providers) {
+    if (deadline - Date.now() <= 0) {
+      recordDeadlineSkip(candidate, false);
+      continue;
+    }
+
     const availabilityEntry = await manager.getProviderAvailability(candidate.provider);
     if (!availabilityEntry.available) {
       const reason = availabilityEntry.error ?? "unavailable";
@@ -438,6 +504,12 @@ export async function generateStructuredAgentResponseWithFallback<T>(
       continue;
     }
 
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      recordDeadlineSkip(candidate, true);
+      continue;
+    }
+
     try {
       const result = await runStructured({
         manager,
@@ -446,6 +518,7 @@ export async function generateStructuredAgentResponseWithFallback<T>(
         maxRetries,
         schemaName,
         persistSession,
+        timeoutMs: remainingMs,
         agentConfig: {
           ...agentConfigOverrides,
           provider: candidate.provider,

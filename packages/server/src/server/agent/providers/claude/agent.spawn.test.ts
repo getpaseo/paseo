@@ -40,11 +40,28 @@ function createQueryMock(events: unknown[]): Query {
   } as Query;
 }
 
-function createChildProcessStub(): ChildProcess {
-  const child = new EventEmitter() as ChildProcess;
+function createChildProcessStub(): ChildProcess & { killSignals: (NodeJS.Signals | number)[] } {
+  const child = new EventEmitter() as ChildProcess & {
+    killSignals: (NodeJS.Signals | number)[];
+  };
   child.stderr = new EventEmitter() as ChildProcess["stderr"];
+  child.killSignals = [];
+  // A real child dies when signalled; without this teardown waits out its timeouts.
+  child.kill = ((signal?: NodeJS.Signals | number) => {
+    child.killSignals.push(signal ?? "SIGTERM");
+    child.emit("exit", null, typeof signal === "string" ? signal : "SIGTERM");
+    return true;
+  }) as ChildProcess["kill"];
   return child;
 }
+
+const SPAWN_OPTIONS: ClaudeSpawnOptions = {
+  command: "node",
+  args: ["claude.js"],
+  cwd: process.cwd(),
+  env: {},
+  signal: new AbortController().signal,
+};
 
 describe("Claude spawn override", () => {
   afterEach(() => {
@@ -221,4 +238,151 @@ describe("Claude spawn override", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+});
+
+test("two concurrent launches share one Claude process, and close tears it down", async () => {
+  // Reopening a chat lists its commands from both the app and plugins simultaneously.
+  // Both are control-plane reads going through the same lazy launch. Without a single-flight
+  // guard each spawned its own `claude`, and `close()` only tracked the second child: the first
+  // one, and every MCP server under it, outlived the session.
+  const launchedOptions: Options[] = [];
+  const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+    launchedOptions.push(options);
+    return createQueryMock([]);
+  });
+  const child = createChildProcessStub();
+  vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
+  const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+
+  try {
+    const [first, second] = await Promise.all([session.listCommands!(), session.listCommands!()]);
+    expect(first).toEqual(second);
+    expect(queryFactory).toHaveBeenCalledTimes(1);
+
+    // Spawn through the same port production uses, once per launched query.
+    for (const options of launchedOptions) options.spawnClaudeCodeProcess?.(SPAWN_OPTIONS);
+    expect(launchedOptions).toHaveLength(1);
+  } finally {
+    await session.close();
+  }
+
+  expect(child.killSignals.length).toBeGreaterThan(0);
+});
+
+test("a launch a restart superseded is retired before the caller runs on it", async () => {
+  // `resolveThinkingConfig` reads the settings once, before the launch's options are fixed. A
+  // setting written while that launch is in flight — a model or thinking switch, a rewind — is not
+  // in it. Callers waiting on the launch must not run their turn on the stale options: the shared
+  // launch is retired and replaced once, still single-flight.
+  const launchedOptions: Options[] = [];
+  let releaseLaunch: (() => void) | undefined;
+  const launchGate = new Promise<void>((resolve) => {
+    releaseLaunch = resolve;
+  });
+  let resolveBinaryEntered: (() => void) | undefined;
+  const resolveBinaryStarted = new Promise<void>((resolve) => {
+    resolveBinaryEntered = resolve;
+  });
+  const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+    launchedOptions.push(options);
+    return createQueryMock([]);
+  });
+  vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(createChildProcessStub());
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    queryFactory,
+    resolveBinary: async () => {
+      resolveBinaryEntered?.();
+      await launchGate;
+      return "/test/claude/bin";
+    },
+  });
+  const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+
+  try {
+    const first = session.listCommands!();
+    await resolveBinaryStarted;
+    await session.setThinkingOption!("high");
+    const second = session.listCommands!();
+    releaseLaunch?.();
+    await Promise.all([first, second]);
+
+    // The second launch is the one the setting asked for; the first ran on what it superseded.
+    expect(launchedOptions.map((options) => options.effort)).toEqual([undefined, "high"]);
+    expect(queryFactory).toHaveBeenCalledTimes(2);
+  } finally {
+    releaseLaunch?.();
+    await session.close();
+  }
+});
+
+test("a restart requested before the first launch does not spawn a second Claude", async () => {
+  // The thinking and model setters mark a restart even when no query exists yet. The first launch
+  // reads those settings, so its options already carry them: treating the mark as pending would
+  // retire the fresh query and spawn a second `claude`.
+  const launchedOptions: Options[] = [];
+  const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+    launchedOptions.push(options);
+    return createQueryMock([]);
+  });
+  const child = createChildProcessStub();
+  vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
+  const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+
+  try {
+    await session.setThinkingOption!("high");
+    const [first, second] = await Promise.all([session.listCommands!(), session.listCommands!()]);
+
+    expect(first).toEqual(second);
+    expect(launchedOptions.map((options) => options.effort)).toEqual(["high"]);
+    expect(queryFactory).toHaveBeenCalledTimes(1);
+  } finally {
+    await session.close();
+  }
+});
+
+test("a launch that throws does not leave the session refusing option changes", async () => {
+  // A queryFactory that throws — or options the SDK rejects — must still clear the launch flag,
+  // otherwise `applyOptions` refuses every non-live option change for the rest of the session.
+  let launches = 0;
+  const launchedOptions: Options[] = [];
+  const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+    launches += 1;
+    launchedOptions.push(options);
+    if (launches === 1) throw new Error("claude could not start");
+    return createQueryMock([]);
+  });
+  const child = createChildProcessStub();
+  vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
+  const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+
+  try {
+    await expect(session.listCommands!()).rejects.toThrow("claude could not start");
+
+    // Non-live options apply on the next launch, so this must not be refused.
+    await expect(session.applyOptions!({ allowedTools: ["Read"] })).resolves.toBeUndefined();
+    // A later launch works, and it carries the change.
+    await expect(session.listCommands!()).resolves.toContainEqual(
+      expect.objectContaining({ name: "rewind" }),
+    );
+    expect(queryFactory).toHaveBeenCalledTimes(2);
+    expect(launchedOptions.at(-1)?.allowedTools).toEqual(["Read"]);
+  } finally {
+    await session.close();
+  }
 });
