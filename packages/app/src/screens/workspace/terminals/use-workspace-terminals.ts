@@ -6,7 +6,6 @@ import { resolveTerminalProfileLaunch } from "@getpaseo/protocol/terminal-profil
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useTranslation } from "react-i18next";
 import { useReplicaQuery } from "@/data/query";
-import { workspaceTerminalsPushRoute } from "@/data/push-router";
 import {
   buildTerminalsQueryKey,
   canCreateWorkspaceTerminal,
@@ -16,6 +15,7 @@ import {
   reconcilePendingScriptTerminals,
   removeTerminalFromPayload,
   type ListTerminalsPayload,
+  resolveWorkspaceTerminalsPushRoute,
   upsertCreatedTerminalPayload,
 } from "@/screens/workspace/terminals/state";
 
@@ -82,11 +82,11 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
     queryKey,
     enabled: canCreateNow,
     pushEvent: "terminals_changed",
-    meta: workspaceTerminalsPushRoute({
+    meta: resolveWorkspaceTerminalsPushRoute({
       enabled: canCreateNow,
       serverId: normalizedServerId,
-      cwd: workspaceDirectory ?? "",
-      ...(paneWorkspaceId ? { workspaceId: paneWorkspaceId } : {}),
+      workspaceDirectory,
+      workspaceId: paneWorkspaceId,
     }),
     queryFn: async () => {
       if (!client || !workspaceDirectory) {
