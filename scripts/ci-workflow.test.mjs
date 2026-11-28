@@ -126,13 +126,18 @@ test("pull-request checks run for every base branch, including stacked PRs", () 
   }
 });
 
-test("change gating allows superseded workflow runs to cancel", () => {
+test("superseded CI runs cancel everywhere except main", () => {
   const ci = readFileSync(ciWorkflowPath, "utf8");
-  assert.match(
-    ci,
-    /^concurrency:\n  group: ci-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\n  cancel-in-progress: true$/m,
-    "a newer push to any ref, main included, cancels the superseded run",
-  );
+  const concurrency =
+    /^concurrency:\n  group: ci-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\n  cancel-in-progress: \$\{\{ (.+) \}\}$/m.exec(
+      ci,
+    );
+  assert.ok(concurrency, "CI groups runs by ref and decides cancellation per ref");
+  const cancels = (ref) => runInNewContext(concurrency[1], { github: { ref } });
+  // A run cancelled mid-flight leaves CANCELLED checks, which paint the main commit red.
+  assert.equal(cancels("refs/heads/main"), false);
+  assert.equal(cancels("refs/pull/1/merge"), true);
+  assert.equal(cancels("refs/heads/release/1.0"), true);
   for (const workflowPath of [ciWorkflowPath, dockerWorkflowPath, nixWorkflowPath]) {
     const source = readFileSync(workflowPath, "utf8");
     assert.doesNotMatch(
@@ -294,7 +299,7 @@ test("PR routing declares stable behavior ownership", () => {
       "packages/react-native-enriched-markdown/**",
     ],
     relay: ["packages/relay/**"],
-    cli: ["packages/cli/**"],
+    cli: ["packages/cli/**", "packages/server/**", "plugins/**"],
   });
 });
 
