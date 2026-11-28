@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { app } from "electron";
 import log from "electron-log/main";
 import { resolveCliInstallSourcePath } from "./path.js";
@@ -95,5 +96,13 @@ async function isOwnInstall(targetPath: string): Promise<boolean> {
 
 export async function getCliInstallStatus(): Promise<InstallStatus> {
   const targetPath = getCliTargetPath();
+  if (process.platform === "darwin" && app.isPackaged) {
+    // Earlier macOS releases linked the GUI executable directly. Offer Install again
+    // so the user can replace that link with the bundled CLI shim.
+    const link = await fs.readlink(targetPath).catch(() => null);
+    if (link !== null) {
+      return { installed: resolve(dirname(targetPath), link) !== app.getPath("exe") };
+    }
+  }
   return { installed: await pathOrSymlinkExists(targetPath) };
 }
