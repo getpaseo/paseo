@@ -2304,7 +2304,14 @@ class AcpRuntime {
     if (!active.deferred && wasOpenQualifying && !isOpen && this.toolKeepsTurnOpen(snapshot)) {
       active.crossedEndTurn = true;
     }
-    if (isOpenQualifying) active.replyState = "idle";
+    if (
+      isOpenQualifying ||
+      (!isOpen &&
+        this.toolKeepsTurnOpen(snapshot) &&
+        active.replyState === "settled_with_open_tools")
+    ) {
+      active.replyState = "idle";
+    }
     if (active.deferred) this.scheduleDeferredSettle();
   }
 

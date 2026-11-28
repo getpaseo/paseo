@@ -5518,7 +5518,7 @@ describe("deferTurnOnRunningTools", () => {
     }
   });
 
-  it("settles on the reply timer when reply usage arrives before the final background tool completes", async () => {
+  it("keeps the turn open after an interim status reply while another background tool is still running", async () => {
     const { connector, instances } = connectorHarness({
       handleRequest(instance, request) {
         if (request.method !== "session/prompt") return false;
@@ -5526,9 +5526,9 @@ describe("deferTurnOnRunningTools", () => {
           sessionId: "connector-session",
           update: {
             sessionUpdate: "tool_call",
-            toolCallId: "bg-u1",
+            toolCallId: "bg-interim-1",
             name: "run_command",
-            title: "Job 1",
+            title: "Build",
             status: "in_progress",
           },
         });
@@ -5536,9 +5536,9 @@ describe("deferTurnOnRunningTools", () => {
           sessionId: "connector-session",
           update: {
             sessionUpdate: "tool_call",
-            toolCallId: "bg-u2",
+            toolCallId: "bg-interim-2",
             name: "run_command",
-            title: "Job 2",
+            title: "Review",
             status: "in_progress",
           },
         });
@@ -5547,12 +5547,12 @@ describe("deferTurnOnRunningTools", () => {
       },
     });
     const registration = runAcpProvider({
-      id: "deferred-usage-before-tool",
-      label: "Deferred Usage Before Tool",
+      id: "deferred-interim-reply-two-tools",
+      label: "Deferred Interim Reply Two Tools",
       connector,
       acpOptions: {
         deferTurnOnRunningTools: {
-          settleDelayMs: 30,
+          settleDelayMs: 40,
           quietLimitMs: 1_500,
         },
       },
@@ -5570,9 +5570,9 @@ describe("deferTurnOnRunningTools", () => {
         type: "session.prompt",
         sessionId: "session-1",
         prompt: {
-          clientMessageId: "usage-first-turn",
+          clientMessageId: "interim-two-tools-turn",
           delivery: "auto",
-          input: { type: "message", content: [{ type: "text", text: "run jobs" }] },
+          input: { type: "message", content: [{ type: "text", text: "build and review" }] },
         },
       });
       await waitForEvent(
@@ -5580,47 +5580,310 @@ describe("deferTurnOnRunningTools", () => {
         (event) =>
           event.type === "timeline.item" &&
           event.item.type === "tool_call" &&
-          event.item.id === "bg-u2",
+          event.item.id === "bg-interim-2",
       );
       await new Promise((resolve) => setTimeout(resolve, 20));
 
-      // Job 1 finishes, reply + usage_update arrive while Job 2 is still running.
+      // Job 1 completes and the agent sends an interim status reply + usage while Job 2 is still running.
       instances[1].notify("session/update", {
         sessionId: "connector-session",
-        update: { sessionUpdate: "tool_call_update", toolCallId: "bg-u1", status: "completed" },
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "bg-interim-1",
+          status: "completed",
+        },
       });
       instances[1].notify("session/update", {
         sessionId: "connector-session",
-        update: textChunk("All done."),
+        update: textChunk("Build passed, waiting on review."),
       });
       instances[1].notify("session/update", {
         sessionId: "connector-session",
         update: { sessionUpdate: "usage_update", used: 300, size: 1000 },
       });
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      // Still running because Job 2 has not completed yet.
+      await new Promise((resolve) => setTimeout(resolve, 60));
       expect(
         events.some(
           (event) =>
             event.type === "session.turn" &&
-            event.turnId === "acp:usage-first-turn" &&
+            event.turnId === "acp:interim-two-tools-turn" &&
             event.state !== "started",
         ),
       ).toBe(false);
 
-      // Job 2 completes -> should settle via settleDelayMs, not quietLimitMs.
+      // Job 2 completes; pause longer than settleDelayMs to simulate LLM TTFB before wakeup chunks stream.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "bg-interim-2",
+          status: "completed",
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 160));
+      expect(
+        events.some(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:interim-two-tools-turn" &&
+            event.state !== "started",
+        ),
+      ).toBe(false);
+
+      // Follow-up reply arrives after all tools are complete -> settles via settleDelayMs.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "Reviewing findings..." },
+        },
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("Review complete and applied."),
+      });
       const startedAt = Date.now();
       instances[1].notify("session/update", {
         sessionId: "connector-session",
-        update: { sessionUpdate: "tool_call_update", toolCallId: "bg-u2", status: "completed" },
+        update: { sessionUpdate: "usage_update", used: 450, size: 1000 },
       });
       await waitForEvent(
         events,
         (event) =>
           event.type === "session.turn" &&
-          event.turnId === "acp:usage-first-turn" &&
+          event.turnId === "acp:interim-two-tools-turn" &&
           event.state === "completed",
-        400,
+      );
+      expect(Date.now() - startedAt).toBeLessThan(400);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("keeps the turn open after a mid-wait status check reply on a single background tool", async () => {
+    const { connector, instances } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "bg-long",
+            name: "run_command",
+            title: "Long review",
+            status: "in_progress",
+          },
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-interim-status-check",
+      label: "Deferred Interim Status Check",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: {
+          settleDelayMs: 40,
+          quietLimitMs: 1_500,
+        },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "interim-status-check-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "run long review" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "bg-long",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      // Mid-wait notification wakes the agent to inspect task status and send a progress update.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "check-1",
+          name: "manage_task",
+          title: "Manage task",
+          status: "in_progress",
+        },
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "check-1",
+          status: "completed",
+        },
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("Still running, continuing to wait."),
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 250, size: 1000 },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 60));
+
+      // Long background job finally completes; turn must remain open past settleDelayMs for follow-up.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "bg-long",
+          status: "completed",
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 160));
+      expect(
+        events.some(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:interim-status-check-turn" &&
+            event.state !== "started",
+        ),
+      ).toBe(false);
+
+      // Final reply arrives -> settles quickly via settleDelayMs.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("Long review finished."),
+      });
+      const startedAt = Date.now();
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 400, size: 1000 },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:interim-status-check-turn" &&
+          event.state === "completed",
+      );
+      expect(Date.now() - startedAt).toBeLessThan(400);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("settles on the reply timer when an open tool is reclassified as an excluded daemon after reply usage", async () => {
+    const { connector, instances } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "late-daemon",
+            name: "run_command",
+            title: "Dev server",
+            status: "in_progress",
+          },
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-daemon-reclassify-after-usage",
+      label: "Deferred Daemon Reclassify After Usage",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: {
+          settleDelayMs: 40,
+          quietLimitMs: 1_500,
+          keepsTurnOpen(toolCall) {
+            const input = toolCall.input;
+            if (typeof input !== "object" || input === null || Array.isArray(input)) return true;
+            return input.IsDaemon !== true;
+          },
+        },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "daemon-reclassify-after-usage-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "start dev server" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "late-daemon",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      // Final reply + usage arrive before rawInput identifies the running tool as a daemon.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("Dev server is up."),
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 200, size: 1000 },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(
+        events.some(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:daemon-reclassify-after-usage-turn" &&
+            event.state !== "started",
+        ),
+      ).toBe(false);
+
+      // Reclassifying the still-running tool as a daemon releases the settled reply on settleDelayMs.
+      const startedAt = Date.now();
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "late-daemon",
+          status: "in_progress",
+          rawInput: { CommandLine: "npm run dev", IsDaemon: true },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:daemon-reclassify-after-usage-turn" &&
+          event.state === "completed",
       );
       expect(Date.now() - startedAt).toBeLessThan(400);
     } finally {
