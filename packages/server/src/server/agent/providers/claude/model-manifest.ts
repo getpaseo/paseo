@@ -15,6 +15,8 @@ interface ClaudeModelManifestEntry {
   defaultThinkingOptionId?: ClaudeEffortLevel;
   supportsThinkingDisabled?: boolean;
   supportsFastMode?: boolean;
+  /** A previous release. Pickers fold it behind the current models. */
+  legacy?: boolean;
 }
 
 const CLAUDE_EFFORT_LEVELS = {
@@ -49,6 +51,7 @@ export const CLAUDE_MODEL_MANIFEST = [
   },
   {
     id: "claude-opus-5",
+    legacy: true,
     label: "Opus 5",
     description: "Opus 5 · Previous release",
     defaultPriority: 2,
@@ -71,6 +74,7 @@ export const CLAUDE_MODEL_MANIFEST = [
   },
   {
     id: "claude-mythos-5-1",
+    legacy: true,
     label: "Mythos 5.1",
     requiresDiscovery: true,
     description: "Mythos 5.1 · Requires verified access",
@@ -89,6 +93,7 @@ export const CLAUDE_MODEL_MANIFEST = [
   },
   {
     id: "claude-fable-5-1",
+    legacy: true,
     label: "Fable 5.1",
     description: "Fable 5.1 · Previous release",
     contextWindowMaxTokens: 1_000_000,
@@ -96,6 +101,7 @@ export const CLAUDE_MODEL_MANIFEST = [
   },
   {
     id: "claude-fable-5",
+    legacy: true,
     // COMPAT(claudeFable5OneMillionId): added in v0.3.0, remove after 2027-02-06 once pre-v0.3.0 app preferences are outside support.
     aliases: ["claude-fable-5[1m]"],
     label: "Fable 5",
@@ -106,6 +112,7 @@ export const CLAUDE_MODEL_MANIFEST = [
   },
   {
     id: "claude-opus-4-8[1m]",
+    legacy: true,
     label: "Opus 4.8 1M",
     description: "Opus 4.8 with 1M context window",
     contextWindowMaxTokens: 1_000_000,
@@ -115,6 +122,7 @@ export const CLAUDE_MODEL_MANIFEST = [
   },
   {
     id: "claude-opus-4-8",
+    legacy: true,
     label: "Opus 4.8",
     description: "Opus 4.8 · Previous release",
     defaultPriority: 1,
@@ -134,6 +142,7 @@ export const CLAUDE_MODEL_MANIFEST = [
   },
   {
     id: "claude-sonnet-5",
+    legacy: true,
     label: "Sonnet 5",
     description: "Sonnet 5 · Previous release",
     contextWindowMaxTokens: 200_000,
@@ -142,6 +151,7 @@ export const CLAUDE_MODEL_MANIFEST = [
   },
   {
     id: "claude-sonnet-5[1m]",
+    legacy: true,
     label: "Sonnet 5 1M",
     description: "Sonnet 5 with 1M context window",
     contextWindowMaxTokens: 1_000_000,
@@ -150,6 +160,7 @@ export const CLAUDE_MODEL_MANIFEST = [
   },
   {
     id: "claude-opus-4-7[1m]",
+    legacy: true,
     label: "Opus 4.7 1M",
     description: "Opus 4.7 with 1M context window",
     contextWindowMaxTokens: 1_000_000,
@@ -159,6 +170,7 @@ export const CLAUDE_MODEL_MANIFEST = [
   },
   {
     id: "claude-opus-4-7",
+    legacy: true,
     label: "Opus 4.7",
     description: "Opus 4.7 · Previous release",
     contextWindowMaxTokens: 200_000,
@@ -168,6 +180,7 @@ export const CLAUDE_MODEL_MANIFEST = [
   },
   {
     id: "claude-opus-4-6[1m]",
+    legacy: true,
     label: "Opus 4.6 1M",
     description: "Opus 4.6 with 1M context window",
     contextWindowMaxTokens: 1_000_000,
@@ -177,6 +190,7 @@ export const CLAUDE_MODEL_MANIFEST = [
   },
   {
     id: "claude-opus-4-6",
+    legacy: true,
     label: "Opus 4.6",
     description: "Opus 4.6 · Most capable for complex work",
     contextWindowMaxTokens: 200_000,
@@ -186,6 +200,7 @@ export const CLAUDE_MODEL_MANIFEST = [
   },
   {
     id: "claude-sonnet-4-6[1m]",
+    legacy: true,
     label: "Sonnet 4.6 1M",
     description: "Sonnet 4.6 with 1M context window",
     contextWindowMaxTokens: 1_000_000,
@@ -194,6 +209,7 @@ export const CLAUDE_MODEL_MANIFEST = [
   },
   {
     id: "claude-sonnet-4-6",
+    legacy: true,
     label: "Sonnet 4.6",
     description: "Sonnet 4.6 · Best for everyday tasks",
     contextWindowMaxTokens: 200_000,
@@ -212,6 +228,7 @@ export const CLAUDE_MODEL_MANIFEST = [
   },
   {
     id: "claude-haiku-4-5",
+    legacy: true,
     label: "Haiku 4.5",
     description: "Haiku 4.5 · Previous release",
     contextWindowMaxTokens: 200_000,
@@ -285,6 +302,9 @@ export function getClaudeManifestModels(
     }
     if (model === defaultModel) {
       definition.isDefault = true;
+    } else if (model.legacy) {
+      // An older Claude Code can default to a previous release; the default stays current.
+      definition.legacy = true;
     }
     if (model.contextWindowMaxTokens !== undefined) {
       definition.contextWindowMaxTokens = model.contextWindowMaxTokens;

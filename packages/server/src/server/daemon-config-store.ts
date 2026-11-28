@@ -448,7 +448,7 @@ export function applyMutableProviderConfigToOverrides(
   for (const [providerId, providerConfig] of Object.entries(mutableProviders ?? {})) {
     const previousOverride = nextOverrides[providerId];
     const parsedOverride = ProviderOverrideSchema.strip().parse(providerConfig);
-    nextOverrides[providerId] = {
+    nextOverrides[providerId] = withNormalizedShownModels({
       ...previousOverride,
       ...parsedOverride,
       ...(parsedOverride.paseoTools
@@ -459,10 +459,29 @@ export function applyMutableProviderConfigToOverrides(
             },
           }
         : {}),
-    };
+    });
   }
 
   return nextOverrides;
+}
+
+/** Shown models keep their first-picked order; an empty list means show every model. */
+function withNormalizedShownModels<T extends { shownModels?: string[] }>(provider: T): T {
+  if (provider.shownModels === undefined) return provider;
+  const { shownModels, ...rest } = provider;
+  const unique = [...new Set(shownModels)];
+  return (unique.length > 0 ? { ...rest, shownModels: unique } : rest) as T;
+}
+
+function withNormalizedProvidersShownModels(
+  providers: MutableDaemonConfig["providers"],
+): MutableDaemonConfig["providers"] {
+  return Object.fromEntries(
+    Object.entries(providers).map(([providerId, provider]) => [
+      providerId,
+      withNormalizedShownModels(provider),
+    ]),
+  );
 }
 
 export class DaemonConfigStore {
@@ -554,6 +573,7 @@ export class DaemonConfigStore {
     const { features: speechPatch, ...configPatch } = patch;
     const removedProviders = Array.from(new Set(removeProviders));
     const merged = deepMerge(this.current, configPatch);
+    merged.providers = withNormalizedProvidersShownModels(merged.providers);
     if (speechPatch !== undefined) Object.assign(merged, this.readPatchedSpeech(speechPatch));
     if (parsedPatch.skills?.selection !== undefined) {
       merged.skills = { selection: parsedPatch.skills.selection };

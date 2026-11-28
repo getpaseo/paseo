@@ -23,6 +23,8 @@ export interface ProviderSelectionModelRow {
   modelLabel: string;
   description?: string;
   isDefault?: boolean;
+  /** A previous release, folded behind the current models. */
+  legacy?: boolean;
 }
 
 function buildModelRowKey(provider: string, modelId: string): string {
@@ -38,6 +40,8 @@ export interface ProviderSelectorProvider {
   id: string;
   label: string;
   modelSelection: ProviderModelSelection;
+  /** User-picked model IDs, in display order. Absent means the user picked none. */
+  shownModels?: readonly string[];
 }
 
 export interface ProviderSelectionState {
@@ -67,6 +71,7 @@ function buildModelRows(
     modelLabel: model.label,
     description: model.description ?? model.id,
     isDefault: model.isDefault,
+    ...(model.legacy ? { legacy: true } : {}),
   }));
 }
 
@@ -153,6 +158,7 @@ export function buildSelectorProvider(
     id: entry.provider,
     label,
     modelSelection: buildEntryModelSelection(entry, label, isConnected),
+    ...(entry.shownModels ? { shownModels: entry.shownModels } : {}),
   };
 }
 

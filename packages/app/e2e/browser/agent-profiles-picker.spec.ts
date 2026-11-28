@@ -6,16 +6,15 @@ import {
   expectComposerDoesNotName,
   expectAgentProfilesEmptyPrompt,
   expectHostAgentProfiles,
-  expectProfileEditTooltip,
   expectComposerMode,
   expectCreateProfileFromModelRow,
   expectComposerModel,
   expectModelRowProfileActionBesideRow,
   expectModelRowSelected,
-  expectProfileEditIsPencilOnly,
   expectProfileReachableByScrolling,
   expectProfileSearchResult,
-  expectProfileVisibleForProvider,
+  expectPickerProfile,
+  expectProfilesEditLink,
   fillAgentProfileName,
   openEditProfileFromModelRow,
   openModelPicker,
@@ -86,17 +85,19 @@ test.describe("Agent profiles in the model picker", () => {
         await expectComposerMode(page, "Load test");
       });
 
-      await test.step("the sole provider opens directly", async () => {
+      await test.step("the picker opens on the agent's provider with Profiles beside it", async () => {
         await openModelPicker(page);
-        await expect(page.getByTestId("model-search-input").first()).toBeVisible();
-        await expect(page.getByTestId("sheet-header-back")).toHaveCount(0);
-        await expect(page.locator('[data-testid^="model-provider-"]')).toHaveCount(0);
-        await expectProfileVisibleForProvider(page, {
+        await expect(page.getByTestId("model-search-input").first()).toBeFocused();
+        await expect(page.getByTestId("model-provider-mock")).toHaveAttribute(
+          "data-active",
+          "true",
+        );
+        await expectModelRowSelected(page, { provider: "mock", modelId: "ten-second-stream" });
+        await expectPickerProfile(page, {
           name: PROFILE.name,
           summary: PROFILE_SUMMARY,
         });
-        await expectProfileEditIsPencilOnly(page);
-        await expectProfileEditTooltip(page);
+        await expectProfilesEditLink(page);
       });
 
       await test.step("applying it writes its model and mode into the composer", async () => {
@@ -115,14 +116,13 @@ test.describe("Agent profiles in the model picker", () => {
         await expectComposerDoesNotName(page, PROFILE.name);
       });
 
-      await test.step("reopening returns directly to the provider models", async () => {
+      await test.step("reopening returns to the provider models with the new model checked", async () => {
         await openModelPicker(page);
-        await expect(page.getByTestId("model-search-input").first()).toBeVisible();
-        await expectProfileVisibleForProvider(page, {
+        await expectModelRowSelected(page, { provider: "mock", modelId: "one-minute-stream" });
+        await expectPickerProfile(page, {
           name: PROFILE.name,
           summary: PROFILE_SUMMARY,
         });
-        await expectModelRowSelected(page, { provider: "mock", modelId: "one-minute-stream" });
         await closeModelPicker(page);
       });
     } finally {

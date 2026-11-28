@@ -44,9 +44,8 @@ async function expectProviderIcon(surface: Locator, paths: string[]): Promise<vo
 
 async function selectPluginModel(page: Page): Promise<void> {
   await openModelPicker(page);
-  await page.getByRole("button", { name: "Back", exact: true }).click();
-  await page.getByText("Direct provider example", { exact: true }).click();
-  await page.getByText("Example 1", { exact: true }).click();
+  await page.getByTestId("model-provider-direct-example").click();
+  await page.getByTestId("model-row-direct-example-example-1").click();
   await expect(page.getByRole("button", { name: MODEL_LABEL, exact: true })).toBeVisible();
 }
 

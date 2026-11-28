@@ -387,7 +387,10 @@ test.describe("Composer model and effort shortcuts", () => {
         const effortLabel = page.getByTestId("combined-model-selector-thinking-label");
         await expect(effortLabel).toHaveText("Medium");
         await toggleModelPickerFromComposer(page);
-        await expectModelPickerClosesFromSearch(page);
+        const drawerModelRow = page.getByTestId("agent-controls-model");
+        await expect(drawerModelRow).toBeVisible();
+        await page.keyboard.press(`${SHORTCUT_MOD}+Slash`);
+        await expect(drawerModelRow).toBeHidden();
         await cycleComposerEffort(page);
         await expect(effortLabel).toHaveText("High");
       });
