@@ -266,12 +266,12 @@ test("batches retain each sender's attachment context and image order", async ()
   expect(prompt).toEqual([
     {
       type: "text",
-      text: '<paseo-system version="1" kind="agent-message" source-agent-id="one" message-id="first">\nFirst\n</paseo-system>',
+      text: 'First\n\n<paseo-message kind="agent-message" message-id="first" source-agent-id="one" length="5"/>',
     },
     firstImage,
     {
       type: "text",
-      text: '<paseo-system version="1" kind="agent-message" source-agent-id="two" message-id="second">\nSecond\n\nGitHub Issue #42: Context\nhttps://example.com/42\n\nAttached\n</paseo-system>',
+      text: 'Second\n\nGitHub Issue #42: Context\nhttps://example.com/42\n\nAttached\n\n<paseo-message kind="agent-message" message-id="second" source-agent-id="two" length="66"/>',
     },
     secondImage,
   ]);

@@ -1,5 +1,3 @@
-import type { AgentMessage } from "@getpaseo/protocol/agent-message";
-import { buildAgentMessageDisplay } from "@getpaseo/protocol/paseo-tool-presentation/index";
 import type { PlanOutcome } from "@/components/plan-card";
 import type { ComponentType } from "react";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
@@ -15,7 +13,6 @@ type ToolCallStatus = "executing" | "running" | "completed" | "failed" | "cancel
 export type ToolCallPresentationIcon = ComponentType<{ size?: number; color?: string }>;
 
 interface BuildToolCallPresentationInput {
-  agentMessage?: AgentMessage;
   toolName: string;
   status: ToolCallStatus;
   error: unknown;
@@ -43,7 +40,6 @@ export interface ToolCallPresentation {
 export type ToolCallIconResolver = (
   toolName: string,
   detail: ToolCallDetail | undefined,
-  agentMessage: AgentMessage | undefined,
 ) => ToolCallPresentationIcon;
 
 function displayStatus(status: ToolCallStatus): ToolCallDisplayInput["status"] {
@@ -57,13 +53,10 @@ function displayDetail(detail: ToolCallDetail | undefined): ToolCallDetail {
 export function buildToolCallPresentation(
   input: BuildToolCallPresentationInput,
 ): ToolCallPresentation {
-  const detail = input.agentMessage
-    ? buildAgentMessageDisplay(input.agentMessage).detail
-    : input.detail;
+  const detail = input.detail;
   const detailForDisplay = displayDetail(detail);
   const displayModel = buildToolCallDisplayModel({
     name: input.toolName,
-    agentMessage: input.agentMessage,
     status: displayStatus(input.status),
     error: input.error ?? null,
     detail: detailForDisplay,
@@ -83,7 +76,7 @@ export function buildToolCallPresentation(
     displayName: displayModel.displayName,
     summary: displayModel.summary,
     errorText: displayModel.errorText,
-    icon: input.resolveIcon(input.toolName, detail, input.agentMessage),
+    icon: input.resolveIcon(input.toolName, detail),
     isLoadingDetails,
     hasDetails,
     canOpenDetails: hasDetails || isLoadingDetails,

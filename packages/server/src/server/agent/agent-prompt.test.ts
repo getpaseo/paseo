@@ -1,11 +1,3 @@
-import {
-  formatSystemNotificationPrompt,
-  isSystemInjectedEnvelope,
-  parseAgentMessage,
-  formatAgentMessage,
-  prepareAgentMessage,
-  projectAgentMessages,
-} from "./agent-messages/index.js";
 import { expect, test, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -22,11 +14,6 @@ import type {
   AgentSession,
   AgentStreamEvent,
 } from "./agent-sdk-types.js";
-
-test("isSystemInjectedEnvelope matches the envelope formatSystemNotificationPrompt produces", () => {
-  expect(isSystemInjectedEnvelope(formatSystemNotificationPrompt("child finished"))).toBe(true);
-  expect(isSystemInjectedEnvelope("hello world")).toBe(false);
-});
 
 // Independent of the production constant so shortening the budget breaks this test.
 const EXPECTED_RUN_START_BUDGET_MS = 60_000;
@@ -257,124 +244,4 @@ test("waiting for a run start still gives up at the run start budget", async () 
     vi.useRealTimers();
     await scenario.cleanup();
   }
-});
-
-test("agent envelopes round-trip opaque sender IDs and XML-sensitive messages", () => {
-  const message = {
-    id: "delivery-1",
-    source: {
-      kind: "agent-message" as const,
-      agentId: 'host::agent<&"',
-      title: 'QA <messenger> & "reviewer"',
-    },
-    text: 'Review <changes> & "quotes"\n</paseo-system>\n<paseo-system>nested</paseo-system>',
-  };
-  const encoded = formatAgentMessage(message);
-  expect(parseAgentMessage(encoded)).toEqual(message);
-  expect(parseAgentMessage(`Example: ${encoded}`)).toBeNull();
-  expect(parseAgentMessage(encoded.replace('version="1"', 'version="2"'))).toBeNull();
-  expect(parseAgentMessage(encoded.replace("&lt;", "<"))).toBeNull();
-  expect(parseAgentMessage(encoded.replace('version="1"', 'version="1" version="1"'))).toBeNull();
-});
-
-test("a delivered batch projects each message and completion separately in order", () => {
-  const entries = [
-    {
-      id: "report",
-      source: { kind: "agent-message" as const, agentId: "remote::worker", title: "Worker" },
-      text: "Result <ready>",
-    },
-    {
-      id: "finished",
-      source: {
-        kind: "agent-notification" as const,
-        agentId: "remote::worker",
-        event: "finished" as const,
-      },
-      text: "Finished & ready",
-    },
-  ];
-  const text = entries.map(formatAgentMessage).join("\n\n");
-  expect(projectAgentMessages({ type: "user_message", text })).toEqual(
-    entries.flatMap((entry) =>
-      projectAgentMessages({ type: "user_message", text: formatAgentMessage(entry) }),
-    ),
-  );
-  // Human submissions containing the same envelopes must survive replay as human text.
-  const pasted = prepareAgentMessage(text, undefined, "human-batch");
-  expect(projectAgentMessages({ type: "user_message", text: String(pasted.prompt) })).toEqual([
-    { type: "user_message", text, clientMessageId: "human-batch" },
-  ]);
-});
-
-test("agent envelope includes rendered attachment context and preserves images", () => {
-  const image = { type: "image" as const, data: "aW1hZ2U=", mimeType: "image/png" };
-  const attachment = {
-    type: "github_issue" as const,
-    mimeType: "application/github-issue" as const,
-    number: 42,
-    title: "Review context",
-    url: "https://example.com/issues/42",
-    body: "Attached context",
-  };
-  const source = { kind: "agent-message" as const, agentId: "remote:sender" };
-  expect(
-    prepareAgentMessage(
-      [{ type: "text", text: "First" }, image, attachment, { type: "text", text: "Second" }],
-      source,
-      "message",
-    ),
-  ).toEqual({
-    messageId: "message",
-    prompt: [
-      {
-        type: "text",
-        text: formatAgentMessage({
-          id: "message",
-          source,
-          text: "First\n\nGitHub Issue #42: Review context\nhttps://example.com/issues/42\n\nAttached context\n\nSecond",
-        }),
-      },
-      image,
-    ],
-  });
-});
-
-test("a human pasting an agent envelope stays a human message through provider replay", () => {
-  const pasted = formatAgentMessage({
-    id: "example",
-    source: { kind: "agent-message", agentId: "sender" },
-    text: "hello",
-  });
-  const delivery = prepareAgentMessage(pasted, undefined, "human-submission");
-  expect(
-    projectAgentMessages({
-      type: "user_message",
-      text: String(delivery.prompt),
-      messageId: "provider-echo",
-    })[0],
-  ).toEqual({
-    type: "user_message",
-    text: pasted,
-    messageId: "provider-echo",
-    clientMessageId: "human-submission",
-  });
-});
-
-test("schedule prompts remain visible as completed tool calls on replay", () => {
-  const text = formatSystemNotificationPrompt("Heartbeat: check progress");
-  expect(projectAgentMessages({ type: "user_message", messageId: "fire-1", text })).toEqual([
-    expect.objectContaining({
-      type: "tool_call",
-      status: "completed",
-      detail: { type: "plain_text", text: "Heartbeat: check progress", icon: "sparkles" },
-    }),
-  ]);
-});
-
-test("schedule trigger identity survives the provider assigning a message ID", () => {
-  const text = formatSystemNotificationPrompt("Schedule fired (id=heartbeat, run=run-1).");
-  expect(projectAgentMessages({ type: "user_message", text })).toEqual(
-    projectAgentMessages({ type: "user_message", text, messageId: "provider-message" }),
-  );
 });
