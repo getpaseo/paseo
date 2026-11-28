@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { runModeCommand } from "./mode.js";
 import { addArchiveOptions, runArchiveCommand } from "./archive.js";
+import { addMarkReadOptions, runMarkReadCommand } from "./mark-read.js";
 import { addDeleteOptions, runDeleteCommand } from "./delete.js";
 import { addLsOptions, runLsCommand } from "./ls.js";
 import { addRunOptions, runRunCommand } from "./run.js";
@@ -81,6 +82,10 @@ export function createAgentCommand(): Command {
 
   addJsonAndDaemonHostOptions(addArchiveOptions(agent.command("archive"))).action(
     withOutput(runArchiveCommand),
+  );
+
+  addJsonAndDaemonHostOptions(addMarkReadOptions(agent.command("mark-read"))).action(
+    withOutput(runMarkReadCommand),
   );
 
   addJsonAndDaemonHostOptions(addReloadOptions(agent.command("reload"))).action(
