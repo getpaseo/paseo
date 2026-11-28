@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { DiagramColorScheme, MermaidRenderRequest } from "./render-model";
-import { mermaidRuntimeHtml } from "./runtime/html.gen";
 import { parseMermaidRuntimeMessage, type MermaidRuntimeRenderMessage } from "./runtime/messages";
 import { MermaidRuntimeRequestDriver } from "./runtime/request-driver";
 
@@ -25,6 +24,7 @@ export function MermaidIframeRuntime({
   onRenderFailed,
 }: MermaidIframeRuntimeProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const [runtimeHtml, setRuntimeHtml] = useState<string | null>();
   const driverRef = useRef<MermaidRuntimeRequestDriver | null>(null);
   driverRef.current ??= new MermaidRuntimeRequestDriver();
 
@@ -44,6 +44,26 @@ export function MermaidIframeRuntime({
   useEffect(() => {
     sendRequest(driverRef.current?.update(request) ?? null);
   }, [request, sendRequest]);
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadRuntime() {
+      try {
+        const { mermaidRuntimeHtml } = await import("./runtime/html.gen");
+        if (mounted) setRuntimeHtml(mermaidRuntimeHtml);
+      } catch {
+        if (mounted) setRuntimeHtml(null);
+      }
+    }
+    void loadRuntime();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (runtimeHtml === null && request) onRenderFailed(request.revision);
+  }, [runtimeHtml, request, onRenderFailed]);
 
   useEffect(() => {
     function receiveMessage(event: MessageEvent): void {
@@ -66,6 +86,8 @@ export function MermaidIframeRuntime({
     return () => window.removeEventListener("message", receiveMessage);
   }, [onRenderFailed, onRendered, sendRequest]);
 
+  if (!runtimeHtml) return null;
+
   // `inert` (not just tabIndex) because the Modal focus trap focuses descendants
   // programmatically; a focused iframe swallows every keystroke, including Escape.
   return (
@@ -75,7 +97,7 @@ export function MermaidIframeRuntime({
       aria-hidden
       inert
       sandbox="allow-scripts"
-      srcDoc={mermaidRuntimeHtml}
+      srcDoc={runtimeHtml}
       tabIndex={-1}
       style={iframeStyle}
     />
