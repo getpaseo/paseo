@@ -10,6 +10,19 @@ interface ApplicationMenuOptions {
   onNewWindow: () => void;
 }
 
+export function buildWindowMenuItem(
+  platform: NodeJS.Platform,
+): Electron.MenuItemConstructorOptions {
+  if (platform === "darwin") {
+    return { role: "windowMenu" };
+  }
+
+  return {
+    label: "Window",
+    submenu: [{ role: "minimize" }, { role: "zoom" }, { role: "close" }],
+  };
+}
+
 function withBrowserWindow(
   callback: (win: BrowserWindow) => void,
 ): (_item: Electron.MenuItem, baseWin: Electron.BaseWindow | undefined) => void {
@@ -168,16 +181,7 @@ function buildApplicationMenuTemplate(
         { role: "togglefullscreen" },
       ],
     },
-    {
-      label: "Window",
-      submenu: [
-        { role: "minimize" },
-        { role: "zoom" },
-        ...(isMac
-          ? [{ type: "separator" as const }, { role: "front" as const }]
-          : [{ role: "close" as const }]),
-      ],
-    },
+    buildWindowMenuItem(process.platform),
   ];
 }
 
