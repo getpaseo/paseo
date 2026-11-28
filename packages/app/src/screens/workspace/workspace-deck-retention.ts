@@ -8,8 +8,40 @@ export interface RetainedWorkspaceSelection {
   inactiveSince: number | null;
 }
 
-export function resolveWorkspaceDeckRetentionLimit(input: { isNative: boolean }): number {
-  return input.isNative ? 1 : WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES;
+/**
+ * Shortest side of the display, in layout units, at which a native layout keeps more than the active
+ * workspace mounted. It is the screen, not the window: the window loses the keyboard's height on
+ * Android. A phone in landscape clears the 600 dp compact breakpoint without having the memory
+ * headroom of a tablet, so the breakpoint alone is the wrong gate either way.
+ */
+export const WORKSPACE_DECK_TABLET_MIN_SIDE = 800;
+
+/** Workspaces a native tablet layout keeps mounted. */
+export const WORKSPACE_DECK_NATIVE_TABLET_RETENTION = 3;
+
+/**
+ * How many workspaces stay mounted at once. Switching workspaces unmounts the ones over the limit,
+ * which costs a full cold mount and drops their panels, terminals and scroll positions, so a tablet
+ * keeps its last few warm. A phone keeps only the active one: upstream lowered the native limit to 1
+ * for that reason (`2a0a0ff65`, "retained inactive React trees making Hermes and Fabric work scale
+ * with prior usage").
+ *
+ * A compact layout keeps one too. Compact workspaces present their sheet tabs through the app
+ * overlay host (`SheetHostScope` is disabled when compact), and a sheet presents on mount and only
+ * leaves the stack when its workspace unmounts. A hidden but retained workspace would keep its
+ * sheet over whichever workspace the user moved to. Non-compact layouts render sheets inside the
+ * workspace, so retaining them is safe there.
+ */
+export function resolveWorkspaceDeckRetentionLimit(input: {
+  isNative: boolean;
+  isCompact: boolean;
+  shortestSide: number;
+}): number {
+  if (!input.isNative) return WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES;
+  if (input.isCompact) return 1;
+  return input.shortestSide >= WORKSPACE_DECK_TABLET_MIN_SIDE
+    ? WORKSPACE_DECK_NATIVE_TABLET_RETENTION
+    : 1;
 }
 
 interface ReconcileRetainedWorkspaceSelectionsInput {
