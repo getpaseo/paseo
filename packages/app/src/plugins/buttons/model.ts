@@ -25,7 +25,7 @@ export interface RegisteredPluginButton {
   context: PluginButtonContext;
   button: ResolvedPluginButton;
   pending: boolean;
-  open: boolean;
+  openOwner: symbol | null;
 }
 
 function resolveAction(
@@ -108,7 +108,7 @@ export class PluginButtonStore {
         context,
         button: initialButton,
         pending: false,
-        open: false,
+        openOwner: null,
       },
     ]);
     const unsubscribe = installation.i18n.subscribe(() => {
@@ -124,7 +124,7 @@ export class PluginButtonStore {
         const button = validateButton(nextSource, this.validation, installation.i18n.resolve);
         sourceButton = nextSource;
         const close = !button.visible || button.disabled || patch.behavior !== undefined;
-        this.replace(key, { button, open: close ? false : entry.open });
+        this.replace(key, { button, openOwner: close ? null : entry.openOwner });
       },
       remove: () => {
         unsubscribe();
@@ -134,11 +134,12 @@ export class PluginButtonStore {
     };
   }
 
-  setOpen(key: number, open: boolean): void {
+  setOpen(key: number, open: boolean, owner: symbol): void {
     const entry = this.entries.find((candidate) => candidate.key === key);
     if (!entry) return;
     if (open && (!entry.button.visible || entry.button.disabled || entry.pending)) return;
-    this.replace(key, { open });
+    if (!open && entry.openOwner !== owner) return;
+    this.replace(key, { openOwner: open ? owner : null });
   }
 
   async run(key: number, path: readonly string[] = []): Promise<void> {
@@ -156,7 +157,7 @@ export class PluginButtonStore {
 
   private replace(
     key: number,
-    patch: Partial<Pick<RegisteredPluginButton, "button" | "open" | "pending">>,
+    patch: Partial<Pick<RegisteredPluginButton, "button" | "openOwner" | "pending">>,
   ): void {
     if (!this.entries.some((entry) => entry.key === key)) return;
     this.publish(this.entries.map((entry) => (entry.key === key ? { ...entry, ...patch } : entry)));

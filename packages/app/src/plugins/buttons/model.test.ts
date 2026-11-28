@@ -55,6 +55,24 @@ function button(onPress = () => {}): PluginButton {
 }
 
 describe("plugin buttons", () => {
+  it("does not let an old view close another view's menu", () => {
+    const buttons = store();
+    buttons.addComposerPill(installation(), {
+      id: "review",
+      workspaceId: "workspace",
+      agentId: "agent",
+      button: button(),
+    });
+    const key = buttons.getSnapshot()[0].key;
+    const first = Symbol("first");
+    const second = Symbol("second");
+    buttons.setOpen(key, true, first);
+    buttons.setOpen(key, true, second);
+    buttons.setOpen(key, false, first);
+    expect(buttons.getSnapshot()[0].openOwner).toBe(second);
+    buttons.setOpen(key, false, second);
+    expect(buttons.getSnapshot()[0].openOwner).toBeNull();
+  });
   it("updates visibility in place, closes hidden content, and scopes each placement", () => {
     const buttons = store();
     const plugin = installation();
@@ -78,10 +96,10 @@ describe("plugin buttons", () => {
     expect(buttonMatches(buttons.getSnapshot()[1], "host-a", "workspace", "other-agent")).toBe(
       false,
     );
-    buttons.setOpen(first.key, true);
+    buttons.setOpen(first.key, true, Symbol("view"));
     header.update({ visible: false, label: "3 reviews" });
     expect(buttonMatches(buttons.getSnapshot()[0], "host-a", "workspace", null)).toBe(false);
-    expect(buttons.getSnapshot()[0].open).toBe(false);
+    expect(buttons.getSnapshot()[0].openOwner).toBeNull();
     header.update({ visible: true });
     expect(buttons.getSnapshot().map((entry) => entry.key)).toEqual([first.key, first.key + 1]);
     expect(buttons.getSnapshot()[0].button.label).toBe("3 reviews");
@@ -227,12 +245,13 @@ it("updates translated tooltips and nested menu labels without closing open cont
     },
   });
   const original = buttons.getSnapshot()[0];
-  buttons.setOpen(original.key, true);
+  const owner = Symbol("view");
+  buttons.setOpen(original.key, true, owner);
   locale = "zh-CN";
   for (const listener of listeners) listener();
   const translated = buttons.getSnapshot()[0];
   expect(translated.key).toBe(original.key);
-  expect(translated.open).toBe(true);
+  expect(translated.openOwner).toBe(owner);
   expect(translated.button.title).toBe("笔记");
   expect(translated.button.behavior).toMatchObject({
     kind: "menu",
