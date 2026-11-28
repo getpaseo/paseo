@@ -45,7 +45,12 @@ export function buildPluginCommandCenterContributions(
                 );
                 if (!panel) throw new Error(`Workspace panel is unavailable: ${panelId}`);
                 const location = resolvePluginPanelOpenLocation(panel, options?.location);
-                source.navigation.openWorkspacePanel(plugin.id, panelId, location);
+                source.navigation.openWorkspacePanel({
+                  pluginId: plugin.id,
+                  panelId,
+                  location,
+                  background: options?.background,
+                });
               },
             });
             return;
@@ -61,11 +66,17 @@ export function buildPluginCommandCenterContributions(
               const panel = plugin.workspacePanels.find((candidate) => candidate.id === panelId);
               if (!panel) throw new Error(`Workspace panel is unavailable: ${panelId}`);
               const location = resolvePluginPanelOpenLocation(panel, options?.location);
+              const request = {
+                pluginId: plugin.id,
+                panelId,
+                location,
+                background: options?.background,
+              };
               if (panel.context === "workspace") {
-                source.navigation.openWorkspacePanel(plugin.id, panelId, location);
+                source.navigation.openWorkspacePanel(request);
                 return;
               }
-              source.navigation.openAgentPanel(plugin.id, panelId, agent.id, location);
+              source.navigation.openAgentPanel({ ...request, agentId: agent.id });
             },
           });
         } catch (error) {
