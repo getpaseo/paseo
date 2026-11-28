@@ -5869,6 +5869,62 @@ export class DaemonClient {
     });
   }
 
+  private assertUploadTransportConnected(uploadTransport: DaemonTransport | null): void {
+    if (this.transport !== uploadTransport || this.connectionState.status !== "connected") {
+      throw new DaemonConnectionError("Connection changed during file upload");
+    }
+  }
+
+  private async streamUploadFileChunks(params: {
+    bytes: Uint8Array;
+    chunkSize: number;
+    requestId: string;
+    uploadTransport: DaemonTransport | null;
+    isSettled: () => boolean;
+    responsePromise: Promise<FileUploadResult>;
+    sendFrame: (frame: Uint8Array) => Promise<unknown>;
+  }): Promise<boolean> {
+    const { bytes, chunkSize, requestId, uploadTransport, isSettled, responsePromise, sendFrame } =
+      params;
+    const unpaced = uploadTransport?.supportsDrain === false;
+    // On transports without bufferedAmount backpressure (React Native / Android OkHttp),
+    // confirm a 1 MiB window has drained via a correlated session ping/pong before queuing
+    // more chunks so OkHttp's 16 MiB outbound queue never overflows and closes with code 1001.
+    const unpacedFlushWindowBytes = 1024 * 1024;
+    let unpacedBytesSinceFlush = 0;
+
+    for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
+      // Native WebSocket.send encodes binary synchronously. Let rendering and
+      // incoming messages run between bounded pieces on every platform.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      if (isSettled()) return true;
+      this.assertUploadTransportConnected(uploadTransport);
+      const chunkEnd = Math.min(offset + chunkSize, bytes.byteLength);
+      const chunk = bytes.subarray(offset, chunkEnd);
+      await sendFrame(
+        encodeFileTransferFrame({
+          opcode: FileTransferOpcode.FileChunk,
+          requestId,
+          payload: chunk,
+        }),
+      );
+      if (!unpaced) continue;
+      unpacedBytesSinceFlush += chunk.byteLength;
+      if (unpacedBytesSinceFlush < unpacedFlushWindowBytes || chunkEnd >= bytes.byteLength) {
+        continue;
+      }
+      unpacedBytesSinceFlush = 0;
+      if (isSettled()) return true;
+      this.assertUploadTransportConnected(uploadTransport);
+      const flushPing = this.ping({ timeoutMs: 0 });
+      void flushPing.catch(() => undefined);
+      await Promise.race([flushPing, responsePromise]);
+      if (isSettled()) return true;
+    }
+
+    return false;
+  }
+
   async uploadFile(input: FileUploadInput): Promise<FileUploadResult> {
     const bytes = asUint8Array(input.bytes);
     if (!bytes) {
@@ -5879,6 +5935,9 @@ export class DaemonClient {
     const uploadTransport = this.transport;
     const resolvedRequestId = this.createRequestId(input.requestId);
     const modifiedAt = input.modifiedAt ?? new Date().toISOString();
+    // Do not start the 60s RPC deadline while chunks are still streaming; slow uplinks can
+    // legitimately take longer than 60s to finish sending all chunks. The response deadline
+    // starts once FileEnd is sent.
     const responsePromise = this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message: {
@@ -5890,6 +5949,7 @@ export class DaemonClient {
         requestId: resolvedRequestId,
       },
       responseType: "file.upload.response",
+      timeout: 0,
       options: { skipQueue: true },
     });
 
@@ -5922,23 +5982,16 @@ export class DaemonClient {
       );
 
       if (settled) return await responsePromise;
-      const chunkSize = input.chunkSize ?? 128 * 1024;
-      for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
-        // Native WebSocket.send encodes binary synchronously. Let rendering and
-        // incoming messages run between bounded pieces on every platform.
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        if (settled) return await responsePromise;
-        if (this.transport !== uploadTransport || this.connectionState.status !== "connected") {
-          throw new DaemonConnectionError("Connection changed during file upload");
-        }
-        await sendFrame(
-          encodeFileTransferFrame({
-            opcode: FileTransferOpcode.FileChunk,
-            requestId: resolvedRequestId,
-            payload: bytes.subarray(offset, Math.min(offset + chunkSize, bytes.byteLength)),
-          }),
-        );
-      }
+      const settledDuringChunks = await this.streamUploadFileChunks({
+        bytes,
+        chunkSize: input.chunkSize ?? 128 * 1024,
+        requestId: resolvedRequestId,
+        uploadTransport,
+        isSettled: () => settled,
+        responsePromise,
+        sendFrame,
+      });
+      if (settledDuringChunks) return await responsePromise;
 
       await sendFrame(
         encodeFileTransferFrame({
@@ -5954,7 +6007,20 @@ export class DaemonClient {
       throw error;
     }
 
-    return responsePromise;
+    if (settled) return await responsePromise;
+    let responseDeadline: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const timeoutError = new DaemonConnectionError(
+        `No response to file.upload.request after ${DEFAULT_SESSION_RPC_TIMEOUT_MS}ms`,
+        "DAEMON_REQUEST_TIMEOUT",
+      );
+      responseDeadline = setTimeout(() => {
+        this.rejectWaitersForRequestId(resolvedRequestId, timeoutError);
+      }, DEFAULT_SESSION_RPC_TIMEOUT_MS);
+      return await responsePromise;
+    } finally {
+      if (responseDeadline !== null) clearTimeout(responseDeadline);
+    }
   }
 
   async requestDownloadToken(

@@ -178,6 +178,7 @@ export interface AttachmentStore {
   readonly storageType: AttachmentStorageType;
   save(input: SaveAttachmentInput): Promise<AttachmentMetadata>;
   encodeBase64(input: EncodeAttachmentInput): Promise<string>;
+  readBytes(input: EncodeAttachmentInput): Promise<Uint8Array>;
   resolvePreviewUrl(input: ResolvePreviewUrlInput): Promise<string>;
   releasePreviewUrl?(input: ReleasePreviewUrlInput): Promise<void>;
   delete(input: DeleteAttachmentInput): Promise<void>;

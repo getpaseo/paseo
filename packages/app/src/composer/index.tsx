@@ -85,7 +85,7 @@ import {
 import type { ImageAttachment, MessagePayload, TextReplacement } from "./types";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { DraftCommandTarget } from "@/agent-commands";
-import { encodeImages } from "@/utils/encode-images";
+import { normalizePickedImageAssets } from "@/hooks/image-attachment-picker";
 import { focusWithRetries } from "@/utils/web-focus";
 import {
   cancelComposerAgent,
@@ -1726,7 +1726,6 @@ function ComposerContentImpl({
         attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
           supportsForgeAttachments: supportsForgeSearch,
         }),
-        encodeImages,
         submission: createMessageSubmissionWriter(serverId),
         activeTurnBehavior,
         activeTurnId:
@@ -1926,7 +1925,24 @@ function ComposerContentImpl({
     (files: readonly NativePastedFile[]) => {
       setPendingNativeImagePastes((pending) => pending + 1);
       void pickAndPersistImages({
-        pickImages: async () => normalizeNativePastedImages(files),
+        pickImages: async () => {
+          const pasted = normalizeNativePastedImages(files);
+          const result = [];
+          for (const item of pasted) {
+            if (
+              item.source.kind === "file_uri" &&
+              (item.mimeType === "image/heic" || item.mimeType === "image/heif")
+            ) {
+              const converted = await normalizePickedImageAssets([
+                { uri: item.source.uri, mimeType: item.mimeType, fileName: item.fileName },
+              ]);
+              result.push(...converted);
+            } else {
+              result.push(item);
+            }
+          }
+          return result;
+        },
         persister: composerImageAttachmentPersister,
       })
         .then((newImages) => {

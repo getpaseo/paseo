@@ -1,7 +1,11 @@
 import type { SelectedFile } from "@/attachments/selected-file";
+import { uploadImageAttachments } from "@/attachments/service";
 import { FILE_UPLOAD_MAX_BYTES } from "@/attachments/upload-limit";
-import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
-import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
+import type {
+  ActiveTurnBehavior,
+  ForgeSearchItem,
+  UploadedFileAttachment,
+} from "@getpaseo/protocol/messages";
 import type {
   AttachmentMetadata,
   ComposerAttachment,
@@ -52,20 +56,13 @@ export interface ComposerSendClient {
     options: {
       messageId: string;
       activeTurnBehavior?: ActiveTurnBehavior;
-      images: Array<{ data: string; mimeType: string }>;
+      images?: Array<{ data: string; mimeType: string }>;
       attachments: ReturnType<typeof splitComposerAttachmentsForSubmit>["attachments"];
     },
   ) => Promise<unknown>;
   uploadFile: (input: { fileName: string; mimeType: string; bytes: Uint8Array }) => Promise<{
     requestId: string;
-    file: {
-      type: "uploaded_file";
-      id: string;
-      fileName: string;
-      mimeType: string;
-      size: number;
-      path: string;
-    } | null;
+    file: UploadedFileAttachment | null;
     error: string | null;
   }>;
 }
@@ -191,9 +188,7 @@ export interface DispatchComposerAgentMessageInput {
   text: string;
   attachments: ComposerAttachment[];
   attachmentSubmitFormat?: ComposerAttachmentSubmitFormat;
-  encodeImages: (
-    images: AttachmentMetadata[],
-  ) => Promise<Array<{ data: string; mimeType: string }> | undefined>;
+  uploadImages?: (images: AttachmentMetadata[]) => Promise<UploadedFileAttachment[] | undefined>;
   submission: MessageSubmissionWriter;
   activeTurnBehavior?: ActiveTurnBehavior;
   activeTurnId?: string;
@@ -218,12 +213,13 @@ export async function dispatchComposerAgentMessage(
   });
   input.submission.begin(input.agentId, userMessage);
   try {
-    const imagesData = await input.encodeImages(wirePayload.images);
+    const uploadedImageAttachments = input.uploadImages
+      ? await input.uploadImages(wirePayload.images)
+      : await uploadImageAttachments({ client: input.client, images: wirePayload.images });
     await input.client.sendAgentMessage(input.agentId, input.text, {
       messageId: clientMessageId,
       ...(input.activeTurnBehavior ? { activeTurnBehavior: input.activeTurnBehavior } : {}),
-      images: imagesData ?? [],
-      attachments: wirePayload.attachments,
+      attachments: [...wirePayload.attachments, ...(uploadedImageAttachments ?? [])],
     });
     input.submission.accept(input.agentId, clientMessageId);
   } catch (error) {

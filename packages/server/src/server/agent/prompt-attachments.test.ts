@@ -1,9 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   buildAgentBranchNameSeed,
   buildAgentPrompt,
   renderPromptAttachmentAsText,
+  resolveAgentPrompt,
 } from "./prompt-attachments.js";
 
 describe("prompt attachments", () => {
@@ -193,5 +197,177 @@ describe("prompt attachments", () => {
     ).toBe(
       "<user-prompt>\nInvestigate flaky test\n</user-prompt>\n\n<attachments>\nGitHub PR #123: Fix worktree naming\nhttps://github.com/getpaseo/paseo/pull/123\nBase: main\nHead: fix/worktree-naming\n</attachments>",
     );
+  });
+});
+
+describe("resolveAgentPrompt uploaded images", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(async () => {
+    for (const dir of tempDirs.splice(0)) {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  async function makeHome() {
+    const home = await realpath(await mkdtemp(join(tmpdir(), "paseo-prompt-img-")));
+    tempDirs.push(home);
+    await mkdir(join(home, "uploads", "upload_1"), { recursive: true });
+    return home;
+  }
+
+  it("resolves uploaded_file attachments with role='image' inside paseoHome/uploads into native image prompt blocks while keeping plain uploaded_file attachments intact", async () => {
+    const home = await makeHome();
+    const rawBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const imagePath = join(home, "uploads", "upload_1", "photo.png");
+    await writeFile(imagePath, rawBytes);
+    const plainFileAttachment = {
+      type: "uploaded_file" as const,
+      id: "upload_plain",
+      fileName: "report.pdf",
+      mimeType: "application/pdf",
+      size: 512,
+      path: join(home, "uploads", "upload_plain", "report.pdf"),
+    };
+
+    const prompt = await resolveAgentPrompt({
+      paseoHome: home,
+      text: "What is in this image?",
+      attachments: [
+        plainFileAttachment,
+        {
+          type: "uploaded_file",
+          id: "upload_1",
+          fileName: "photo.png",
+          mimeType: "image/png",
+          size: rawBytes.byteLength,
+          path: imagePath,
+          role: "image",
+        },
+      ],
+    });
+
+    expect(prompt).toEqual([
+      { type: "text", text: "What is in this image?" },
+      {
+        type: "image",
+        data: rawBytes.toString("base64"),
+        mimeType: "image/png",
+        uploadedImage: {
+          id: "upload_1",
+          fileName: "photo.png",
+          mimeType: "image/png",
+          size: rawBytes.byteLength,
+          path: imagePath,
+        },
+      },
+      plainFileAttachment,
+    ]);
+  });
+
+  it("supports image-only prompts with empty text", async () => {
+    const home = await makeHome();
+    const rawBytes = Buffer.from("jpeg-bytes");
+    const imagePath = join(home, "uploads", "upload_1", "only.jpg");
+    await writeFile(imagePath, rawBytes);
+
+    const prompt = await resolveAgentPrompt({
+      paseoHome: home,
+      text: "   ",
+      attachments: [
+        {
+          type: "uploaded_file",
+          id: "upload_1",
+          fileName: "only.jpg",
+          mimeType: "image/jpeg",
+          size: rawBytes.byteLength,
+          path: imagePath,
+          role: "image",
+        },
+      ],
+    });
+
+    expect(prompt).toEqual([
+      {
+        type: "image",
+        data: rawBytes.toString("base64"),
+        mimeType: "image/jpeg",
+        uploadedImage: {
+          id: "upload_1",
+          fileName: "only.jpg",
+          mimeType: "image/jpeg",
+          size: rawBytes.byteLength,
+          path: imagePath,
+        },
+      },
+    ]);
+  });
+
+  it("rejects path traversal, outside paths, prefix-collision paths, symlinks escaping uploads/, and directories", async () => {
+    const home = await makeHome();
+    const secretPath = join(home, "local-credential");
+    await writeFile(secretPath, "super-secret-token");
+
+    const siblingDir = join(home, "uploads-evil");
+    await mkdir(siblingDir, { recursive: true });
+    const siblingPath = join(siblingDir, "leak.png");
+    await writeFile(siblingPath, "evil");
+
+    const symlinkPath = join(home, "uploads", "upload_1", "escape.png");
+    await symlink(secretPath, symlinkPath);
+
+    const baseImage = {
+      type: "uploaded_file" as const,
+      id: "upload_1",
+      fileName: "bad.png",
+      mimeType: "image/png",
+      size: 16,
+      role: "image" as const,
+    };
+
+    // 1. ../ traversal out of uploads/
+    await expect(
+      resolveAgentPrompt({
+        paseoHome: home,
+        text: "leak",
+        attachments: [{ ...baseImage, path: join(home, "uploads", "..", "local-credential") }],
+      }),
+    ).rejects.toThrow(/outside/i);
+
+    // 2. Direct path outside uploads/
+    await expect(
+      resolveAgentPrompt({
+        paseoHome: home,
+        text: "leak",
+        attachments: [{ ...baseImage, path: secretPath }],
+      }),
+    ).rejects.toThrow(/outside/i);
+
+    // 3. Sibling prefix-collision directory (uploads-evil)
+    await expect(
+      resolveAgentPrompt({
+        paseoHome: home,
+        text: "leak",
+        attachments: [{ ...baseImage, path: siblingPath }],
+      }),
+    ).rejects.toThrow(/outside/i);
+
+    // 4. Symlink inside uploads/ pointing outside uploads/
+    await expect(
+      resolveAgentPrompt({
+        paseoHome: home,
+        text: "leak",
+        attachments: [{ ...baseImage, path: symlinkPath }],
+      }),
+    ).rejects.toThrow(/outside/i);
+
+    // 5. Directory instead of file
+    await expect(
+      resolveAgentPrompt({
+        paseoHome: home,
+        text: "dir",
+        attachments: [{ ...baseImage, path: join(home, "uploads", "upload_1") }],
+      }),
+    ).rejects.toThrow(/not a file|regular file/i);
   });
 });
