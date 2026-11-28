@@ -33,6 +33,17 @@ function usage(): string {
   ].join("\n");
 }
 
+function isMissingLocalSttModelError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /^Missing (?:offline encoder|offline decoder|offline joiner|tokens): /.test(error.message)
+  );
+}
+
+function localSttUnavailableMessage(model: LocalSttModelId): string {
+  return `Local STT service is unavailable. Check model files or run \`npm run speech:download -- --model ${model}\`.`;
+}
+
 function parseArgs(argv: string[]): CliOptions {
   if (argv.includes("--help") || argv.includes("-h")) {
     process.stdout.write(`${usage()}\n`);
@@ -144,11 +155,7 @@ async function main(): Promise<void> {
 
   try {
     if (!runtime.sttService) {
-      throw new Error(
-        "Local STT service is unavailable. Check model files or run `npm run speech:download -- --model " +
-          options.model +
-          "`.",
-      );
+      throw new Error(localSttUnavailableMessage(options.model));
     }
 
     const audio = await readFile(options.wavPath);
@@ -166,6 +173,13 @@ async function main(): Promise<void> {
     }
 
     process.stdout.write(`${transcript}\n`);
+  } catch (error) {
+    if (!isMissingLocalSttModelError(error)) {
+      throw error;
+    }
+
+    process.stderr.write(`${localSttUnavailableMessage(options.model)}\n`);
+    process.exitCode = 1;
   } finally {
     runtime.cleanup();
   }
