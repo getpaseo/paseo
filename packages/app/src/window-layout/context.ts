@@ -1,9 +1,15 @@
 import { createContext, useContext } from "react";
 import { useWindowDimensions } from "react-native";
 import type { EdgeInsets } from "react-native-safe-area-context";
-import type { TopBand, WindowLayout } from "./model";
+import { resolveWorkspaceActionPlacement, type TopBand, type WindowLayout } from "./model";
 
 export const WindowLayoutContext = createContext<WindowLayout | null>(null);
+
+/**
+ * Whether workspace actions may use the system vertical bar. Published by `WindowLayoutSurface`:
+ * false only for a compact workspace after the user turns the bar off in Appearance settings.
+ */
+export const VerticalBarEnabledContext = createContext(true);
 
 /** Published by `WindowLayoutProvider` beside the safe-area insets it derives from it. */
 export const TopBandContext = createContext<TopBand | null>(null);
@@ -22,6 +28,11 @@ export function useWindowLayout(): WindowLayout | null {
     Math.abs(layout.bounds.height - height) <= 0.5
     ? layout
     : null;
+}
+
+export function useWorkspaceActionPlacement(): "header" | "vertical-bar" {
+  const placement = resolveWorkspaceActionPlacement(useWindowLayout());
+  return useContext(VerticalBarEnabledContext) ? placement : "header";
 }
 
 /** The top band beside the system's status region, or null where the window has none. */

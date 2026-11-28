@@ -49,7 +49,7 @@ it("clears the status bar in wide layouts without applying the top inset twice",
     act(() =>
       root.render(
         <SafeAreaInsetsContext.Provider value={statusBarInsets}>
-          <WindowLayoutSurface compact={compact} style={statusBarSurfaceStyle}>
+          <WindowLayoutSurface compact={compact} compactVerticalBar style={statusBarSurfaceStyle}>
             <Header />
           </WindowLayoutSurface>
         </SafeAreaInsetsContext.Provider>,
@@ -65,6 +65,43 @@ it("clears the status bar in wide layouts without applying the top inset twice",
       expect(document.elementFromPoint(rect.left + rect.width / 2, rect.top + 1)).toBe(button);
     }
   }
+});
+
+const verticalBarInsets = { top: 0, left: 0, right: 84, bottom: 0 };
+it("keeps compact actions in the header at full width when the vertical bar is turned off", async () => {
+  async function renderCompact(compactVerticalBar: boolean) {
+    await act(async () =>
+      root.render(
+        <PortalProvider>
+          <SafeAreaInsetsContext.Provider value={verticalBarInsets}>
+            <WindowLayoutContext.Provider value={geometry}>
+              <WindowLayoutActionsHost />
+              <WindowLayoutSurface
+                compact
+                compactVerticalBar={compactVerticalBar}
+                style={statusBarSurfaceStyle}
+              >
+                <Text testID="workspace-content">Chat</Text>
+                <WindowLayoutActions active>
+                  <Text>Explorer</Text>
+                </WindowLayoutActions>
+              </WindowLayoutSurface>
+            </WindowLayoutContext.Provider>
+          </SafeAreaInsetsContext.Provider>
+        </PortalProvider>,
+      ),
+    );
+  }
+  function expectLayout(barActions: number, paddingRight: string) {
+    const actions = container.querySelectorAll('[data-testid="workspace-vertical-actions"]');
+    const surface = container.querySelector('[data-testid="workspace-content"]')!.parentElement!;
+    expect(actions).toHaveLength(barActions);
+    expect(getComputedStyle(surface).paddingRight).toBe(paddingRight);
+  }
+  await renderCompact(true);
+  expectLayout(1, "84px");
+  await renderCompact(false);
+  expectLayout(0, "0px");
 });
 
 it("paints the reserved division with the sidebar surface", () => {

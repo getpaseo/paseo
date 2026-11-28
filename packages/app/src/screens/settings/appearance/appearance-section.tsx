@@ -11,6 +11,7 @@ import {
 } from "@getpaseo/highlight";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
+import { SettingsCard, SettingsSwitch } from "@/components/settings";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { ThemePicker } from "@/appearance/theme-picker";
 import { SegmentedControl } from "@/components/ui/segmented-control";
@@ -30,7 +31,9 @@ import {
 } from "@/hooks/use-settings";
 import { DEFAULT_MONO_FONT_STACK, DEFAULT_UI_FONT_STACK } from "@/styles/theme";
 import { isNative } from "@/constants/platform";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { settingsStyles } from "@/styles/settings";
+import { resolveWorkspaceActionPlacement, useWindowLayout } from "@/window-layout";
 import { AppearancePreview } from "./appearance-preview";
 
 // Subscribe the input leaf to numeric theme changes without resetting its editing state.
@@ -306,6 +309,13 @@ export function AppearanceSection() {
     [updateSettings],
   );
 
+  const handleCompactVerticalBarChange = useCallback(
+    (compactVerticalBar: boolean) => void updateSettings({ compactVerticalBar }),
+    [updateSettings],
+  );
+  const placement = resolveWorkspaceActionPlacement(useWindowLayout());
+  const showCompactVerticalBar = useIsCompactFormFactor() && placement === "vertical-bar";
+
   const handleSyntaxThemeChange = useCallback(
     (syntaxTheme: SyntaxThemeId) => {
       void updateSettings({ syntaxTheme });
@@ -469,9 +479,17 @@ export function AppearanceSection() {
         </View>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.layout.title")}>
-        <View style={settingsStyles.card}>
+        <SettingsCard>
           <ContentWidthRow value={settings.contentWidth} onChange={handleContentWidthChange} />
-        </View>
+          {showCompactVerticalBar ? (
+            <SettingsSwitch
+              label={t("settings.appearance.layout.compactVerticalBar")}
+              hint={t("settings.appearance.layout.compactVerticalBarHint")}
+              value={settings.compactVerticalBar}
+              onValueChange={handleCompactVerticalBarChange}
+            />
+          ) : null}
+        </SettingsCard>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.syntax.title")}>
         <View style={settingsStyles.card}>

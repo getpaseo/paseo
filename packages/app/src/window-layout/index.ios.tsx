@@ -10,7 +10,7 @@ import {
 } from "./context";
 import { resolveSafeAreaInsets, resolveTopBand, type WindowLayout } from "./model";
 
-export { useWindowLayout } from "./context";
+export { useWindowLayout, useWorkspaceActionPlacement } from "./context";
 export { WindowLayoutActions, WindowLayoutActionsHost } from "./actions";
 export { WindowLayoutSurface, WindowLayoutDivisionGap } from "./surface";
 export { useTopBand } from "./context";

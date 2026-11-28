@@ -3,8 +3,7 @@ import { Portal, PortalHost } from "@gorhom/portal";
 import { StyleSheet, View } from "react-native";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import { IconButtonChromeProvider } from "@/components/ui/icon-button-chrome";
-import { useWindowLayout } from "./context";
-import { resolveWorkspaceActionPlacement } from "./model";
+import { useWindowLayout, useWorkspaceActionPlacement } from "./context";
 
 const HOST = "window-layout-actions";
 
@@ -21,7 +20,8 @@ export function WindowLayoutActions({
   active: boolean;
 }) {
   const layout = useWindowLayout();
-  if (resolveWorkspaceActionPlacement(layout) !== "vertical-bar" || !layout?.verticalBar) {
+  const placement = useWorkspaceActionPlacement();
+  if (placement !== "vertical-bar" || !layout?.verticalBar) {
     return null;
   }
   const bar = layout.verticalBar;

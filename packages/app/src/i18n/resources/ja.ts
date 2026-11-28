@@ -2894,6 +2894,9 @@ export const ja: TranslationResources = {
         contentWidthWide: "ワイド",
         contentWidthFull: "全幅",
         contentWidthCustom: "カスタム幅 · {{width}} px",
+        compactVerticalBar: "縦バーを使用",
+        compactVerticalBarHint:
+          "幅の狭い画面では、ワークスペースのボタンをヘッダーではなく時計の下の列に表示します",
       },
       syntax: {
         title: "構文ハイライト",

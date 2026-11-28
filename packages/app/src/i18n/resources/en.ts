@@ -3000,6 +3000,9 @@ export const en = {
         contentWidthWide: "Wide",
         contentWidthFull: "Full",
         contentWidthCustom: "Custom width · {{width}} px",
+        compactVerticalBar: "Use vertical bar",
+        compactVerticalBarHint:
+          "On narrow screens, show workspace buttons in the column under the clock instead of the header",
       },
       syntax: {
         title: "Syntax",

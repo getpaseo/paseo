@@ -3,21 +3,26 @@ import { View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import { isWeb } from "@/constants/platform";
-import { useWindowLayout } from "./context";
+import { VerticalBarEnabledContext, useWindowLayout } from "./context";
 import { resolveWorkspaceActionPlacement, type DesktopDivisionLayout } from "./model";
 
 /** Consume safe areas once; compact headers own their top inset. */
 export function WindowLayoutSurface({
   children,
   compact,
+  compactVerticalBar,
   style,
 }: {
   children: ReactNode;
   compact: boolean;
+  /** False keeps compact workspace actions in the header and gives the content the full width. */
+  compactVerticalBar: boolean;
   style: StyleProp<ViewStyle>;
 }) {
   const insets = useSafeAreaInsets();
-  const usesBar = resolveWorkspaceActionPlacement(useWindowLayout()) === "vertical-bar";
+  const placement = resolveWorkspaceActionPlacement(useWindowLayout());
+  const verticalBarEnabled = !compact || compactVerticalBar;
+  const usesBar = verticalBarEnabled && placement === "vertical-bar";
   // Wide browser layouts have no compact header to clear the standalone iOS status bar.
   // Native window chrome owns its own top band.
   const consumesTop = isWeb && !compact;
@@ -39,9 +44,11 @@ export function WindowLayoutSurface({
   );
   return (
     <View style={surfaceStyle}>
-      <SafeAreaInsetsContext.Provider value={contentInsets}>
-        {children}
-      </SafeAreaInsetsContext.Provider>
+      <VerticalBarEnabledContext.Provider value={verticalBarEnabled}>
+        <SafeAreaInsetsContext.Provider value={contentInsets}>
+          {children}
+        </SafeAreaInsetsContext.Provider>
+      </VerticalBarEnabledContext.Provider>
     </View>
   );
 }

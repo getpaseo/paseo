@@ -2934,6 +2934,9 @@ export const fr: TranslationResources = {
         contentWidthWide: "Large",
         contentWidthFull: "Pleine largeur",
         contentWidthCustom: "Largeur personnalisée · {{width}} px",
+        compactVerticalBar: "Utiliser la barre verticale",
+        compactVerticalBarHint:
+          "Sur les écrans étroits, affiche les boutons de l’espace de travail dans la colonne sous l’horloge plutôt que dans l’en-tête",
       },
       syntax: {
         title: "Syntaxe",

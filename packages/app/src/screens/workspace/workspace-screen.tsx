@@ -12,7 +12,7 @@ import {
 } from "@/assistant-file-links";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useWorkspaceFileActions } from "@/workspace/file-actions";
-import { useWindowLayout, resolveWorkspaceActionPlacement } from "@/window-layout";
+import { useWorkspaceActionPlacement } from "@/window-layout";
 import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
 import { ExplorerSidebarDock } from "@/screens/workspace/explorer-sidebar";
 import { ForgeShorthandProvider } from "@/git/forge-shorthand";
@@ -508,7 +508,7 @@ function WorkspaceHeaderTitleBar({
   onCopyBranchName,
   onOpenSetupTab,
 }: WorkspaceHeaderTitleBarProps) {
-  const actionsInBar = resolveWorkspaceActionPlacement(useWindowLayout()) === "vertical-bar";
+  const actionsInBar = useWorkspaceActionPlacement() === "vertical-bar";
   return (
     <View style={styles.headerTitleContainer}>
       {isLoading ? (
@@ -1048,8 +1048,7 @@ function WorkspaceScreenContent({
 }: WorkspaceScreenContentProps) {
   const { t } = useTranslation();
   const _insets = useSafeAreaInsets();
-  const workspaceActionsInBar =
-    resolveWorkspaceActionPlacement(useWindowLayout()) === "vertical-bar";
+  const workspaceActionsInBar = useWorkspaceActionPlacement() === "vertical-bar";
   const toast = useToast();
   const isMobile = useIsCompactFormFactor();
   const canRenderDesktopPaneSplits = supportsDesktopPaneSplits();

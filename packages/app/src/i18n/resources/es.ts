@@ -2934,6 +2934,9 @@ export const es: TranslationResources = {
         contentWidthWide: "Ancho",
         contentWidthFull: "Completo",
         contentWidthCustom: "Ancho personalizado · {{width}} px",
+        compactVerticalBar: "Usar barra vertical",
+        compactVerticalBarHint:
+          "En pantallas estrechas, muestra los botones del espacio de trabajo en la columna bajo el reloj en lugar del encabezado",
       },
       syntax: {
         title: "Sintaxis",

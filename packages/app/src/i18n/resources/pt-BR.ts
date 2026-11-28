@@ -2914,6 +2914,9 @@ export const ptBR: TranslationResources = {
         contentWidthWide: "Largo",
         contentWidthFull: "Total",
         contentWidthCustom: "Largura personalizada · {{width}} px",
+        compactVerticalBar: "Usar barra vertical",
+        compactVerticalBarHint:
+          "Em telas estreitas, mostra os botões do espaço de trabalho na coluna abaixo do relógio em vez do cabeçalho",
       },
       syntax: {
         title: "Sintaxe",

@@ -21,7 +21,7 @@ it("keeps the close button below the status bar when opened from a wide layout",
     root.render(
       <SafeAreaInsetsContext.Provider value={statusBarInsets}>
         <WindowLayoutProvider>
-          <WindowLayoutSurface compact={false} style={surfaceStyle}>
+          <WindowLayoutSurface compact={false} compactVerticalBar style={surfaceStyle}>
             <MermaidFullscreenViewer
               source={"graph TD\n  A --> B"}
               colorScheme="light"
