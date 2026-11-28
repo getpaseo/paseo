@@ -369,6 +369,29 @@ const completedToolCalls = [
     rawOutput: { output: "Command exited with code 7.\n\nCommand output:\ntest", exit_code: 7 },
   },
   {
+    // agy 1.5.15 output: timestamp lines, then PTY line endings.
+    toolCallId: "shell-timestamps",
+    name: "run_command",
+    kind: "execute",
+    rawInput: { CommandLine: "printf 'alpha\\nbeta\\n'", WaitMsBeforeAsync: 5000 },
+    rawOutput: {
+      output:
+        "Created At: 2026-11-23T16:13:26-06:00\nCompleted At: 2026-11-23T16:13:26-06:00\nCommand exited with code 0.\n\nCommand output:\nalpha\r\nbeta\r\n",
+      exit_code: 0,
+    },
+  },
+  {
+    toolCallId: "shell-quiet",
+    name: "run_command",
+    kind: "execute",
+    rawInput: { CommandLine: "echo hello > out.txt", WaitMsBeforeAsync: 5000 },
+    rawOutput: {
+      output:
+        "Created At: 2026-11-23T15:53:39-06:00\nCompleted At: 2026-11-23T15:53:39-06:00\nCommand exited with code 0.\n\nNo output from the command.",
+      exit_code: 0,
+    },
+  },
+  {
     toolCallId: "read",
     name: "read_file",
     kind: "read",
@@ -521,8 +544,20 @@ it.each(["live", "replay"] as const)(
       expect(completed.shell.detail).toEqual({
         type: "shell",
         command: "printf test; exit 7",
-        output: "Command exited with code 7.\n\nCommand output:\ntest",
+        output: "test",
         exitCode: 7,
+      });
+      expect(completed["shell-timestamps"].detail).toEqual({
+        type: "shell",
+        command: "printf 'alpha\\nbeta\\n'",
+        output: "alpha\nbeta\n",
+        exitCode: 0,
+      });
+      expect(completed["shell-quiet"].detail).toEqual({
+        type: "shell",
+        command: "echo hello > out.txt",
+        output: "",
+        exitCode: 0,
       });
       expect(completed.read.detail).toEqual({
         type: "read",

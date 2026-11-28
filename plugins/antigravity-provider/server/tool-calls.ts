@@ -15,6 +15,18 @@ const fileRead = z.object({
 const fileWrite = z.object({ Path: z.string(), Content: z.string().optional() });
 const webSearch = z.object({ query: z.string() });
 
+// agy prefixes a finished command's output with its exit code, which the row already shows.
+// agy 1.5.15 also writes Created At and Completed At lines first.
+const commandResultHeader =
+  /^(?:Created At: [^\n]*\n)?(?:Completed At: [^\n]*\n)?Command exited with code -?\d+\.\n\n(?:Command output:\n|No output from the command\.$)/;
+
+/** The command's own output: agy's result header removed and its PTY line endings normalized. */
+function commandOutput(output: string | undefined): string | undefined {
+  if (output === undefined) return undefined;
+  const header = commandResultHeader.exec(output);
+  return (header ? output.slice(header[0].length) : output).replace(/\r\n/g, "\n");
+}
+
 export const mapToolCall: NonNullable<AcpTransformer["toolCall"]> = (call, context) => {
   if (call.name?.startsWith("mcp_")) {
     return mapMcpCall(call, call.name, context.mcpServerNames ?? []);
@@ -32,7 +44,7 @@ function mapNativeDetail(call: AcpToolCallSnapshot): ProviderToolCallDetail | un
       return {
         type: "shell",
         command: input.CommandLine,
-        output: output?.output,
+        output: commandOutput(output?.output),
         exitCode: output?.exit_code,
       };
     }
