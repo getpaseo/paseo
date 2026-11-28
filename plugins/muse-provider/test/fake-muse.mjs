@@ -30,6 +30,7 @@ const catalogRows = readFixture("catalog-controls");
 const replacements = new Map();
 const counts = new Map();
 const receipts = new Set();
+let wroteFinalFrame = false;
 const lines = createInterface({ input: process.stdin });
 lines.on("line", receive);
 function receive(line) {
@@ -341,6 +342,12 @@ function applyWireVariants(message) {
     message.result.session.modelId = null;
     message.result.session.providerId = null;
   }
+  if (
+    message.method === "item/completed" &&
+    message.params.item.kind === "agentMessage" &&
+    process.env.MUSE_TEST_AGENT_TEXT
+  )
+    message.params.item.text = process.env.MUSE_TEST_AGENT_TEXT;
 }
 function parityDelivery(message) {
   if (process.env.MUSE_TEST_WORKFLOW && message.method === "turn/completed")
@@ -454,10 +461,39 @@ function replace(value) {
   return value;
 }
 function send(frame) {
+  if (wroteFinalFrame) return;
   if (frame.method === "item/completed" && process.env.MUSE_TEST_HISTORY) {
     appendFileSync(process.env.MUSE_TEST_HISTORY, JSON.stringify(frame.params.item) + "\n");
   }
-  process.stdout.write(JSON.stringify(frame) + "\n");
+  const text = JSON.stringify(frame);
+  if (frame.method === "item/completed" && frame.params.item.kind === "agentMessage") {
+    if (process.env.MUSE_TEST_FRAME_ENDING === "eof") {
+      // Leave stdout open until the session closes stdin and this process exits.
+      wroteFinalFrame = true;
+      process.stdout.write(text);
+      return;
+    }
+    if (process.env.MUSE_TEST_FRAME_ENDING === "split-crlf") {
+      process.stdout.write(text + "\r");
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+      process.stdout.write("\n");
+      return;
+    }
+  }
+  const line = Buffer.from(text + "\n");
+  if (
+    process.env.MUSE_TEST_SPLIT_WRITE &&
+    frame.method === "item/completed" &&
+    frame.params.item.kind === "agentMessage"
+  ) {
+    // Cut inside the first multibyte character and pause so Paseo reads the halves as two chunks.
+    const cut = line.findIndex((byte) => byte > 0x7f) + 1;
+    process.stdout.write(line.subarray(0, cut));
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    process.stdout.write(line.subarray(cut));
+    return;
+  }
+  process.stdout.write(line);
 }
 function respond(frame, result) {
   send({ jsonrpc: "2.0", id: frame.id, result });
