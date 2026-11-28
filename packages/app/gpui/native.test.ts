@@ -128,7 +128,11 @@ test.skipIf(!endpoint || appearanceFixture)(
   async () => {
     // Regression: GPUI took the native touch answer, so a 28 pt pointer control rendered at 44.
     const settings = await nodeWithId("sidebar-settings");
-    expect(settings.frame?.[3]).toBe(28);
+    const displays = await request<Array<{ primary: boolean; scaleFactor: number }>>("displays");
+    const scale =
+      displays.find((display) => display.primary)?.scaleFactor ?? displays[0]?.scaleFactor ?? 1;
+    expect(settings.frame?.[3]).toBeDefined();
+    expect(Math.abs(settings.frame![3] - 28)).toBeLessThanOrEqual(1 / scale);
   },
   20_000,
 );
