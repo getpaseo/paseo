@@ -389,6 +389,9 @@ export interface PaseoDaemonConfig {
     maxProcessConcurrency: number;
   };
   autoArchiveAfterMerge?: boolean;
+  uploads?: {
+    maxFileBytes?: number;
+  };
   enableTerminalAgentHooks?: boolean;
   appendSystemPrompt?: string;
   terminalProfiles?: TerminalProfile[];
@@ -554,6 +557,13 @@ function isListenOverridden(config: PaseoDaemonConfig): boolean {
   return config.configReload?.overrideControlledPaths.includes("daemon.listen") === true;
 }
 
+function createInitialUploadsConfig(
+  config: ResolvedDaemonSettings,
+): MutableDaemonConfig["uploads"] {
+  const maxFileBytes = config.uploads?.maxFileBytes;
+  return maxFileBytes === undefined ? undefined : { maxFileBytes };
+}
+
 function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): MutableDaemonConfig {
   const providers = config.providerOverrides ?? {};
 
@@ -576,6 +586,7 @@ function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): Mutab
     providers,
     metadataGeneration: createInitialMetadataGenerationConfig(config),
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
+    uploads: createInitialUploadsConfig(config),
     enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
     idleRuntimeCleanup: config.idleRuntimeCleanup !== false,
     resumeOnStartup: config.resumeOnStartup === true,
