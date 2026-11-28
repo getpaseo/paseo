@@ -3,6 +3,10 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import type { MessagePayload, TextReplacement } from "@/composer/types";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
+import {
+  getControlInteractionPhase,
+  type ControlInteractionPhase,
+} from "@/components/ui/control-geometry";
 
 export type SendBehavior = ActiveTurnBehavior | "queue";
 
@@ -244,6 +248,23 @@ export function resolveGlyphRailOffset(input: {
 }): number {
   const inkInset = (input.controlSize - input.glyphIconSize) / 2 + (2 * input.glyphIconSize) / 24;
   return -inkInset;
+}
+
+/**
+ * The composer frame follows the phases of the app's other inputs: focus wins over hover, and
+ * a frame you can't type into (read-only, disabled) stays at rest.
+ */
+export function resolveComposerFramePhase(input: {
+  hovered: boolean;
+  focused: boolean;
+  readOnly: boolean;
+  disabled: boolean;
+}): ControlInteractionPhase {
+  return getControlInteractionPhase({
+    hovered: input.hovered,
+    focused: input.focused,
+    disabled: input.readOnly || input.disabled,
+  });
 }
 
 export function resolveComposerSurfaceText(
