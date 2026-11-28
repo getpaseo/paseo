@@ -78,10 +78,10 @@ describe("plugin buttons", () => {
     expect(buttonMatches(buttons.getSnapshot()[1], "host-a", "workspace", "other-agent")).toBe(
       false,
     );
-    buttons.setOpen(first.key, true);
+    buttons.setOpen(first.key, "control", true);
     header.update({ visible: false, label: "3 reviews" });
     expect(buttonMatches(buttons.getSnapshot()[0], "host-a", "workspace", null)).toBe(false);
-    expect(buttons.getSnapshot()[0].open).toBe(false);
+    expect(buttons.getSnapshot()[0].openIn).toBeNull();
     header.update({ visible: true });
     expect(buttons.getSnapshot().map((entry) => entry.key)).toEqual([first.key, first.key + 1]);
     expect(buttons.getSnapshot()[0].button.label).toBe("3 reviews");
@@ -227,12 +227,12 @@ it("updates translated tooltips and nested menu labels without closing open cont
     },
   });
   const original = buttons.getSnapshot()[0];
-  buttons.setOpen(original.key, true);
+  buttons.setOpen(original.key, "control", true);
   locale = "zh-CN";
   for (const listener of listeners) listener();
   const translated = buttons.getSnapshot()[0];
   expect(translated.key).toBe(original.key);
-  expect(translated.open).toBe(true);
+  expect(translated.openIn).toBe("control");
   expect(translated.button.title).toBe("笔记");
   expect(translated.button.behavior).toMatchObject({
     kind: "menu",
@@ -261,4 +261,26 @@ it("keeps the previous descriptor after rejecting an invalid update", () => {
   expect(buttons.getSnapshot()[0].button.title).toBe("Review");
   registration.remove();
   plugin.i18n.dispose();
+});
+
+it("opens only the control that was pressed when one button renders in two places", () => {
+  const plugin = installation();
+  const buttons = store();
+  buttons.addComposerPill(plugin, {
+    id: "status",
+    workspaceId: "workspace",
+    agentId: "agent",
+    button: { title: "Status", icon: "Scan", behavior: { kind: "popover", Content: () => null } },
+  });
+  const { key } = buttons.getSnapshot()[0];
+
+  buttons.setOpen(key, "visible-pill", true);
+  expect(buttons.getSnapshot()[0].openIn).toBe("visible-pill");
+
+  // The hidden copy closing, as a dismissed or unmounting surface does, leaves the open one alone.
+  buttons.setOpen(key, "hidden-pill", false);
+  expect(buttons.getSnapshot()[0].openIn).toBe("visible-pill");
+
+  buttons.setOpen(key, "visible-pill", false);
+  expect(buttons.getSnapshot()[0].openIn).toBeNull();
 });
