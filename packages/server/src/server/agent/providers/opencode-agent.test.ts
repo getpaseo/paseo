@@ -3295,6 +3295,34 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test("reconciles pending permissions after the OpenCode server is replaced", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_reconnect_permission");
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    openCode.emitEvent({
+      type: "permission.asked",
+      properties: {
+        id: "permission-reconnect",
+        sessionID: "ses_reconnect_permission",
+        permission: "bash",
+        patterns: ["echo x"],
+        metadata: { command: "echo x", cwd: "/workspace/repo" },
+      },
+    });
+    await vi.waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+
+    // The replacement server has no in-memory prompt of its own (permission.list
+    // defaults to an empty list for the freshly-created client).
+    openCode.emitEvent({ type: "server-exited", error: new Error("server exited") } as never);
+    await session.listCommands().catch(() => undefined);
+
+    expect(session.getPendingPermissions()).toHaveLength(0);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "permission_resolved", requestId: "permission-reconnect" }),
+    );
+    await session.close();
+  });
+
   test.each(["status", "messages"] as const)(
     "retries a failed foreground %s snapshot after one reconnect",
     async (failedRequest) => {

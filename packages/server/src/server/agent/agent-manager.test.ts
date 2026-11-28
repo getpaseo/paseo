@@ -11879,6 +11879,83 @@ test("permission request notifies once without forcing unread attention state", 
   expect(attentionReasons).toContain("permission");
 });
 
+test("respondToPermission converges a stale permission the runtime no longer tracks", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-permission-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  class StalePermissionSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "turn-stale-1";
+      this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      this.pushEvent({
+        type: "permission_requested",
+        provider: this.provider,
+        request: {
+          id: "perm-stale-1",
+          provider: this.provider,
+          kind: "tool",
+          name: "external_directory",
+        },
+        turnId,
+      });
+      this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      return { turnId };
+    }
+
+    override getPendingPermissions() {
+      return [];
+    }
+
+    override async respondToPermission(): Promise<void> {
+      throw new Error("No pending permission request with id 'perm-stale-1'");
+    }
+  }
+
+  class StalePermissionClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new StalePermissionSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: {
+      codex: new StalePermissionClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000135",
+  });
+
+  const agent = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Stale permission test",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  const stream = manager.streamAgent(agent.id, "trigger a permission");
+  while (!(await stream.next()).done) {
+    // Drain until the turn completes with the permission still pending.
+  }
+  expect(manager.getAgent(agent.id)?.pendingPermissions.size).toBe(1);
+
+  const resolved: string[] = [];
+  manager.subscribe((event) => {
+    if (event.type === "agent_stream" && event.event.type === "permission_resolved") {
+      resolved.push(event.event.requestId);
+    }
+  });
+
+  await manager.respondToPermission(agent.id, "perm-stale-1", { behavior: "deny" });
+
+  expect(resolved).toContain("perm-stale-1");
+  expect(manager.getAgent(agent.id)?.pendingPermissions.size).toBe(0);
+});
+
 test("respondToPermission updates currentModeId after plan approval", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

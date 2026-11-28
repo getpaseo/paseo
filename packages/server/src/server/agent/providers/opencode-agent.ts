@@ -3589,6 +3589,16 @@ class OpenCodeAgentSession implements AgentSession {
       "OpenCode session moved to the current server after its server exited",
     );
     await exited.release();
+    // The replacement server does not carry the previous process's in-memory
+    // permission/question prompts. `server.connected` normally triggers a gap repair
+    // that reconciles them, but that event can be missed; reconcile explicitly so we
+    // never keep advertising requests the new server cannot answer.
+    await this.reconcileBlockingRequests().catch((error) => {
+      this.logger.warn(
+        { err: error, sessionId: this.sessionId },
+        "OpenCode blocking-request reconcile after reconnect failed",
+      );
+    });
   }
 
   get id(): string | null {

@@ -4219,6 +4219,18 @@ export class AgentManager {
       }
 
       return result;
+    } catch (error) {
+      // A client can hold a stale permission prompt after the runtime has already
+      // dropped the request: the provider runtime was replaced or resumed, or
+      // another client answered it first. If the runtime no longer lists the
+      // request, converge the local prompt (clear it and broadcast the resolution)
+      // instead of leaving the UI stuck failing forever on "No pending permission
+      // request with id ...".
+      if (this.isPermissionStillPending(agent, requestId)) {
+        throw error;
+      }
+      this.resolveStalePermission(agent, requestId);
+      return;
     } finally {
       agent.inFlightPermissionResponses.delete(requestId);
       agent.bufferedPermissionResolutions.delete(requestId);
@@ -6022,6 +6034,26 @@ export class AgentManager {
       flags.shouldDispatchEvent = false;
       return;
     }
+    this.emitState(agent);
+  }
+
+  private isPermissionStillPending(agent: ActiveManagedAgent, requestId: string): boolean {
+    try {
+      return agent.session.getPendingPermissions().some((request) => request.id === requestId);
+    } catch {
+      return false;
+    }
+  }
+
+  private resolveStalePermission(agent: ActiveManagedAgent, requestId: string): void {
+    if (!agent.pendingPermissions.has(requestId)) return;
+    agent.pendingPermissions.delete(requestId);
+    this.dispatchStream(agent.id, {
+      type: "permission_resolved",
+      provider: agent.provider,
+      requestId,
+      resolution: { behavior: "deny", message: "Permission request is no longer pending" },
+    });
     this.emitState(agent);
   }
 
