@@ -1,7 +1,11 @@
 import type { AgentMetric } from "@getpaseo/protocol/agent-types";
 import type { TurnTiming } from "@/timeline/turn-time";
 import { getAssistantReply, type StreamItem } from "@/types/stream";
-import { getAssistantMessageSpacing, getGapBetweenStreamItems } from "./spacing";
+import {
+  getAssistantMessageSpacing,
+  getGapBetweenStreamItems,
+  isToolSequenceItem,
+} from "./spacing";
 import type { StreamFrameChildOrder, StreamStrategy } from "./strategy";
 import { continuesResponse, continuesTurn, isResponseBoundary } from "./turn-membership";
 
@@ -189,12 +193,6 @@ function resolveCompletedFooter(input: {
     index: source.index,
     timingByItemId: input.timingByItemId,
   });
-}
-
-function isToolSequenceItem(
-  item: StreamItem | null,
-): item is Extract<StreamItem, { kind: "tool_call" | "thought" | "todo_list" }> {
-  return item?.kind === "tool_call" || item?.kind === "thought" || item?.kind === "todo_list";
 }
 
 function getToolSequence(input: {
