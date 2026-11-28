@@ -95,6 +95,23 @@ function pressTrigger(): void {
   });
 }
 
+async function renderOpenTooltip(onOpenChange: (open: boolean) => void): Promise<void> {
+  await act(async () => {
+    root?.render(
+      <>
+        <Tooltip defaultOpen onOpenChange={onOpenChange}>
+          <div data-testid="scroller">
+            <TooltipTrigger>
+              <Text>Send</Text>
+            </TooltipTrigger>
+          </div>
+        </Tooltip>
+        <div data-testid="unrelated" />
+      </>,
+    );
+  });
+}
+
 describe("TooltipTrigger", () => {
   it("keeps an asChild trigger disabled when the child is disabled", () => {
     const onPress = vi.fn();
@@ -112,5 +129,61 @@ describe("TooltipTrigger", () => {
     pressTrigger();
 
     expect(onPress).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Tooltip", () => {
+  it("dismisses an open tooltip when a scroller containing the trigger scrolls", async () => {
+    const onOpenChange = vi.fn();
+
+    await renderOpenTooltip(onOpenChange);
+
+    const scroller = container?.querySelector('[data-testid="scroller"]');
+    expect(scroller).not.toBeNull();
+    act(() => {
+      scroller?.dispatchEvent(new window.Event("scroll", { bubbles: false }));
+    });
+
+    expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it("keeps an open tooltip when an unrelated element scrolls", async () => {
+    const onOpenChange = vi.fn();
+
+    await renderOpenTooltip(onOpenChange);
+
+    const unrelated = container?.querySelector('[data-testid="unrelated"]');
+    expect(unrelated).not.toBeNull();
+    act(() => {
+      unrelated?.dispatchEvent(new window.Event("scroll", { bubbles: false }));
+    });
+
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("dismisses an open tooltip when the document scrolls", async () => {
+    const onOpenChange = vi.fn();
+    await renderOpenTooltip(onOpenChange);
+
+    act(() => {
+      document.dispatchEvent(new window.Event("scroll"));
+    });
+
+    expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it("ignores a scroll event dispatched on window", async () => {
+    const onOpenChange = vi.fn();
+    await renderOpenTooltip(onOpenChange);
+
+    const onError = vi.fn((event: ErrorEvent) => event.preventDefault());
+    window.addEventListener("error", onError);
+    act(() => {
+      window.dispatchEvent(new window.Event("scroll"));
+    });
+    window.removeEventListener("error", onError);
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(onOpenChange).not.toHaveBeenCalled();
   });
 });

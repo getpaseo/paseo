@@ -48,6 +48,8 @@ interface TooltipContextValue {
   open: boolean;
   setOpen: (open: boolean) => void;
   triggerRef: React.RefObject<TooltipTriggerElement | null>;
+  triggerRect: Rect | null;
+  measureTrigger: () => void;
   enabled: boolean;
   openOnPress: boolean;
   delayDuration: number;
@@ -251,6 +253,8 @@ export function Tooltip({
   enabledOnMobile?: boolean;
 }>): ReactElement {
   const triggerRef = useRef<TooltipTriggerElement>(null);
+  const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
+  const triggerRectRequestRef = useRef(0);
   const [isOpen, setIsOpen] = useControllableOpenState({
     open,
     defaultOpen,
@@ -268,16 +272,62 @@ export function Tooltip({
     if (!active && isOpen) setIsOpen(false);
   }, [active, isOpen, setIsOpen]);
 
+  const measureTrigger = useCallback(() => {
+    const element = triggerRef.current;
+    if (!element) return;
+    const request = ++triggerRectRequestRef.current;
+    void measureElement(element).then((rect) => {
+      // A measurement that resolves after the tooltip closed, or after a newer
+      // measurement was requested, would position the next content wrongly.
+      if (request === triggerRectRequestRef.current) setTriggerRect(rect);
+      return undefined;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen || !enabled) {
+      triggerRectRequestRef.current += 1;
+      setTriggerRect(null);
+      return;
+    }
+
+    const handleScroll = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      const element = triggerRef.current;
+      const containsTrigger = element instanceof HTMLElement && target.contains(element);
+      if (!containsTrigger) return;
+
+      // The browser may scroll the trigger into view after the first measurement.
+      const focused = element.ownerDocument.activeElement;
+      const hasKeyboardFocus = focused?.matches(":focus-visible") && element.contains(focused);
+      if (hasKeyboardFocus) {
+        measureTrigger();
+      } else {
+        setIsOpen(false);
+      }
+    };
+
+    // Element scroll events do not bubble.
+    const canListenForScroll = isWeb && typeof window !== "undefined";
+    if (canListenForScroll) window.addEventListener("scroll", handleScroll, true);
+    return () => {
+      if (canListenForScroll) window.removeEventListener("scroll", handleScroll, true);
+    };
+  }, [enabled, isOpen, setIsOpen, measureTrigger]);
+
   const value = useMemo<TooltipContextValue>(
     () => ({
       open: isOpen,
       setOpen: setIsOpen,
       triggerRef,
+      triggerRect,
+      measureTrigger,
       enabled,
       openOnPress: opensOnPress,
       delayDuration,
     }),
-    [isOpen, setIsOpen, enabled, opensOnPress, delayDuration],
+    [isOpen, setIsOpen, triggerRect, measureTrigger, enabled, opensOnPress, delayDuration],
   );
 
   return <TooltipContext.Provider value={value}>{children}</TooltipContext.Provider>;
@@ -474,28 +524,21 @@ export function TooltipContent({
   maxWidth?: number;
 }>): ReactElement | null {
   const ctx = useTooltipContext("TooltipContent");
-  const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
+  const { measureTrigger, triggerRect } = ctx;
   const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null);
   const [position, setPosition] = useState<SurfacePosition | null>(null);
 
+  // Tooltip content can mount after opening while a file path resolves.
+  useEffect(() => {
+    if (!ctx.open || !ctx.enabled) return;
+    measureTrigger();
+  }, [ctx.enabled, ctx.open, measureTrigger]);
+
   useEffect(() => {
     if (!ctx.open || !ctx.enabled || !ctx.triggerRef.current) {
-      setTriggerRect(null);
       setContentSize(null);
       setPosition(null);
-      return () => {};
     }
-
-    let cancelled = false;
-
-    void measureElement(ctx.triggerRef.current).then((rect) => {
-      if (!cancelled) setTriggerRect(rect);
-      return undefined;
-    });
-
-    return () => {
-      cancelled = true;
-    };
   }, [ctx.enabled, ctx.open, ctx.triggerRef]);
 
   useEffect(() => {
