@@ -152,6 +152,26 @@ describe("generateBranchNameFromFirstAgentContext", () => {
     );
   });
 
+  test.each([1, 2])(
+    "names a workspace started with %i inline images and no text",
+    async (imageCount) => {
+      const name = { title: "Review screenshot", branch: "review-screenshot" };
+      const structured = createStructuredGenerator(name);
+      const result = await generateBranchNameFromFirstAgentContext({
+        agentManager: {} as AgentManager,
+        cwd: "/tmp/repo",
+        firstAgentContext: { prompt: " ", imageCount },
+        logger: createLogger(),
+        deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
+      });
+      expect(result).toEqual(name);
+      const description = imageCount === 1 ? "1 image attachment" : "2 image attachments";
+      expect(structured.calls[0]?.prompt).toContain(
+        ["<attachments>", description, "</attachments>"].join("\n"),
+      );
+    },
+  );
+
   test("uses attachment-only context", async () => {
     const structured = createStructuredGenerator({
       title: "Review flaky checkout",

@@ -9739,6 +9739,26 @@ test("checkout.rename_branch.request renames the branch without a denormalized b
   expect(persisted?.title).toBe("Refactor auth flow");
 });
 
+test("workspace creation includes inline image count in the naming context", async () => {
+  const generateWorkspaceName = vi.fn(async () => null);
+  const session = createSessionForWorkspaceTests({ generateWorkspaceName });
+  await session.handleMessage({
+    type: "workspace.create.request",
+    requestId: "create-with-screenshot",
+    source: { kind: "directory", path: REPO_CWD },
+    agent: {
+      config: { cwd: REPO_CWD, provider: "codex" },
+      initialPrompt: "",
+      images: [{ mimeType: "image/png", data: "c2NyZWVuc2hvdA==" }],
+    },
+  });
+  await expect
+    .poll(() => generateWorkspaceName.mock.calls)
+    .toContainEqual([
+      expect.objectContaining({ firstAgentContext: expect.objectContaining({ imageCount: 1 }) }),
+    ]);
+});
+
 test("workspace.create.response persists the first prompt as the initial title", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();

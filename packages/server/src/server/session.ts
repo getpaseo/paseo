@@ -744,6 +744,16 @@ function resolveWorkspaceLabelService(
   return service ?? null;
 }
 
+function firstAgentContextForCreation(
+  request: Pick<AgentCreateRequest, "initialPrompt" | "images" | "attachments">,
+): FirstAgentContext {
+  return {
+    prompt: request.initialPrompt?.trim() || undefined,
+    attachments: request.attachments,
+    ...(request.images?.length ? { imageCount: request.images.length } : {}),
+  };
+}
+
 function hasInitialCreationPrompt(
   request?: Pick<AgentCreateRequest, "initialPrompt" | "images" | "attachments">,
 ): boolean {
@@ -4928,7 +4938,7 @@ export class Session {
               {
                 ...request,
                 firstAgentContext: agentInput
-                  ? { prompt: agentInput.initialPrompt, attachments: agentInput.attachments }
+                  ? firstAgentContextForCreation(agentInput)
                   : request.firstAgentContext,
               },
               id,
@@ -5116,10 +5126,7 @@ export class Session {
         initialPrompt: trimmedPrompt,
       });
 
-      const firstAgentContext: FirstAgentContext = {
-        ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
-        ...(attachments && attachments.length > 0 ? { attachments } : {}),
-      };
+      const firstAgentContext = firstAgentContextForCreation(msg);
       const workspacePromptTitle = resolveFirstAgentPromptTitle(firstAgentContext);
       const createdWorktree = await this.createAgentLifecycleDispatch.createWorktreeForRequest({
         cwd: config.cwd,

@@ -2937,6 +2937,7 @@ export const PaseoWorktreeArchiveRequestSchema = z.object({
 
 export const FirstAgentContextSchema = z.object({
   prompt: z.string().optional(),
+  imageCount: z.int().nonnegative().optional(),
   attachments: AgentAttachmentsSchema,
 });
 
