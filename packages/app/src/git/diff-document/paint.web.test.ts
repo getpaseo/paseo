@@ -97,6 +97,9 @@ describe("web diff text shaping", () => {
 
   it("paints syntax colors by clipping the complete measured shaped fragment", () => {
     const paintedText: string[] = [];
+    const bands: Array<{ x: number; width: number; color: string }> = [];
+    let clip = { x: 0, width: 0 };
+    let color = "";
     const context = {
       setTransform() {},
       clearRect() {},
@@ -104,12 +107,17 @@ describe("web diff text shaping", () => {
       save() {},
       restore() {},
       beginPath() {},
-      rect() {},
+      rect(x: number, _y: number, width: number) {
+        clip = { x, width };
+      },
       clip() {},
       fillText(text: string) {
         paintedText.push(text);
+        bands.push({ ...clip, color });
       },
-      fillStyle: "",
+      set fillStyle(value: string) {
+        color = value;
+      },
       globalAlpha: 1,
       font: "",
       textBaseline: "alphabetic",
@@ -132,6 +140,10 @@ describe("web diff text shaping", () => {
     });
 
     expect(paintedText).toEqual(["fi", "fi"]);
+    expect(bands).toEqual([
+      { x: 28, width: 10, color: "red" },
+      { x: 38, width: 5, color: "blue" },
+    ]);
   });
 
   it("paints review space with the surface color and continues the gutter divider", () => {
