@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type ReactElement, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactElement, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -18,6 +18,7 @@ import { foregroundIconColorMapping } from "@/components/ui/icon-color";
 import { PressHighlight } from "@/components/ui/press-highlight";
 import { ScrollView as SheetScrollView } from "@/components/ui/scroll-view";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
+import { SteppedSlider, type SteppedSliderOption } from "@/components/ui/stepped-slider";
 import { isNative } from "@/constants/platform";
 import { ICON_SIZE } from "@/styles/theme";
 import {
@@ -45,7 +46,7 @@ export const AGENT_SHEET_MODE_CONTROL_ID = "mode";
 type SelectItem = Extract<ComposerControlItem, { type: "select" }>;
 
 /**
- * Home: the Profile and Model rows, then every control laid out in place: short choices as pills,
+ * Home: the Model row, then every control laid out in place: short choices as pills,
  * longer ones as a radio list, switches and actions as rows. Only a list too long to scan opens
  * a page of its own.
  */
@@ -58,7 +59,7 @@ export function AgentSheetHome({
 }: {
   controls: AgentSheetControls;
   disabled: boolean;
-  /** The Profile and Model rows. */
+  /** The Model row. */
   topCard: ReactNode;
   /** Drawn after the controls, such as plugin items. */
   footer?: ReactNode;
@@ -102,6 +103,7 @@ export function AgentSheetHome({
 
 function blockKey(block: SheetHomeBlock): string {
   switch (block.kind) {
+    case "slider":
     case "pills":
     case "radioList":
       return `${block.kind}:${block.item.id}`;
@@ -124,10 +126,30 @@ function HomeBlock({
   onOpenSelect: (controlId: string) => void;
 }) {
   const { t } = useTranslation();
+  const sectionLeading = useMemo(
+    () =>
+      block.kind === "pills" || block.kind === "radioList" ? (
+        <ComposerControlIcon item={block.item} size={ICON_SIZE.sm} />
+      ) : undefined,
+    [block],
+  );
   switch (block.kind) {
+    case "slider":
+      return (
+        <View style={styles.block}>
+          <SettingsCard>
+            <SliderControl item={block.item} disabled={disabled} />
+          </SettingsCard>
+        </View>
+      );
     case "pills":
       return (
-        <SettingsSection title={block.item.title} flush style={styles.block}>
+        <SettingsSection
+          title={block.item.title}
+          leading={sectionLeading}
+          flush
+          style={styles.block}
+        >
           <SettingsCard>
             <PillsControl item={block.item} disabled={disabled} />
           </SettingsCard>
@@ -135,7 +157,12 @@ function HomeBlock({
       );
     case "radioList":
       return (
-        <SettingsSection title={block.item.title} flush style={styles.block}>
+        <SettingsSection
+          title={block.item.title}
+          leading={sectionLeading}
+          flush
+          style={styles.block}
+        >
           <SettingsCard testID={block.item.testID}>
             {block.item.choices.map((choice) => (
               <SelectChoiceRow
@@ -184,6 +211,51 @@ function HomeBlock({
         </SettingsSection>
       );
   }
+}
+
+function SliderControl({ item, disabled }: { item: SelectItem; disabled: boolean }) {
+  const { pending, run } = usePendingRun();
+  const [previewValue, setPreviewValue] = useState<string | null>(null);
+  const options = useMemo<SteppedSliderOption<string>[]>(
+    () =>
+      item.choices.map((choice) => ({
+        value: choice.value,
+        label: choice.label,
+        testID: item.testID ? `${item.testID}-${choice.value}` : undefined,
+      })),
+    [item.choices, item.testID],
+  );
+  const handleChange = useCallback((value: string) => run(() => item.onChange(value)), [item, run]);
+  const displayedValue = previewValue ?? item.value;
+  const displayedLabel =
+    item.choices.find((choice) => choice.value === displayedValue)?.label ??
+    item.valueLabel ??
+    item.title;
+
+  return (
+    <View style={styles.sliderCard}>
+      <View style={styles.sliderHeader}>
+        <View style={styles.sliderLeading}>
+          <ComposerControlIcon item={item} size={ICON_SIZE.md} />
+        </View>
+        <Text style={styles.sliderTitle} numberOfLines={1}>
+          {item.title}
+        </Text>
+        <Text style={styles.sliderValue} numberOfLines={1}>
+          {displayedLabel}
+        </Text>
+      </View>
+      <SteppedSlider
+        options={options}
+        value={item.value}
+        onValueChange={handleChange}
+        onPreviewChange={setPreviewValue}
+        disabled={disabled || pending}
+        accessibilityLabel={item.accessibilityLabel ?? item.title}
+        testID={item.testID}
+      />
+    </View>
+  );
 }
 
 function PillsControl({ item, disabled }: { item: SelectItem; disabled: boolean }) {
@@ -561,6 +633,32 @@ const styles = StyleSheet.create((theme) => ({
   },
   pills: {
     padding: theme.spacing[2],
+  },
+  sliderCard: {
+    paddingHorizontal: theme.spacing[4],
+    paddingTop: theme.spacing[3],
+    paddingBottom: theme.spacing[3],
+    gap: theme.spacing[2],
+  },
+  sliderHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  sliderLeading: {
+    marginRight: theme.spacing[3],
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sliderTitle: {
+    flex: 1,
+    minWidth: 0,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+  },
+  sliderValue: {
+    marginLeft: theme.spacing[3],
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
   radioRow: {
     minHeight: 44,

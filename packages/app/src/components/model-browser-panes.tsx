@@ -11,7 +11,14 @@ import {
 import { useTranslation } from "react-i18next";
 import { FlatList, ScrollView, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { AlertTriangle, ChevronDown, ChevronRight, Layers, Plus } from "lucide-react-native";
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  Layers,
+  Pencil,
+  Plus,
+} from "lucide-react-native";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import {
   AgentProfileGlyph,
@@ -662,12 +669,11 @@ export function CustomizeProviderButton({
     <Button
       variant="ghost"
       size="sm"
+      leftIcon={Pencil}
       onPress={handlePress}
       accessibilityLabel={t("modelSelector.openProviderSettings", { provider: providerLabel })}
       testID={`selector-header-settings-${providerId}`}
-    >
-      {t("modelSelector.customize")}
-    </Button>
+    />
   );
 }
 

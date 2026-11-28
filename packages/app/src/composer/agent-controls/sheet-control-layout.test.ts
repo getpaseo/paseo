@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { Brain } from "lucide-react-native";
 import type { ComposerControlChoice, ComposerControlItem } from "./composer-control";
-import { classifySheetControl, layoutSheetHome } from "./sheet-control-layout";
+import {
+  classifySheetControl,
+  isOrderedThinkingRange,
+  layoutSheetHome,
+} from "./sheet-control-layout";
 
 function noop() {}
 
@@ -40,6 +44,33 @@ const claudeThinking = select("thinking", {
   choices: choices("Off", "Low", "Medium", "High", "Extra High", "Max"),
 });
 
+describe("isOrderedThinkingRange", () => {
+  it("recognizes standard effort scales across providers (including 8-stop OMP)", () => {
+    expect(isOrderedThinkingRange(choices("Low", "Medium", "High", "Extra high", "Max"))).toBe(
+      true,
+    );
+    expect(
+      isOrderedThinkingRange(choices("None", "Minimal", "Low", "Medium", "High", "XHigh")),
+    ).toBe(true);
+    expect(
+      isOrderedThinkingRange(
+        choices("Auto", "Off", "Minimal", "Low", "Medium", "High", "XHigh", "Max"),
+      ),
+    ).toBe(true);
+  });
+
+  it("recognizes numeric thinking budgets", () => {
+    expect(isOrderedThinkingRange(choices("Off", "1k", "4k", "16k", "32k"))).toBe(true);
+    expect(isOrderedThinkingRange(choices("0", "1024", "4096", "16384"))).toBe(true);
+  });
+
+  it("rejects binary, unordered, or custom non-range thinking options", () => {
+    expect(isOrderedThinkingRange(choices("Off", "On"))).toBe(false);
+    expect(isOrderedThinkingRange(choices("High", "Low", "Medium"))).toBe(false);
+    expect(isOrderedThinkingRange(choices("Bespoke", "Fast CoT", "Tree Search"))).toBe(false);
+  });
+});
+
 describe("classifySheetControl", () => {
   it("draws a toggle as a switch row", () => {
     expect(classifySheetControl(toggle("fast"))).toBe("switch");
@@ -49,8 +80,27 @@ describe("classifySheetControl", () => {
     expect(classifySheetControl(action("open"))).toBe("action");
   });
 
-  it("draws a short select of short labels as pills", () => {
-    expect(classifySheetControl(claudeThinking)).toBe("pills");
+  it("draws an ordered thinking range as a slider, even with eight stops", () => {
+    expect(classifySheetControl(claudeThinking)).toBe("slider");
+    expect(
+      classifySheetControl(
+        select("thinking", {
+          choices: choices("Auto", "Off", "Minimal", "Low", "Medium", "High", "XHigh", "Max"),
+        }),
+      ),
+    ).toBe("slider");
+  });
+
+  it("falls back to pills for binary or non-range thinking choices and short selects", () => {
+    expect(classifySheetControl(select("thinking", { choices: choices("Off", "On") }))).toBe(
+      "pills",
+    );
+    expect(
+      classifySheetControl(select("thinking", { choices: choices("Bespoke", "Fast", "Deep") })),
+    ).toBe("pills");
+    expect(
+      classifySheetControl(select("speed", { choices: choices("Low", "Medium", "High") })),
+    ).toBe("pills");
   });
 
   it("draws a select as a radio list once a label is too long for a pill", () => {
@@ -91,14 +141,14 @@ describe("classifySheetControl", () => {
 });
 
 describe("layoutSheetHome", () => {
-  it("orders thinking, then inline selects, then one card of rows, then mode", () => {
+  it("orders thinking slider, then inline selects, then one card of rows, then mode", () => {
     const speed = select("speed", { choices: choices("Normal", "Flex", "Fast", "Ultrafast") });
     const blocks = layoutSheetHome({
       thinkingItems: [claudeThinking],
       featureItems: [toggle("plan"), speed, action("review")],
       modeChoiceCount: 3,
     });
-    expect(blocks.map((block) => block.kind)).toEqual(["pills", "pills", "rows", "mode"]);
+    expect(blocks.map((block) => block.kind)).toEqual(["slider", "pills", "rows", "mode"]);
     expect(blocks[2]).toMatchObject({
       kind: "rows",
       rows: [

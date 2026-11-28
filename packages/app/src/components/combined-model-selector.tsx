@@ -204,7 +204,13 @@ function CompactCombinedModelSelector({
   const anchorRef = useRef<View>(null);
   const [isOpen, setIsOpen] = useState(false);
   const labels = useSelectedModelLabels({ providers, selectedProvider, selectedModel, isLoading });
-  const page = useMobileModelPage({ providers, selectedProvider, selectedModel });
+  const page = useMobileModelPage({
+    providers,
+    profiles: profiles?.rows ?? null,
+    canCreateProfile: Boolean(onEditProfiles),
+    selectedProvider,
+    selectedModel,
+  });
   const { reset, clearQuery } = page;
 
   const handleOpenChange = useCallback(
@@ -268,22 +274,23 @@ function CompactCombinedModelSelector({
     [clearQuery, query],
   );
   const header = useMemo<SheetHeader>(() => ({ title: t("modelSelector.selectModel") }), [t]);
-  const footer = useMemo(
-    () => (
+  const footer = useMemo(() => {
+    let placeholder = t("modelSelector.searchPlaceholder");
+    if (profiles && profiles.rows.length > 0) {
+      placeholder = t("modelSelector.searchModelsAndProfilesPlaceholder");
+    } else if (providers.length > 1) {
+      placeholder = t("modelSelector.searchAllPlaceholder");
+    }
+    return (
       <SheetSearchDock
         query={page.query}
         searchKey={page.searchKey}
         onChangeText={page.setQuery}
-        placeholder={
-          providers.length > 1
-            ? t("modelSelector.searchAllPlaceholder")
-            : t("modelSelector.searchPlaceholder")
-        }
+        placeholder={placeholder}
         testID="model-search-all-input"
       />
-    ),
-    [page.query, page.searchKey, page.setQuery, providers.length, t],
-  );
+    );
+  }, [page.query, page.searchKey, page.setQuery, profiles, providers.length, t]);
 
   return (
     <>

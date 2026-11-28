@@ -34,6 +34,8 @@ export interface SettingsRowHeaderProps {
   hintStatus?: SettingsRowHintStatus;
   /** A short status shown before the chevron. */
   summary?: string;
+  /** An icon drawn directly before the summary text, such as a provider glyph beside a model name. */
+  summaryLeading?: ReactNode;
   onPress: () => void;
   disabled?: boolean;
   /** Turns the chevron down, for a row whose children are revealed in place. */
@@ -72,6 +74,7 @@ export function SettingsRowHeader({
   hint,
   hintStatus,
   summary,
+  summaryLeading,
   onPress,
   disabled,
   expanded = false,
@@ -132,7 +135,13 @@ export function SettingsRowHeader({
           <ControlSizeProvider size={layout.controlSize}>{control}</ControlSizeProvider>
         </View>
       ) : null}
-      <RowTrailing hinted={hinted} external={external} hovered={hovered} summary={summary} />
+      <RowTrailing
+        hinted={hinted}
+        external={external}
+        hovered={hovered}
+        summary={summary}
+        summaryLeading={summaryLeading}
+      />
       {external || disabled ? null : (
         <View style={chevronStyle} {...HIDDEN_FROM_ASSISTIVE_TECH}>
           <ThemedChevron
@@ -157,17 +166,22 @@ function RowTrailing({
   external,
   hovered,
   summary,
+  summaryLeading,
 }: {
   hinted: boolean;
   external: boolean;
   hovered: boolean;
   summary: string | undefined;
+  summaryLeading: ReactNode;
 }) {
   const style = hinted ? styles.hintedTrailing : styles.labelTrailing;
   return (
     <View style={[style, styles.passThrough]} {...HIDDEN_FROM_ASSISTIVE_TECH}>
       {/* Drawn the same as a section header's docs link, so the two read as one thing. */}
       {external ? <ExternalLinkLabel hovered={hovered}>{summary}</ExternalLinkLabel> : null}
+      {!external && summaryLeading && summary ? (
+        <View style={styles.summaryLeading}>{summaryLeading}</View>
+      ) : null}
       {!external && summary ? (
         <Text style={styles.summary} numberOfLines={1}>
           {summary}
@@ -292,6 +306,11 @@ const styles = StyleSheet.create((theme) => ({
     width: theme.spacing[32],
     borderRadius: theme.borderRadius.sm,
     backgroundColor: theme.colors.surface2,
+  },
+  summaryLeading: {
+    marginRight: theme.spacing[1.5],
+    alignItems: "center",
+    justifyContent: "center",
   },
   summary: {
     flexShrink: 1,

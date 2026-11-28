@@ -1,43 +1,27 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Keyboard, Text, View } from "react-native";
+import { Keyboard, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { Pencil } from "lucide-react-native";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
-import type {
-  AgentProfile,
-  AgentProfilePicker,
-  AgentProfilePickerRow,
-  AgentProfileSeed,
-} from "@/agent-profiles";
+import type { AgentProfile, AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
 import {
   AdaptiveModalSheet,
-  SheetHeaderIconButton,
   type SheetHeader,
   type SheetKeyboard,
 } from "@/components/adaptive-modal-sheet";
-import { ModelSearchNoMatches } from "@/components/model-browser";
-import { ModelPickerItemRow, type ModelPickerActions } from "@/components/model-browser-panes";
-import type { ModelPickerListItem } from "@/components/model-browser-panes-view";
+import { ModelProviderGlyph } from "@/components/model-browser";
+import type { ModelPickerActions } from "@/components/model-browser-panes";
 import {
   MobileModelPageView,
-  SHEET_LIST_CARD_LIST,
-  SheetListCard,
   SheetSearchDock,
   useMobileModelPage,
 } from "@/components/mobile-model-page";
 import { SettingsCard, SettingsDetailRow } from "@/components/settings";
 import type { ContextBridge } from "@/components/ui/isolated-bottom-sheet-modal";
-import { FlatList as SheetFlatList } from "@/components/ui/scroll-view";
-import { isNative } from "@/constants/platform";
 import type { KeyboardInputEvent } from "@/keyboard";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
-import {
-  AGENT_SHEET_HOME,
-  projectAgentSheetProfiles,
-  resolveAgentSheetEscape,
-  type AgentSheetPage,
-} from "./model-sheet-flow";
+import { ICON_SIZE } from "@/styles/theme";
+import { AGENT_SHEET_HOME, resolveAgentSheetEscape, type AgentSheetPage } from "./model-sheet-flow";
 import {
   AgentSheetHome,
   AgentSheetSelectPage,
@@ -48,8 +32,6 @@ import {
 
 const SNAP_POINTS = ["80%", "90%"];
 const ESCAPE_KEYS = ["Escape"] as const;
-const KEYBOARD_DISMISS_MODE = isNative ? "on-drag" : "none";
-const NO_PROFILE_ROWS: AgentProfilePickerRow[] = [];
 
 export interface AgentSettingsDrawerProps {
   visible: boolean;
@@ -77,7 +59,8 @@ export interface AgentSettingsDrawerProps {
 
 /**
  * The compact agent settings: one drawer whose page changes in place. Home lays out every control;
- * Model, Profiles and a long select each take the drawer over with a way back to Home.
+ * Model (which also holds Profiles) and a long select each take the drawer over with a way back
+ * to Home.
  */
 export function AgentSettingsDrawer({
   visible,
@@ -103,10 +86,16 @@ export function AgentSettingsDrawer({
 }: AgentSettingsDrawerProps) {
   const { t } = useTranslation();
   const [page, setPage] = useState<AgentSheetPage>(AGENT_SHEET_HOME);
-  // The Profiles and select pages search with this; the Model page keeps its own.
+  // Select pages search with this; the Model page keeps its own.
   const [pageQuery, setPageQuery] = useState("");
   const [pageSearchKey, setPageSearchKey] = useState(0);
-  const modelPage = useMobileModelPage({ providers, selectedProvider, selectedModel });
+  const modelPage = useMobileModelPage({
+    providers,
+    profiles: profiles?.rows ?? null,
+    canCreateProfile: Boolean(onEditProfiles),
+    selectedProvider,
+    selectedModel,
+  });
 
   const goTo = useCallback((next: AgentSheetPage) => {
     Keyboard.dismiss();
@@ -119,7 +108,6 @@ export function AgentSettingsDrawer({
     modelPage.reset();
     goTo({ kind: "model" });
   }, [goTo, modelPage]);
-  const openProfiles = useCallback(() => goTo({ kind: "profiles" }), [goTo]);
   const openSelect = useCallback(
     (controlId: string) => goTo({ kind: "select", controlId }),
     [goTo],
@@ -219,55 +207,35 @@ export function AgentSettingsDrawer({
         return { title: t("agentControls.sheet.title") };
       case "model":
         return { title: t("modelSelector.model"), back };
-      case "profiles":
-        return {
-          title: t("modelSelector.profiles"),
-          back,
-          actions: onEditProfiles ? (
-            <SheetHeaderIconButton
-              icon={Pencil}
-              label={t("modelSelector.editProfilesLabel")}
-              onPress={handleEditProfiles}
-              testID="agent-controls-edit-profiles"
-            />
-          ) : undefined,
-        };
       case "select":
         return {
           title: selectPageTitle(page.controlId, controls, t("agentControls.mode.title")),
           back,
         };
     }
-  }, [controls, goHome, handleEditProfiles, onEditProfiles, page, t]);
+  }, [controls, goHome, page, t]);
 
   const footer = useMemo(() => {
     switch (page.kind) {
       case "home":
         return null;
-      case "model":
+      case "model": {
+        let placeholder = t("modelSelector.searchPlaceholder");
+        if (profiles && profiles.rows.length > 0) {
+          placeholder = t("modelSelector.searchModelsAndProfilesPlaceholder");
+        } else if (canSwitchProvider) {
+          placeholder = t("modelSelector.searchAllPlaceholder");
+        }
         return (
           <SheetSearchDock
             query={modelPage.query}
             searchKey={modelPage.searchKey}
             onChangeText={modelPage.setQuery}
-            placeholder={
-              canSwitchProvider
-                ? t("modelSelector.searchAllPlaceholder")
-                : t("modelSelector.searchPlaceholder")
-            }
+            placeholder={placeholder}
             testID="model-search-all-input"
           />
         );
-      case "profiles":
-        return (profiles?.rows.length ?? 0) > 0 ? (
-          <SheetSearchDock
-            query={pageQuery}
-            searchKey={pageSearchKey}
-            onChangeText={setPageQuery}
-            placeholder={t("modelSelector.searchProfilesPlaceholder")}
-            testID="agent-controls-profiles-search"
-          />
-        ) : null;
+      }
       case "select":
         return selectPageIsSearchable(page.controlId, controls) ? (
           <SelectSearchDock
@@ -288,21 +256,21 @@ export function AgentSettingsDrawer({
     page,
     pageQuery,
     pageSearchKey,
-    profiles?.rows.length,
+    profiles,
     t,
   ]);
 
   const topCard = useMemo(
     () => (
       <AgentSheetTopCard
-        profileCount={profiles === null ? null : profiles.rows.length}
+        selectedProvider={selectedProvider}
+        serverId={serverId}
         selectedModelLabel={selectedModelLabel}
         disabled={disabled}
-        onOpenProfiles={openProfiles}
         onOpenModel={openModel}
       />
     ),
-    [disabled, openModel, openProfiles, profiles, selectedModelLabel],
+    [disabled, openModel, selectedModelLabel, selectedProvider, serverId],
   );
 
   let body: ReactNode;
@@ -326,16 +294,6 @@ export function AgentSettingsDrawer({
           selectedModel={selectedModel}
           serverId={serverId}
           profiles={profiles?.rows ?? null}
-          actions={pickerActions}
-        />
-      );
-      break;
-    case "profiles":
-      body = (
-        <ProfilesPage
-          profiles={profiles?.rows ?? NO_PROFILE_ROWS}
-          query={pageQuery}
-          serverId={serverId}
           actions={pickerActions}
         />
       );
@@ -374,35 +332,35 @@ export function AgentSettingsDrawer({
   );
 }
 
-/** The Profile and Model rows that head Home; Profile only where the surface offers profiles. */
+/** The Model row that heads Home. */
 function AgentSheetTopCard({
-  profileCount,
+  selectedProvider,
+  serverId,
   selectedModelLabel,
   disabled,
-  onOpenProfiles,
   onOpenModel,
 }: {
-  profileCount: number | null;
+  selectedProvider: string;
+  serverId: string | null;
   selectedModelLabel: string;
   disabled: boolean;
-  onOpenProfiles: () => void;
   onOpenModel: () => void;
 }) {
   const { t } = useTranslation();
+  const hasProvider = selectedProvider.trim().length > 0;
+  const summaryLeading = useMemo(
+    () =>
+      hasProvider ? (
+        <ModelProviderGlyph provider={selectedProvider} serverId={serverId} size={ICON_SIZE.sm} />
+      ) : undefined,
+    [hasProvider, selectedProvider, serverId],
+  );
   return (
     <SettingsCard>
-      {profileCount !== null ? (
-        <SettingsDetailRow
-          label={t("modelSelector.profiles")}
-          summary={t("modelSelector.profilesSaved", { count: profileCount })}
-          onPress={onOpenProfiles}
-          disabled={disabled}
-          testID="agent-controls-profiles"
-        />
-      ) : null}
       <SettingsDetailRow
         label={t("modelSelector.model")}
         summary={selectedModelLabel}
+        summaryLeading={summaryLeading}
         onPress={onOpenModel}
         disabled={disabled}
         accessibilityLabel={t("modelSelector.selectedModel", { model: selectedModelLabel })}
@@ -452,73 +410,7 @@ function SelectSearchDock({
   );
 }
 
-function ProfilesPage({
-  profiles,
-  query,
-  serverId,
-  actions,
-}: {
-  profiles: readonly AgentProfilePickerRow[];
-  query: string;
-  serverId: string | null;
-  actions: ModelPickerActions;
-}) {
-  const { t } = useTranslation();
-  const view = projectAgentSheetProfiles({
-    profiles,
-    query,
-    canCreate: actions.onEditProfiles !== undefined,
-  });
-  const profiledLookup = useMemo(() => new Map<string, AgentProfilePickerRow[]>(), []);
-  const renderItem = useCallback(
-    ({ item }: { item: ModelPickerListItem<AgentProfilePickerRow> }) => (
-      <ModelPickerItemRow
-        item={item}
-        active={false}
-        selected={false}
-        inSearch={false}
-        serverId={serverId}
-        profiledLookup={profiledLookup}
-        onToggleFold={noop}
-        onActivate={noop}
-        actions={actions}
-      />
-    ),
-    [actions, profiledLookup, serverId],
-  );
-  if (view.kind === "empty") {
-    return <Text style={styles.empty}>{t("modelSelector.noProfiles")}</Text>;
-  }
-  if (view.kind === "noMatches") {
-    return <ModelSearchNoMatches query={view.query} />;
-  }
-  return (
-    <SheetListCard>
-      <SheetFlatList
-        data={view.items}
-        renderItem={renderItem}
-        keyExtractor={getItemKey}
-        style={SHEET_LIST_CARD_LIST}
-        contentContainerStyle={PROFILES_LIST_CONTENT}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode={KEYBOARD_DISMISS_MODE}
-        showsVerticalScrollIndicator={false}
-        testID="agent-controls-profiles-list"
-      />
-    </SheetListCard>
-  );
-}
-
-/** Theme-free: the sheet scrollers drop a themed contentContainerStyle on web (docs/unistyles.md). */
-const PROFILES_LIST_CONTENT = { paddingVertical: 4 };
-
-function noop() {}
-
-function getItemKey(item: ModelPickerListItem<AgentProfilePickerRow>): string {
-  return item.key;
-}
-
-const styles = StyleSheet.create((theme) => ({
+const styles = StyleSheet.create(() => ({
   sheetBody: {
     paddingHorizontal: 0,
     paddingTop: 0,
@@ -528,11 +420,5 @@ const styles = StyleSheet.create((theme) => ({
   page: {
     flex: 1,
     minHeight: 0,
-  },
-  empty: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    textAlign: "center",
-    paddingVertical: theme.spacing[6],
   },
 }));

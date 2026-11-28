@@ -21,7 +21,12 @@ import {
   seedModelProvider,
   expectSearchResultsVirtualized,
 } from "../support/helpers/agent-profiles";
-import { expectComposerVisible } from "../support/helpers/composer";
+import {
+  blurComposerInput,
+  expectComposerFocused,
+  expectComposerVisible,
+} from "../support/helpers/composer";
+import { openGlobalNewWorkspaceComposer } from "../support/helpers/new-workspace";
 import { clickNewChat, clickNewTerminal, gotoWorkspace } from "../support/helpers/launcher";
 import { seedWorkspace } from "../support/helpers/seed-client";
 
@@ -261,6 +266,7 @@ test.describe("Cross-provider model search", () => {
         await page.keyboard.press("Enter");
         await expect(viewport).toHaveCount(0);
         await expect(trigger).toContainText("Studio deep think");
+        await expectComposerFocused(page);
       });
 
       await test.step("typing filters results while arrow keys select across search matches", async () => {
@@ -279,6 +285,7 @@ test.describe("Cross-provider model search", () => {
         await page.keyboard.press("Enter");
         await expect(viewport).toHaveCount(0);
         await expect(trigger).toContainText("Ten second stream");
+        await expectComposerFocused(page);
       });
 
       await test.step("a press on a model row selects it while the provider list is still opening", async () => {
@@ -290,6 +297,7 @@ test.describe("Cross-provider model search", () => {
         });
         await expect(viewport).toHaveCount(0);
         await expect(trigger).toContainText("One minute stream");
+        await expectComposerFocused(page);
       });
 
       await test.step("Enter on the active profile row applies it", async () => {
@@ -304,12 +312,18 @@ test.describe("Cross-provider model search", () => {
         await page.keyboard.press("Enter");
         await expect(viewport).toHaveCount(0);
         await expect(trigger).toContainText("Ten second stream");
+        await expectComposerFocused(page);
       });
 
-      await test.step("the compact drawer applies a profile from its Profiles page", async () => {
+      await test.step("the compact drawer puts Profiles in the Model accordion and lets all groups collapse", async () => {
         await page.setViewportSize({ width: 390, height: 800 });
         await page.getByTestId("combined-model-selector").filter({ visible: true }).first().click();
-        await page.getByTestId("agent-controls-profiles").click();
+        await expect(page.getByTestId("agent-controls-profiles")).toHaveCount(0);
+        await page.getByTestId("agent-controls-model").click();
+        await expect(page.getByTestId("compact-model-list")).toBeVisible();
+        await page.locator('[data-testid^="model-provider-section-"]').first().click();
+        await expect(page.getByTestId("compact-model-list")).toHaveCount(0);
+        await page.getByTestId("model-picker-rail-profiles").click();
         const sheetProfileRow = page.getByTestId("model-profile-row-agent_profile_e2e_arrows");
         await expect(sheetProfileRow).toBeVisible();
         await sheetProfileRow.click();
@@ -319,6 +333,43 @@ test.describe("Cross-provider model search", () => {
     } finally {
       await workspace.cleanup();
       await profile.restore();
+      await provider.restore();
+    }
+  });
+
+  test("choosing a model restores composer focus in workspace drafts and New Workspace", async ({
+    page,
+  }) => {
+    const provider = await seedModelProvider(STUDIO);
+    const workspace = await seedWorkspace({ repoPrefix: "model-picker-focus-" });
+
+    try {
+      await test.step("clicking a model after blurring the workspace draft returns focus to the composer", async () => {
+        await gotoWorkspace(page, workspace.workspaceId);
+        await clickNewChat(page);
+        await expectComposerVisible(page);
+        await blurComposerInput(page);
+        await openModelPicker(page);
+        const viewport = page.getByTestId("combobox-desktop-container");
+        await viewport.getByTestId(`model-provider-${STUDIO.id}`).click();
+        await viewport.getByTestId(`model-row-${STUDIO.id}-studio-deep`).click();
+        await expect(viewport).toHaveCount(0);
+        await expectComposerFocused(page);
+      });
+
+      await test.step("clicking a model on the New Workspace screen returns focus to the composer", async () => {
+        await openGlobalNewWorkspaceComposer(page);
+        await expectComposerVisible(page);
+        await blurComposerInput(page);
+        await openModelPicker(page);
+        const viewport = page.getByTestId("combobox-desktop-container");
+        await viewport.getByTestId(`model-provider-${STUDIO.id}`).click();
+        await viewport.getByTestId(`model-row-${STUDIO.id}-studio-fast`).click();
+        await expect(viewport).toHaveCount(0);
+        await expectComposerFocused(page);
+      });
+    } finally {
+      await workspace.cleanup();
       await provider.restore();
     }
   });

@@ -2,13 +2,14 @@ import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { FlatList, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { AlertTriangle, ChevronDown } from "lucide-react-native";
+import { AlertTriangle, ChevronDown, ChevronUp, Layers, Pencil } from "lucide-react-native";
 import type { AgentProfilePickerRow } from "@/agent-profiles";
 import {
   IndependentScrollBoundary,
   ModelBrowserLoadingState,
   ModelBrowserNoProviders,
   ModelBrowserRow,
+  ModelBrowserSectionHeading,
   ModelProviderGlyph,
   ModelSearchNoMatches,
   ProviderErrorEmptyState,
@@ -28,14 +29,18 @@ import {
   type MobileModelPageAction,
   type MobileModelPageInput,
   type MobileModelPageProjection,
+  type MobileModelSection,
+  type MobileProfilesSection,
   type MobileProviderSection,
 } from "@/components/mobile-model-page-view";
+import { SettingsCard } from "@/components/settings";
+import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import {
   FlatList as SheetFlatList,
   ScrollView as SheetScrollView,
 } from "@/components/ui/scroll-view";
-import { SettingsCard } from "@/components/settings";
 import { SearchField } from "@/components/ui/search-field";
 import { useRevealActiveFlatListRow } from "@/components/ui/scroll-reveal";
 import { isNative } from "@/constants/platform";
@@ -43,25 +48,30 @@ import type { ProviderSelectorProvider } from "@/provider-selection/provider-sel
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 
 /**
- * The open provider lists its models in a box of one fixed height, about five rows, that scrolls
- * on its own. Opening another provider, unfolding older models or loading never moves the
- * providers below it, so they stay where the thumb left them.
+ * The open accordion section lists its rows in a box of one fixed height, about five rows, that
+ * scrolls on its own. Opening another section, unfolding older models or loading never moves the
+ * sections below it, so they stay where the thumb left them.
  */
 export const MOBILE_EXPANDED_PROVIDER_HEIGHT = 220;
 
 /** Theme-free: the sheet scrollers drop a themed contentContainerStyle on web (docs/unistyles.md). */
 const LIST_CONTENT = { paddingBottom: 4 };
+const SHEET_LIST_CARD_LIST = { flexGrow: 0, flexShrink: 1, minHeight: 0 };
+const EXPANDED_A11Y_STATE = { expanded: true };
 
 const ThemedAlertTriangle = withUnistyles(AlertTriangle);
 const ThemedChevronDown = withUnistyles(ChevronDown);
+const ThemedChevronUp = withUnistyles(ChevronUp);
+const ThemedLayers = withUnistyles(Layers);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const foregroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 // React Native Web blurs the focused input on every scroll in "on-drag" mode.
 const KEYBOARD_DISMISS_MODE = isNative ? "on-drag" : "none";
 const NO_PROFILES: AgentProfilePickerRow[] = [];
 
 export interface MobileModelPage {
-  projection: MobileModelPageProjection;
+  projection: MobileModelPageProjection<AgentProfilePickerRow>;
   query: string;
   /** Changes when the search is cleared from outside the field, so the field remounts empty. */
   searchKey: number;
@@ -74,13 +84,21 @@ export interface MobileModelPage {
 
 export function useMobileModelPage(input: {
   providers: readonly ProviderSelectorProvider[];
+  profiles?: readonly AgentProfilePickerRow[] | null;
+  canCreateProfile?: boolean;
   selectedProvider: string;
   selectedModel: string;
 }): MobileModelPage {
-  const { providers, selectedProvider, selectedModel } = input;
-  const pageInput = useMemo<MobileModelPageInput>(
-    () => ({ providers, selectedProvider, selectedModel }),
-    [providers, selectedModel, selectedProvider],
+  const {
+    providers,
+    profiles = null,
+    canCreateProfile = false,
+    selectedProvider,
+    selectedModel,
+  } = input;
+  const pageInput = useMemo<MobileModelPageInput<AgentProfilePickerRow>>(
+    () => ({ providers, profiles, canCreateProfile, selectedProvider, selectedModel }),
+    [canCreateProfile, profiles, providers, selectedModel, selectedProvider],
   );
   const inputRef = useRef(pageInput);
   inputRef.current = pageInput;
@@ -150,6 +168,10 @@ export interface MobileModelPageViewProps {
   profiles?: readonly AgentProfilePickerRow[] | null;
 }
 
+type SearchEntry =
+  | { kind: "heading"; key: string; title: string }
+  | { kind: "item"; key: string; item: ModelPickerListItem<AgentProfilePickerRow> };
+
 /** The compact model picker's body; its search is a `SheetSearchDock` in the sheet's footer. */
 export function MobileModelPageView({
   page,
@@ -159,6 +181,7 @@ export function MobileModelPageView({
   profiles,
   actions,
 }: MobileModelPageViewProps) {
+  const { t } = useTranslation();
   const { projection, dispatch } = page;
   const profiledLookup = useMemo(
     () => groupProfilesByProviderModel(profiles ?? NO_PROFILES),
@@ -197,6 +220,41 @@ export function MobileModelPageView({
       serverId,
     ],
   );
+  const searchEntries = useMemo<SearchEntry[]>(() => {
+    if (projection.kind !== "search") return [];
+    const toEntry = (item: ModelPickerListItem<AgentProfilePickerRow>): SearchEntry => ({
+      kind: "item",
+      key: item.key,
+      item,
+    });
+    const entries: SearchEntry[] = [];
+    if (projection.profiles.length > 0) {
+      entries.push({
+        kind: "heading",
+        key: "heading:profiles",
+        title: t("modelSelector.profiles"),
+      });
+      entries.push(...projection.profiles.map(toEntry));
+      if (projection.models.length > 0) {
+        entries.push({
+          kind: "heading",
+          key: "heading:models",
+          title: t("modelSelector.models"),
+        });
+      }
+    }
+    entries.push(...projection.models.map(toEntry));
+    return entries;
+  }, [projection, t]);
+  const renderSearchEntry = useCallback(
+    ({ item }: { item: SearchEntry }) =>
+      item.kind === "heading" ? (
+        <ModelBrowserSectionHeading title={item.title} />
+      ) : (
+        renderItem({ item: item.item })
+      ),
+    [renderItem],
+  );
 
   if (projection.kind === "noProviders") {
     return (
@@ -216,9 +274,9 @@ export function MobileModelPageView({
     return (
       <SheetListCard>
         <SheetFlatList
-          data={projection.items}
-          renderItem={renderItem}
-          keyExtractor={getItemKey}
+          data={searchEntries}
+          renderItem={renderSearchEntry}
+          keyExtractor={getSearchEntryKey}
           style={SHEET_LIST_CARD_LIST}
           contentContainerStyle={LIST_CONTENT}
           keyboardShouldPersistTaps="handled"
@@ -229,19 +287,23 @@ export function MobileModelPageView({
       </SheetListCard>
     );
   }
-  if (!projection.showProviderHeaders) {
+  if (!projection.showSectionHeaders) {
     const section = projection.sections[0];
     return (
       <View style={styles.page} testID="mobile-model-page">
-        {section ? <ExpandedProviderHeader section={section} serverId={serverId} /> : null}
-        <ProviderBody
-          body={projection.body}
-          selectedIndex={projection.selectedIndex}
-          renderItem={renderItem}
-          fill
-          onRetryProvider={actions.onRetryProvider}
-          isRetryingProvider={actions.isRetryingProvider}
-        />
+        {section?.kind === "provider" ? (
+          <ExpandedProviderHeader section={section} serverId={serverId} />
+        ) : null}
+        {projection.body ? (
+          <SectionBody
+            body={projection.body}
+            selectedIndex={projection.selectedIndex}
+            renderItem={renderItem}
+            fill
+            onRetryProvider={actions.onRetryProvider}
+            isRetryingProvider={actions.isRetryingProvider}
+          />
+        ) : null}
       </View>
     );
   }
@@ -255,38 +317,81 @@ export function MobileModelPageView({
     >
       {/* Themed insets sit on a View: the sheet scroller drops a themed contentContainerStyle on web. */}
       <View style={styles.sections}>
-        {projection.sections.map((section) =>
-          section.expanded ? (
-            <SettingsCard key={section.providerId}>
-              <ExpandedProviderHeader section={section} serverId={serverId} />
-              <ProviderBody
-                body={projection.body}
-                selectedIndex={projection.selectedIndex}
-                renderItem={renderItem}
-                fill={false}
-                onRetryProvider={actions.onRetryProvider}
-                isRetryingProvider={actions.isRetryingProvider}
-              />
-            </SettingsCard>
-          ) : (
-            <SettingsCard key={section.providerId}>
-              <CollapsedProviderRow section={section} serverId={serverId} onExpand={dispatch} />
-            </SettingsCard>
-          ),
-        )}
+        {projection.sections.map((section) => (
+          <AccordionSectionCard
+            key={section.key}
+            section={section}
+            body={projection.body}
+            selectedIndex={projection.selectedIndex}
+            serverId={serverId}
+            actions={actions}
+            renderItem={renderItem}
+            onToggle={dispatch}
+          />
+        ))}
       </View>
     </SheetScrollView>
   );
 }
 
-/** The style a list inside `SheetListCard` takes, so the card fits short lists and scrolls long ones. */
-export const SHEET_LIST_CARD_LIST = { flexGrow: 0, flexShrink: 1, minHeight: 0 };
+function AccordionSectionCard({
+  section,
+  body,
+  selectedIndex,
+  serverId,
+  actions,
+  renderItem,
+  onToggle,
+}: {
+  section: MobileModelSection;
+  body: MobileModelBody<AgentProfilePickerRow> | null;
+  selectedIndex: number | null;
+  serverId: string | null;
+  actions: ModelPickerActions;
+  renderItem: ModelItemRenderer;
+  onToggle: (action: MobileModelPageAction) => void;
+}) {
+  if (!section.expanded) {
+    return (
+      <SettingsCard>
+        {section.kind === "profiles" ? (
+          <CollapsedProfilesRow section={section} onToggle={onToggle} />
+        ) : (
+          <CollapsedProviderRow section={section} serverId={serverId} onToggle={onToggle} />
+        )}
+      </SettingsCard>
+    );
+  }
+  return (
+    <SettingsCard>
+      {section.kind === "profiles" ? (
+        <ExpandedProfilesHeader
+          section={section}
+          onEditProfiles={actions.onEditProfiles}
+          onToggle={onToggle}
+        />
+      ) : (
+        <ExpandedProviderHeader section={section} serverId={serverId} onToggle={onToggle} />
+      )}
+      {body ? (
+        <SectionBody
+          body={body}
+          selectedIndex={selectedIndex}
+          renderItem={renderItem}
+          fill={false}
+          onRetryProvider={actions.onRetryProvider}
+          isRetryingProvider={actions.isRetryingProvider}
+        />
+      ) : null}
+    </SettingsCard>
+  );
+}
 
 /**
  * An inset card holding one sheet list, on the same rail as the browse sections' cards. It grows
  * with the list, then the list scrolls inside it.
  */
-export function SheetListCard({ children }: { children: ReactNode }) {
+function SheetListCard({ children }: { children: ReactNode }) {
   return (
     <View style={styles.listCardPage}>
       <SettingsCard shrink>{children}</SettingsCard>
@@ -300,6 +405,10 @@ function getItemKey(item: ModelPickerListItem<AgentProfilePickerRow>): string {
   return item.key;
 }
 
+function getSearchEntryKey(entry: SearchEntry): string {
+  return entry.key;
+}
+
 function useSectionSummary(section: MobileProviderSection): string {
   const { t } = useTranslation();
   if (section.folds) {
@@ -308,52 +417,208 @@ function useSectionSummary(section: MobileProviderSection): string {
   return String(section.total);
 }
 
+function ExpandedSectionHeader({
+  leading,
+  title,
+  summary,
+  trailing,
+  onCollapse,
+  testID,
+}: {
+  leading: ReactNode;
+  title: string;
+  summary: string | null;
+  trailing?: ReactNode;
+  onCollapse?: () => void;
+  testID: string;
+}) {
+  const titleContent = (
+    <>
+      <View style={styles.glyph}>{leading}</View>
+      <Text style={styles.expandedTitle} numberOfLines={1}>
+        {title}
+        {summary !== null ? <Text style={styles.summary}>{` · ${summary}`}</Text> : null}
+      </Text>
+    </>
+  );
+  if (!onCollapse) {
+    return (
+      <View style={styles.expandedHeader} testID={testID}>
+        <View style={styles.expandedTrigger}>{titleContent}</View>
+        {trailing}
+      </View>
+    );
+  }
+  return (
+    <View style={styles.expandedHeader}>
+      <PressHighlight
+        onPress={onCollapse}
+        accessibilityRole="button"
+        accessibilityState={EXPANDED_A11Y_STATE}
+        style={styles.expandedTrigger}
+        testID={testID}
+      >
+        {titleContent}
+      </PressHighlight>
+      <View style={styles.expandedTrailing}>
+        {trailing}
+        <PressHighlight
+          onPress={onCollapse}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={title}
+          accessibilityState={EXPANDED_A11Y_STATE}
+          style={styles.collapseChevron}
+        >
+          <ThemedChevronUp size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
+        </PressHighlight>
+      </View>
+    </View>
+  );
+}
+
+function ExpandedProfilesHeader({
+  section,
+  onEditProfiles,
+  onToggle,
+}: {
+  section: MobileProfilesSection;
+  onEditProfiles?: () => void;
+  onToggle: (action: MobileModelPageAction) => void;
+}) {
+  const { t } = useTranslation();
+  const handleCollapse = useCallback(
+    () => onToggle({ kind: "toggleSection", key: section.key }),
+    [onToggle, section.key],
+  );
+  const leading = useMemo(
+    () => <ThemedLayers size={ICON_SIZE.sm} uniProps={foregroundMapping} />,
+    [],
+  );
+  const trailing = useMemo(
+    () =>
+      onEditProfiles ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={Pencil}
+          onPress={onEditProfiles}
+          accessibilityLabel={t("modelSelector.editProfilesLabel")}
+          testID="model-profiles-edit"
+        />
+      ) : null,
+    [onEditProfiles, t],
+  );
+  return (
+    <ExpandedSectionHeader
+      leading={leading}
+      title={t("modelSelector.profiles")}
+      summary={String(section.count)}
+      trailing={trailing}
+      onCollapse={handleCollapse}
+      testID="model-profiles-section"
+    />
+  );
+}
+
+function CollapsedProfilesRow({
+  section,
+  onToggle,
+}: {
+  section: MobileProfilesSection;
+  onToggle: (action: MobileModelPageAction) => void;
+}) {
+  const { t } = useTranslation();
+  const handlePress = useCallback(
+    () => onToggle({ kind: "toggleSection", key: section.key }),
+    [onToggle, section.key],
+  );
+  const leadingSlot = useMemo(
+    () => <ThemedLayers size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />,
+    [],
+  );
+  const trailingSlot = useMemo(
+    () => (
+      <View style={styles.collapsedTrailing}>
+        <Text style={styles.summary}>{section.count}</Text>
+        <ThemedChevronDown size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
+      </View>
+    ),
+    [section.count],
+  );
+  return (
+    <ModelBrowserRow
+      label={t("modelSelector.profiles")}
+      leadingSlot={leadingSlot}
+      trailingSlot={trailingSlot}
+      spacing="provider"
+      onPress={handlePress}
+      testID="model-picker-rail-profiles"
+    />
+  );
+}
+
 function ExpandedProviderHeader({
   section,
   serverId,
+  onToggle,
 }: {
   section: MobileProviderSection;
   serverId: string | null;
+  onToggle?: (action: MobileModelPageAction) => void;
 }) {
   const summary = useSectionSummary(section);
-  return (
-    <View style={styles.expandedHeader} testID={`model-provider-section-${section.providerId}`}>
-      <View style={styles.glyph}>
-        <ModelProviderGlyph
-          provider={section.providerId}
-          serverId={serverId}
-          size={ICON_SIZE.sm}
-          tone="foreground"
-        />
-      </View>
-      <Text style={styles.expandedTitle} numberOfLines={1}>
-        {section.label}
-        {section.status === "ready" ? <Text style={styles.summary}>{` · ${summary}`}</Text> : null}
-      </Text>
-      {serverId ? (
+  const handleCollapse = useCallback(
+    () => onToggle?.({ kind: "toggleSection", key: section.key }),
+    [onToggle, section.key],
+  );
+  const leading = useMemo(
+    () => (
+      <ModelProviderGlyph
+        provider={section.providerId}
+        serverId={serverId}
+        size={ICON_SIZE.sm}
+        tone="foreground"
+      />
+    ),
+    [section.providerId, serverId],
+  );
+  const trailing = useMemo(
+    () =>
+      serverId ? (
         <CustomizeProviderButton
           serverId={serverId}
           providerId={section.providerId}
           providerLabel={section.label}
         />
-      ) : null}
-    </View>
+      ) : null,
+    [section.label, section.providerId, serverId],
+  );
+  return (
+    <ExpandedSectionHeader
+      leading={leading}
+      title={section.label}
+      summary={section.status === "ready" ? summary : null}
+      trailing={trailing}
+      onCollapse={onToggle ? handleCollapse : undefined}
+      testID={`model-provider-section-${section.providerId}`}
+    />
   );
 }
 
 function CollapsedProviderRow({
   section,
   serverId,
-  onExpand,
+  onToggle,
 }: {
   section: MobileProviderSection;
   serverId: string | null;
-  onExpand: (action: MobileModelPageAction) => void;
+  onToggle: (action: MobileModelPageAction) => void;
 }) {
   const summary = useSectionSummary(section);
   const handlePress = useCallback(
-    () => onExpand({ kind: "expand", providerId: section.providerId }),
-    [onExpand, section.providerId],
+    () => onToggle({ kind: "toggleSection", key: section.key }),
+    [onToggle, section.key],
   );
   const leadingSlot = useMemo(
     () => (
@@ -408,7 +673,7 @@ type ModelItemRenderer = ({
   item: ModelPickerListItem<AgentProfilePickerRow>;
 }) => React.ReactElement;
 
-function ProviderBody({
+function SectionBody({
   body,
   selectedIndex,
   renderItem,
@@ -416,7 +681,7 @@ function ProviderBody({
   onRetryProvider,
   isRetryingProvider,
 }: {
-  body: MobileModelBody;
+  body: MobileModelBody<AgentProfilePickerRow>;
   selectedIndex: number | null;
   renderItem: ModelItemRenderer;
   /** A lone provider's list fills the page; an open section keeps its fixed height. */
@@ -444,10 +709,11 @@ function ProviderBody({
       </View>
     );
   }
+  const listKey = body.kind === "profiles" ? "profiles" : body.providerId;
   const list = (
-    <ProviderModelList
-      // A new provider is a new list, which opens at its top or at the selected model.
-      key={body.providerId}
+    <SectionItemList
+      // Each section is a new list, which opens at its top or at the selected model.
+      key={listKey}
       items={body.items}
       selectedIndex={selectedIndex}
       renderItem={renderItem}
@@ -459,7 +725,7 @@ function ProviderBody({
 }
 
 /** Opens with the selected model in view, such as an older model behind the opened fold. */
-function ProviderModelList({
+function SectionItemList({
   items,
   selectedIndex,
   renderItem,
@@ -522,10 +788,28 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 44,
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[2],
-    // The model rows' leading rail (ModelBrowserRow), so the provider glyph sits above theirs.
+    // The model rows' leading rail (ModelBrowserRow), so the section glyph sits above theirs.
     paddingLeft: isNative ? theme.spacing[6] : theme.spacing[3],
-    paddingRight: theme.spacing[4],
+    paddingRight: isNative ? theme.spacing[6] : theme.spacing[3],
+  },
+  expandedTrigger: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  expandedTrailing: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  collapseChevron: {
+    minWidth: 24,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
   },
   glyph: {
     width: 16,
