@@ -7,6 +7,7 @@ import {
 } from "@/stores/session-store";
 import type { StreamItem } from "@/types/stream";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { createPluginWorkspaceSnapshot } from "@/plugins/client-state/snapshots";
 import { ReplicaCache } from ".";
 import type { DirectoryCheckpoint } from "@/runtime/replica-cache";
 import type { ReplicaHostRows, ReplicaRow, ReplicaRowChanges, ReplicaRowStore } from "./row-store";
@@ -1377,4 +1378,57 @@ it("retains semantic agent messages across disk-cache reconstruction", async () 
   writer.commitTimeline(SERVER_ID, "agent-1", value);
   await writer.flush();
   expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toEqual(value);
+});
+
+it("retains workspace metadata across replica-cache reload and invalidates pre-metadata rows", async () => {
+  const storage = new MemoryStorage();
+  const writer = createCache(storage);
+  const checkpoint: DirectoryCheckpoint = {
+    agents: { generation: "g", afterSeq: 12 },
+    projects: { generation: "g", afterSeq: 4 },
+    workspaces: { generation: "g", afterSeq: 8 },
+  };
+  const baseline = directory(checkpoint);
+  const withMetadata = normalizeWorkspaceDescriptor({
+    ...workspacePayload(),
+    metadata: {
+      issues: ["https://github.com/getpaseo/paseo/issues/42"],
+      body: "Persisted across app restart",
+    },
+  });
+  baseline.workspaces.set(withMetadata.id, withMetadata);
+  commitDirectory(writer, SERVER_ID, baseline);
+  await writer.flush();
+
+  const restoredDirectory = await createCache(storage).readDirectory(SERVER_ID);
+  const restoredWorkspace = restoredDirectory.workspaces.get(withMetadata.id);
+  expect(restoredWorkspace?.metadata).toEqual({
+    issues: ["https://github.com/getpaseo/paseo/issues/42"],
+    body: "Persisted across app restart",
+  });
+  expect(createPluginWorkspaceSnapshot(restoredWorkspace!, SERVER_ID).metadata).toEqual({
+    issues: ["https://github.com/getpaseo/paseo/issues/42"],
+    body: "Persisted across app restart",
+  });
+
+  const restoredSingle = await createCache(storage).readWorkspace(SERVER_ID, withMetadata.id);
+  expect(restoredSingle?.workspace.metadata).toEqual({
+    issues: ["https://github.com/getpaseo/paseo/issues/42"],
+    body: "Persisted across app restart",
+  });
+
+  // Simulate a cached workspace row written before metadata was stored: it must invalidate
+  // the workspace cursor so the daemon resends workspaces with their metadata on reconnect.
+  const key = `${SERVER_ID}:workspace:${withMetadata.id}`;
+  const row = storage.rows.get(key)!;
+  const legacyPayload = JSON.parse(row.payload) as Record<string, unknown>;
+  delete legacyPayload.metadata;
+  storage.rows.set(key, { ...row, payload: JSON.stringify(legacyPayload) });
+
+  const afterLegacy = await createCache(storage).readDirectory(SERVER_ID);
+  expect(afterLegacy.workspaces.size).toBe(0);
+  expect(afterLegacy.checkpoint).toEqual({
+    agents: checkpoint.agents,
+    projects: checkpoint.projects,
+  });
 });

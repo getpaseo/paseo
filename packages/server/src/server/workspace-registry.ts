@@ -5,6 +5,7 @@ import type { Logger } from "pino";
 import { z } from "zod";
 
 import { writeJsonFileAtomic } from "./atomic-file.js";
+import { applyRecordPatch } from "./record-patch.js";
 import { areEquivalentPaths } from "../utils/path.js";
 import {
   generateProjectId,
@@ -967,6 +968,9 @@ export function createPersistedWorkspaceRecord(input: {
     archivedAt: input.archivedAt ?? null,
     autoArchivedChangeRequestUrl: input.autoArchivedChangeRequestUrl ?? null,
     pinnedAt: input.pinnedAt ?? null,
+    ...(input.metadata !== undefined
+      ? { metadata: applyRecordPatch<JsonValue>({}, input.metadata) }
+      : {}),
   });
 }
 

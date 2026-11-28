@@ -184,7 +184,7 @@ export function normalizeWorkspaceDescriptor(
     pinnedAt: payload.pinnedAt ?? null,
     // COMPAT(workspaceLabels): old daemons omit assignments.
     labels: payload.labels ?? [],
-    metadata: payload.metadata,
+    metadata: payload.metadata ?? {},
     status: payload.status,
     statusEnteredAt,
     archivingAt: payload.archivingAt ?? null,

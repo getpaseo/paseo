@@ -23,6 +23,7 @@ import {
   type BackgroundCaller,
 } from "../create-agent/intent.js";
 import { expandUserPath } from "../../path-utils.js";
+import { applyRecordPatch } from "../../record-patch.js";
 import {
   PaseoToolInputError,
   type PaseoToolExecutionContext,
@@ -387,7 +388,12 @@ export function createHostResolver(input: {
                     },
               title: args.title as string | undefined,
               ...(args.metadata !== undefined
-                ? { metadata: args.metadata as Record<string, JsonValue> }
+                ? {
+                    metadata: applyRecordPatch<JsonValue>(
+                      {},
+                      args.metadata as Record<string, JsonValue>,
+                    ),
+                  }
                 : {}),
               background: inheritWorkspaceBackground(
                 args.background as boolean | undefined,

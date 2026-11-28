@@ -232,58 +232,31 @@ function toWorkspaceAutomationSummary(workspace: PersistedWorkspaceRecord) {
   };
 }
 
-function validateJsonValue(value: unknown, path: string, seen: WeakSet<object>): JsonValue {
-  if (value === null || typeof value === "boolean" || typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) {
-      throw new PaseoToolInputError(`Invalid metadata value at ${path}: numbers must be finite`);
-    }
-    return value;
-  }
-  if (Array.isArray(value)) {
-    if (seen.has(value)) {
-      throw new PaseoToolInputError(`Invalid metadata value at ${path}: circular reference`);
-    }
-    seen.add(value);
-    const items = value.map((item, index) => validateJsonValue(item, `${path}[${index}]`, seen));
-    seen.delete(value);
-    return items;
-  }
-  if (typeof value === "object") {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) {
-      throw new PaseoToolInputError(
-        `Invalid metadata value at ${path}: expected a plain JSON object`,
-      );
-    }
-    if (seen.has(value)) {
-      throw new PaseoToolInputError(`Invalid metadata value at ${path}: circular reference`);
-    }
-    seen.add(value);
-    const result: Record<string, JsonValue> = {};
-    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-      result[key] = validateJsonValue(entry, `${path}.${key}`, seen);
-    }
-    seen.delete(value);
-    return result;
-  }
-  throw new PaseoToolInputError(
-    `Invalid metadata value at ${path}: values must be JSON-serializable`,
-  );
-}
-
 function validateWorkspaceMetadataPatch(
   metadata: Record<string, unknown>,
 ): Record<string, JsonValue> {
-  const seen = new WeakSet<object>();
-  seen.add(metadata);
-  const result: Record<string, JsonValue> = {};
-  for (const [key, value] of Object.entries(metadata)) {
-    result[key] = validateJsonValue(value, `metadata.${key}`, seen);
+  try {
+    const serialized = JSON.stringify(metadata, (_key, value) => {
+      if (typeof value === "number" && !Number.isFinite(value)) {
+        throw new PaseoToolInputError("Invalid metadata value: numbers must be finite");
+      }
+      if (
+        value === undefined ||
+        typeof value === "function" ||
+        typeof value === "symbol" ||
+        typeof value === "bigint"
+      ) {
+        throw new PaseoToolInputError("Invalid metadata value: values must be JSON-serializable");
+      }
+      return value;
+    });
+    return JSON.parse(serialized) as Record<string, JsonValue>;
+  } catch (error) {
+    if (error instanceof PaseoToolInputError) throw error;
+    throw new PaseoToolInputError(
+      `Invalid metadata value: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
-  return result;
 }
 
 type WorkspaceWorktreeMode = "branch-off" | "checkout-branch" | "checkout-pr";

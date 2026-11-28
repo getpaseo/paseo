@@ -256,6 +256,7 @@ test("remote updateWorkspace requires an explicit workspaceId and forwards metad
                 providersSnapshotCwd: true,
                 ownedSubscriptions: true,
                 backgroundWorkspaces: true,
+                creationLifecycle: true,
                 entityMetadata: true,
               },
             },
@@ -358,4 +359,63 @@ test("remote updateWorkspace requires an explicit workspaceId and forwards metad
     title: "Remote title",
     metadata: { keep: true, issues: ["#1", "#2"] },
   });
+});
+
+test("remote createWorkspace strips null metadata keys before forwarding", async () => {
+  const socket = new OlderHostSocket();
+  const baseSend = socket.send.bind(socket);
+  socket.send = (data: string) => {
+    const frame = JSON.parse(data);
+    if (frame.type === "hello") {
+      socket.onmessage?.({
+        data: JSON.stringify({
+          type: "session",
+          message: {
+            type: "status",
+            payload: {
+              status: "server_info",
+              serverId: "srv_modern",
+              hostname: null,
+              version: null,
+              features: {
+                providerUsageList: true,
+                providersSnapshotCwd: true,
+                ownedSubscriptions: true,
+                backgroundWorkspaces: true,
+                creationLifecycle: true,
+                entityMetadata: true,
+              },
+            },
+          },
+        }),
+      });
+      return;
+    }
+    baseSend(data);
+  };
+  const client = new DaemonClient({
+    url: "ws://modern-create.test",
+    clientId: "modern-create-test",
+    webSocketFactory: () => socket,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  await client.connect();
+
+  const creating = resolverFor(client, null).use("srv_modern", (host) =>
+    host.createWorkspace(
+      {
+        isolation: "local",
+        path: "/repo/modern",
+        metadata: { issues: ["#1"], body: null },
+      },
+      {} as never,
+    ),
+  );
+  creating.catch(() => {});
+
+  const request = (await socket.workspaceCreateRequest()) as {
+    metadata?: Record<string, unknown>;
+  };
+  expect(request.metadata).toEqual({ issues: ["#1"] });
 });
