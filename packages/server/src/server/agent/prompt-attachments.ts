@@ -268,7 +268,9 @@ function padLineNumber(lineNumber: number | null): string {
 }
 
 export function buildAgentBranchNameSeed(
-  firstAgentContext: { prompt?: string; attachments?: readonly AgentAttachment[] } | undefined,
+  firstAgentContext:
+    | { prompt?: string; imageCount?: number; attachments?: readonly AgentAttachment[] }
+    | undefined,
 ): string | undefined {
   if (!firstAgentContext) {
     return undefined;
@@ -279,6 +281,12 @@ export function buildAgentBranchNameSeed(
     parts.push(["<user-prompt>", prompt, "</user-prompt>"].join("\n"));
   }
   const renderedAttachments: string[] = [];
+  const { imageCount } = firstAgentContext;
+  if (imageCount) {
+    renderedAttachments.push(
+      imageCount === 1 ? "1 image attachment" : String(imageCount) + " image attachments",
+    );
+  }
   for (const attachment of firstAgentContext.attachments ?? []) {
     const rendered = renderPromptAttachmentAsText(attachment).trim();
     if (rendered) {
