@@ -24,6 +24,7 @@ class FakeAgentClient implements AgentArchiveClient, AgentReloadClient, AgentDet
   readonly fetchAgentCalls: string[] = [];
   fetchAgentError: Error | null = null;
   closed = false;
+  directoryReads = 0;
 
   constructor(
     private readonly listed: AgentSnapshotPayload[],
@@ -31,6 +32,7 @@ class FakeAgentClient implements AgentArchiveClient, AgentReloadClient, AgentDet
   ) {}
 
   async fetchAgents() {
+    this.directoryReads++;
     return { entries: this.listed.map((agent) => ({ agent })), pageInfo: { nextCursor: null } };
   }
 
@@ -77,6 +79,7 @@ describe("unlisted agent resolution", () => {
       status: "archived",
       archivedAt: "2026-11-15T00:00:00.000Z",
     });
+    expect(client.directoryReads).toBe(0);
     expect(client.fetchAgentCalls).toEqual([unlistedId]);
     expect(client.archived).toEqual([unlistedId]);
     expect(client.closed).toBe(true);

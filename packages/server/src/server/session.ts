@@ -6014,6 +6014,14 @@ export class Session {
       return { ok: true, agentId: trimmed };
     }
 
+    // A complete agent ID names one agent. When none has it, no prefix or
+    // title answers for it, so a command never acts on a different agent.
+    if (FULL_AGENT_ID_PATTERN.test(trimmed)) {
+      const record = await this.agentStorage.get(trimmed);
+      if (record && !record.internal) return { ok: true, agentId: trimmed };
+      return { ok: false, notFound: true, error: `Agent not found: ${trimmed}` };
+    }
+
     // Explicit identifier resolution admits archived agents by ID prefix.
     const stored = await this.agentStorage.listAll();
     const storedRecords = stored.filter((record) => !record.internal);
@@ -6027,12 +6035,6 @@ export class Session {
 
     if (knownIds.has(trimmed)) {
       return { ok: true, agentId: trimmed };
-    }
-
-    // A complete agent ID names one agent. When none has it, no prefix or
-    // title answers for it, so a command never acts on a different agent.
-    if (FULL_AGENT_ID_PATTERN.test(trimmed)) {
-      return { ok: false, notFound: true, error: `Agent not found: ${trimmed}` };
     }
 
     const prefixMatches = Array.from(knownIds).filter((id) => id.startsWith(trimmed));
