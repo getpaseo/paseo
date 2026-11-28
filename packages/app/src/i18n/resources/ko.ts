@@ -441,6 +441,10 @@ export const ko: TranslationResources = {
     turnFooter: {
       workedFor: "작업 시간 {{duration}}",
     },
+    modelChange: {
+      switched: "{{model}}(으)로 전환됨",
+      defaultModel: "기본 모델로 전환됨",
+    },
     compaction: {
       loading: "압축하는 중...",
       auto: "컨텍스트가 자동으로 압축되었습니다",

@@ -19,6 +19,33 @@ import {
   WorkspaceBaseBranchSetResponseSchema,
 } from "./messages.js";
 
+test("model change notifications remain readable by older clients", () => {
+  const legacyNotification = z.object({
+    type: z.literal("notification"),
+    level: z.enum(["info", "warning", "error"]),
+    message: z.string(),
+  });
+  const item = {
+    type: "notification",
+    level: "info",
+    message: "Switched to target",
+    modelChange: { model: "target" },
+  };
+  expect(AgentTimelineItemPayloadSchema.parse(item)).toEqual(item);
+  expect(legacyNotification.parse(item)).toEqual({
+    type: "notification",
+    level: "info",
+    message: "Switched to target",
+  });
+  expect(
+    AgentTimelineItemPayloadSchema.parse({
+      type: "notification",
+      level: "info",
+      message: "Existing notice",
+    }),
+  ).toEqual({ type: "notification", level: "info", message: "Existing notice" });
+});
+
 test("base selection RPCs are correlated while older checkout and branch messages remain valid", () => {
   const payload = {
     cwd: "/repo",

@@ -142,6 +142,34 @@ describe("plugin timeline projection", () => {
     expect(transform).toHaveBeenCalledOnce();
   });
 
+  it("passes structured model changes to timeline plugins", () => {
+    const transform: TimelineItemTransform = vi.fn(() => undefined);
+    projectPluginTimelineItems(
+      [
+        {
+          kind: "notification",
+          sourceType: "notification",
+          id: "switch",
+          level: "info",
+          message: "Switched to target",
+          modelChange: { model: "target" },
+          timestamp: new Date(0),
+        },
+      ],
+      transform,
+    );
+    expect(transform).toHaveBeenCalledWith(
+      expect.objectContaining({
+        item: {
+          type: "notification",
+          level: "info",
+          message: "Switched to target",
+          modelChange: { model: "target" },
+        },
+      }),
+    );
+  });
+
   it("preserves whether a notification row came from an agent error or a notice", () => {
     const transform: TimelineItemTransform = vi.fn(() => undefined);
     const timestamp = new Date("2026-01-01T00:00:00.000Z");

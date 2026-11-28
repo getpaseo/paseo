@@ -444,6 +444,10 @@ export const ru: TranslationResources = {
     turnFooter: {
       workedFor: "Время работы: {{duration}}",
     },
+    modelChange: {
+      switched: "Модель изменена на {{model}}",
+      defaultModel: "Выбрана модель по умолчанию",
+    },
     compaction: {
       loading: "Сжатие контекста...",
       auto: "Контекст сжат автоматически",

@@ -444,6 +444,10 @@ export const ptBR: TranslationResources = {
     turnFooter: {
       workedFor: "Trabalhou por {{duration}}",
     },
+    modelChange: {
+      switched: "Alterado para {{model}}",
+      defaultModel: "Alterado para o modelo padrão",
+    },
     compaction: {
       loading: "Compactando...",
       auto: "Contexto compactado automaticamente",

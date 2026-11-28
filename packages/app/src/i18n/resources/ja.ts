@@ -445,6 +445,10 @@ export const ja: TranslationResources = {
     turnFooter: {
       workedFor: "作業時間 {{duration}}",
     },
+    modelChange: {
+      switched: "{{model}} に切り替えました",
+      defaultModel: "デフォルトモデルに切り替えました",
+    },
     compaction: {
       loading: "コンテキストを圧縮中...",
       auto: "コンテキストが自動的に圧縮されました",

@@ -2321,6 +2321,28 @@ describe("turn lifecycle events", () => {
 });
 
 describe("notification timeline items", () => {
+  it("preserves model change details for display and plugin projection", () => {
+    const state = hydrateStreamState(
+      [
+        {
+          event: {
+            type: "timeline",
+            provider: "codex",
+            item: {
+              type: "notification",
+              level: "info",
+              message: "Switched to target",
+              modelChange: { model: "target" },
+            },
+          },
+          timestamp: new Date("2026-07-26T10:00:00.000Z"),
+        },
+      ],
+      { source: "canonical" },
+    );
+    expect(state[0]).toMatchObject({ kind: "notification", modelChange: { model: "target" } });
+  });
+
   it("maps notification items to activity log entries with the matching level", () => {
     const timestamp = new Date("2026-07-26T10:00:00.000Z");
     const state = hydrateStreamState(

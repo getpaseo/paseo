@@ -440,6 +440,10 @@ export const zhCN: TranslationResources = {
     turnFooter: {
       workedFor: "工作了 {{duration}}",
     },
+    modelChange: {
+      switched: "已切换到 {{model}}",
+      defaultModel: "已切换到默认模型",
+    },
     compaction: {
       loading: "正在压缩...",
       auto: "上下文已自动压缩",

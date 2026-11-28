@@ -34,6 +34,7 @@ import {
   SpeakMessage,
   UserMessage,
   Notification,
+  ModelChangeMarker,
   ToolCall,
   TodoListCard,
   CompactionMarker,
@@ -935,7 +936,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             return <TurnSummaryLine item={item} onExpandedChange={setTurnExpanded} />;
 
           case "notification":
-            return <Notification level={item.level} message={item.message} />;
+            return item.modelChange ? (
+              <ModelChangeMarker model={item.modelChange.model} />
+            ) : (
+              <Notification level={item.level} message={item.message} />
+            );
 
           case "todo_list":
             return <TodoListCard items={item.items} activity={item.activity} />;

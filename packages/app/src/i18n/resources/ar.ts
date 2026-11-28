@@ -440,6 +440,10 @@ export const ar: TranslationResources = {
     turnFooter: {
       workedFor: "عمل لمدة {{duration}}",
     },
+    modelChange: {
+      switched: "تم التبديل إلى {{model}}",
+      defaultModel: "تم التبديل إلى النموذج الافتراضي",
+    },
     compaction: {
       loading: "الضغط...",
       auto: "يتم ضغط السياق تلقائيًا",

@@ -57,6 +57,29 @@ describe("daemon E2E - timeline window", () => {
     await ctx.cleanup();
   }, 60_000);
 
+  test("model switches appear in the persisted timeline through the client", async () => {
+    const cwd = tmpCwd();
+    try {
+      const agent = await ctx.client.createAgent({ provider: "codex", cwd, model: "source" });
+      await ctx.client.setAgentModel(agent.id, "target");
+      await ctx.daemon.daemon.agentManager.flush();
+      const timeline = await ctx.client.fetchAgentTimeline(agent.id, {
+        direction: "tail",
+        projection: "canonical",
+      });
+      expect(timeline.entries.map((entry) => entry.item)).toEqual([
+        {
+          type: "notification",
+          level: "info",
+          message: "Switched to target",
+          modelChange: { model: "target" },
+        },
+      ]);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("canonical tail limit returns one finalized committed assistant row at the window boundary", async () => {
     const cwd = tmpCwd();
     try {

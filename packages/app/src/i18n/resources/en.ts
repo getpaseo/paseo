@@ -439,6 +439,10 @@ export const en = {
     turnFooter: {
       workedFor: "Worked for {{duration}}",
     },
+    modelChange: {
+      switched: "Switched to {{model}}",
+      defaultModel: "Switched to the default model",
+    },
     compaction: {
       loading: "Compacting...",
       auto: "Context automatically compacted",

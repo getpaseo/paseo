@@ -445,6 +445,10 @@ export const fr: TranslationResources = {
     turnFooter: {
       workedFor: "A travaillé pendant {{duration}}",
     },
+    modelChange: {
+      switched: "Modèle remplacé par {{model}}",
+      defaultModel: "Modèle par défaut sélectionné",
+    },
     compaction: {
       loading: "Compaction…",
       auto: "Contexte compacté automatiquement",

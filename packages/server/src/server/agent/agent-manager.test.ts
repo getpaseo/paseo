@@ -6204,6 +6204,107 @@ test("a running agent's model and thinking option changes reach the session unch
   expect(manager.getAgent(snapshot.id)?.config.model).toBe("not-in-any-catalog");
 });
 
+test("does not report a switch when the selected model is already active by default", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-model-default-"));
+  class DefaultSession extends TestAgentSession {
+    async setModel() {
+      return { model: "active" };
+    }
+    override async getRuntimeInfo() {
+      return { ...(await super.getRuntimeInfo()), model: "active" };
+    }
+  }
+  class DefaultClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new DefaultSession(config);
+    }
+  }
+  const manager = new AgentManager({ clients: { codex: new DefaultClient() }, logger });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.setAgentModel(agent.id, "active");
+    expect(manager.getTimeline(agent.id)).toEqual([]);
+  } finally {
+    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("does not report a live model switch when the provider has no model control", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-model-no-control-"));
+  const manager = new AgentManager({ clients: { codex: new TestAgentClient() }, logger });
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, model: "source" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await manager.setAgentModel(agent.id, "target");
+    expect(manager.getTimeline(agent.id)).toEqual([]);
+  } finally {
+    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("records each successful model change once in the timeline", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-model-timeline-"));
+  class SelectingSession extends TestAgentSession {
+    async setModel(model: string | null) {
+      if (model === "failure") throw new Error("Switch failed");
+      return { model: model === "alias" ? "target" : model };
+    }
+  }
+  class SelectingClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new SelectingSession(config);
+    }
+  }
+  const durableTimelineStore = new RecordingTimelineStore();
+  const manager = new AgentManager({
+    clients: { codex: new SelectingClient() },
+    durableTimelineStore,
+    logger,
+  });
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, model: "source" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await manager.setAgentModel(agent.id, "alias");
+    await manager.setAgentModel(agent.id, "target");
+    await expect(manager.setAgentModel(agent.id, "failure")).rejects.toThrow("Switch failed");
+    expect(manager.getTimeline(agent.id)).toEqual([
+      {
+        type: "notification",
+        level: "info",
+        message: "Switched to target",
+        modelChange: { model: "target" },
+      },
+    ]);
+    await manager.flush();
+    expect((await durableTimelineStore.getCommittedRows(agent.id)).map((row) => row.item)).toEqual(
+      manager.getTimeline(agent.id),
+    );
+    await manager.setAgentModel(agent.id, null);
+    expect(manager.getTimeline(agent.id).at(-1)).toEqual({
+      type: "notification",
+      level: "info",
+      message: "Switched to the default model",
+      modelChange: { model: null },
+    });
+  } finally {
+    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test.each([
   { requested: "unavailable", effective: "source" },
   { requested: "alias", effective: "canonical" },

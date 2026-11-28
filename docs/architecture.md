@@ -402,7 +402,7 @@ initializing → idle ⇄ running
   client-side dedup; the default fetch page is 200 items.
 - Timeline row `timestamp` values are canonical daemon-owned timestamps. Providers may supply original replay timestamps, but clients must not guess timestamp trust or hide time UI based on local clock heuristics.
 - Events stream to connected clients in real time; correctness is backed by authoritative timeline fetches and paged-to-completion catch-up.
-- Agent state persists to `$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json`. Timeline rows are runtime memory; provider history is the durable transcript authority and resumed agents rebuild from it. That storage path is derived from `cwd`, not from workspace id.
+- Agent state persists to `$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json`. Timeline rows are runtime memory; provider history is the durable transcript authority and resumed agents rebuild from it. Model switches are stored with the agent and reinserted only when their recorded preceding item uniquely matches provider history; unresolved switches remain stored and are logged, not placed at an uncertain position. That storage path is derived from `cwd`, not from workspace id.
 
 ## Right-sidebar boundary: directory-backed vs workspace-owned
 

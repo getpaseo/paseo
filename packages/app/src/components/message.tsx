@@ -96,7 +96,14 @@ import Animated, {
   withRepeat,
   withTiming,
 } from "react-native-reanimated";
-import Svg, { Defs, Rect, Stop, LinearGradient as SvgLinearGradient } from "react-native-svg";
+import Svg, {
+  Defs,
+  Path,
+  Pattern,
+  Rect,
+  Stop,
+  LinearGradient as SvgLinearGradient,
+} from "react-native-svg";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { capAssistantMessageForRender, getUtf8ByteLength } from "./assistant-message-render-limit";
 import { getTurnDurationLabel } from "./assistant-turn-footer-label";
@@ -149,6 +156,7 @@ function useDisableOuterSpacing(disableOuterSpacing: boolean | undefined) {
 
 const WEB_TOOLCALL_SHIMMER_KEYFRAME_ID = "paseo-toolcall-shimmer-keyframes";
 const WEB_TOOLCALL_SHIMMER_ANIMATION_NAME = "paseo-toolcall-shimmer";
+const ThemedWavePath = withUnistyles(Path);
 const ThemedMicVocal = withUnistyles(MicVocal);
 const ThemedFileSymlinkIcon = withUnistyles(FileSymlink);
 const ThemedTriangleAlertIcon = withUnistyles(TriangleAlertIcon);
@@ -157,6 +165,7 @@ const ThemedNotificationInfo = withUnistyles(Info);
 const ThemedNotificationWarning = withUnistyles(TriangleAlertIcon);
 const ThemedNotificationError = withUnistyles(XCircle);
 
+const waveColorMapping = (theme: Theme) => ({ stroke: theme.colors.border });
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
@@ -1521,6 +1530,47 @@ export const Notification = memo(function Notification({
   );
 });
 
+function ModelChangeWave() {
+  const patternId = React.useId().replace(/:/g, "");
+  return (
+    <Svg width="100%" height={4}>
+      <Defs>
+        <Pattern id={patternId} width={24} height={4} patternUnits="userSpaceOnUse">
+          <ThemedWavePath
+            d="M0 2 C2 0 4 0 6 2 S10 4 12 2 S16 0 18 2 S22 4 24 2"
+            fill="none"
+            strokeWidth={0.5}
+            uniProps={waveColorMapping}
+          />
+        </Pattern>
+      </Defs>
+      <Rect width="100%" height={4} fill={`url(#${patternId})`} />
+    </Svg>
+  );
+}
+
+export const ModelChangeMarker = memo(function ModelChangeMarker({
+  model,
+}: {
+  model: string | null;
+}) {
+  const { t } = useTranslation();
+  const message = model
+    ? t("message.modelChange.switched", { model })
+    : t("message.modelChange.defaultModel");
+  return (
+    <View style={compactionStylesheet.container}>
+      <View style={compactionStylesheet.wave}>
+        <ModelChangeWave />
+      </View>
+      <Text style={compactionStylesheet.text}>{message}</Text>
+      <View style={compactionStylesheet.wave}>
+        <ModelChangeWave />
+      </View>
+    </View>
+  );
+});
+
 interface CompactionMarkerProps {
   status: "loading" | "completed";
   trigger?: "auto" | "manual";
@@ -1540,6 +1590,7 @@ const compactionStylesheet = StyleSheet.create((theme) => ({
     height: 1,
     backgroundColor: theme.colors.border,
   },
+  wave: { flex: 1 },
   label: {
     flexDirection: "row",
     alignItems: "center",
