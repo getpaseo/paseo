@@ -6784,3 +6784,42 @@ test("deduplicates repeated command names in list_commands_response for live age
     },
   });
 });
+
+test("list_commands_request does not start a runtime for an archived agent a timeline read loaded", async () => {
+  // A timeline read resumes an archived agent for history, so the manager holds it while the
+  // record stays archived. Listing its commands would start the provider process.
+  const listCommands = vi.fn(async () => []);
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      waitForAgentClose: async () => undefined,
+      getAgent: () => ({ id: "agent-a", session: { listCommands } }) as never,
+    },
+    agentStorage: {
+      get: vi.fn().mockResolvedValue(
+        createStoredAgentRecord({
+          id: "agent-a",
+          cwd: "/tmp/repo",
+          archivedAt: "2026-10-06T10:00:00.000Z",
+        }),
+      ),
+    },
+  });
+
+  await session.handleMessage({
+    type: "list_commands_request",
+    agentId: "agent-a",
+    requestId: "req-archived",
+  });
+
+  expect(listCommands).not.toHaveBeenCalled();
+  expect(findByType(messages, "list_commands_response")).toMatchObject({
+    payload: {
+      agentId: "agent-a",
+      requestId: "req-archived",
+      commands: [],
+      error: expect.any(String),
+    },
+  });
+});

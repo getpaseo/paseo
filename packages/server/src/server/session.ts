@@ -5726,9 +5726,11 @@ export class Session {
 
     try {
       const existing = this.agentManager.getAgent(agentId);
-      const stored = existing ? null : await this.agentStorage.get(agentId);
+      // Check the record even when loaded: a timeline read loads an archived agent for history,
+      // and listing its commands would start the provider process.
+      const stored = await this.agentStorage.get(agentId);
       const agent =
-        existing || (stored && !stored.archivedAt)
+        !stored?.archivedAt && (existing || stored)
           ? await ensureAgentLoaded(agentId, {
               agentManager: this.agentManager,
               agentStorage: this.agentStorage,

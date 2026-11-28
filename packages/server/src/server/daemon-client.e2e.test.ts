@@ -385,6 +385,56 @@ test("agent.config.apply sets an option that has no control and the next snapsho
   }
 });
 
+test("a timeline read of an archived agent does not let list commands reach its session", async () => {
+  const clients = createTestAgentClients();
+  const codex = clients.codex as AgentClient;
+  const listed: string[] = [];
+  // Records which session phase lists commands; behavior is the fake client's.
+  function recordListCommands(session: AgentSession, phase: string): AgentSession {
+    const list = session.listCommands?.bind(session);
+    session.listCommands = async () => {
+      listed.push(phase);
+      return (await list?.()) ?? [];
+    };
+    return session;
+  }
+  const recordingCodex: AgentClient = Object.create(codex, {
+    createSession: {
+      value: async (...args: Parameters<AgentClient["createSession"]>) =>
+        recordListCommands(await codex.createSession(...args), "created"),
+    },
+    resumeSession: {
+      value: async (...args: Parameters<AgentClient["resumeSession"]>) =>
+        recordListCommands(await codex.resumeSession(...args), "resumed"),
+    },
+  });
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { ...clients, codex: recordingCodex },
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.82",
+  });
+  const cwd = tmpCwd();
+
+  try {
+    await client.connect();
+    await client.fetchAgents({ subscribe: {} });
+    const agent = await client.createAgent({ provider: "codex", cwd, title: "Archived agent" });
+    await client.archiveAgent(agent.id);
+
+    await client.fetchAgentTimeline(agent.id, { limit: 5 });
+    const commands = await client.listCommands(agent.id);
+
+    expect(listed).toEqual([]);
+    expect(commands).toMatchObject({ commands: [], error: expect.any(String) });
+  } finally {
+    await client.close();
+    await daemon.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("createAgent with background initialPrompt returns a running snapshot before turn completion", async () => {
   const daemon = await createTestPaseoDaemon();
   const client = new DaemonClient({
