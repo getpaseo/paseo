@@ -480,7 +480,8 @@ interface CreateChatAgentInput {
   serverId: string;
   draftKey: string;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
-  draftId?: string;
+  draftId: string;
+  clearConsumedDraft: () => void;
   sourceDraftId?: string;
   draftContextScopeKey: string | null;
   supportsForgeSearch: boolean;
@@ -557,7 +558,7 @@ function runCreateChatAgent(input: CreateChatAgentInput): Promise<SubmitOutcome>
 
 async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<SubmitOutcome> {
   const { payload, composerState, ensureWorkspace, serverId, clearDraft } = input;
-  const clearConsumedDraft = captureWorkspaceDraftCleanup(input);
+  const clearConsumedDraft = input.clearConsumedDraft;
   const { text, attachments, cwd } = payload;
   if (!composerState) {
     throw new Error(input.labels.composerStateRequired);
@@ -578,7 +579,17 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
   });
   const uploadedImageAttachments =
     wirePayload.images.length > 0
-      ? await uploadImageAttachments({ client: input.resolveClient(), images: wirePayload.images })
+      ? await uploadImageAttachments({
+          client: input.resolveClient(),
+          images: wirePayload.images,
+          reuseUpload: (image, upload) =>
+            draftCreations.imageUpload({
+              serverId: input.serverId,
+              draftId: input.draftId,
+              image,
+              upload,
+            }),
+        })
       : undefined;
   const mergedAttachments = [
     ...(wirePayload.attachments ?? []),
@@ -1471,6 +1482,13 @@ export function NewWorkspaceScreen({
   const handleSubmitNewWorkspace = useCallback(
     async (payload: MessagePayload) => {
       try {
+        const consumeCapturedDraft = captureWorkspaceDraftCleanup({
+          serverId: selectedServerId,
+          sourceDraftId: draftId,
+          draftKey,
+          clearDraft: chatDraft.clear,
+          draftContextScopeKey,
+        });
         setErrorMessage(null);
         await composerState?.persistFormPreferences();
         await updateFormPreferences({ launchTarget });
@@ -1483,14 +1501,7 @@ export function NewWorkspaceScreen({
         });
         if (emptyWorkspace) {
           let outcome: SubmitOutcome = "background";
-          const clearConsumedDraft = captureWorkspaceDraftCleanup({
-            serverId: selectedServerId,
-            draftId: creationDraftId,
-            sourceDraftId: draftId,
-            draftKey,
-            clearDraft: chatDraft.clear,
-            draftContextScopeKey,
-          });
+          const clearConsumedDraft = () => consumeCapturedDraft(creationDraftId);
           await runCreateEmptyWorkspace({
             payload,
             ensureWorkspace: async (request) =>
@@ -1525,6 +1536,7 @@ export function NewWorkspaceScreen({
         }
 
         const outcome = await runCreateChatAgent({
+          clearConsumedDraft: () => consumeCapturedDraft(creationDraftId),
           payload,
           composerState: composerState
             ? {

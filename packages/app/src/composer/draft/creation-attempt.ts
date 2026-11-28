@@ -6,6 +6,8 @@ import { z } from "zod";
 import {
   WorkspaceDescriptorPayloadSchema,
   CreationSnapshotSchema,
+  UploadedFileAttachmentSchema,
+  type UploadedFileAttachment,
   type CreationSnapshot,
   type AgentSnapshotPayload,
   type WorkspaceDescriptorPayload,
@@ -188,7 +190,33 @@ export class DraftCreationOutcomeUnknownError extends Error {
 /** Admission blocks on storage; progress persistence never replaces the host's result. */
 export function createDraftCreations(deps: Dependencies) {
   const scopes = new Map<string, Promise<Scope>>();
+  const pendingImageUploads = new Map<string, Promise<UploadedFileAttachment>>();
   const inFlight = new Map<string, { result: Promise<unknown>; progress: SubmissionProgress }>();
+
+  /** Upload handles are request identity: persist them before admitting a creation. */
+  async function imageUpload(
+    input: Identity & {
+      image: object;
+      upload: () => Promise<UploadedFileAttachment>;
+    },
+  ): Promise<UploadedFileAttachment> {
+    const key = `draft-creation-image:${JSON.stringify([input.serverId, input.draftId, draftCreationKey("image", input.image)])}`;
+    const existing = pendingImageUploads.get(key);
+    if (existing) return existing;
+    const pending = (async () => {
+      const stored = await deps.storage.getItem(key);
+      if (stored !== null) return UploadedFileAttachmentSchema.parse(JSON.parse(stored));
+      const uploaded = await input.upload();
+      await deps.storage.setItem(key, JSON.stringify(uploaded));
+      return uploaded;
+    })();
+    pendingImageUploads.set(key, pending);
+    try {
+      return await pending;
+    } finally {
+      pendingImageUploads.delete(key);
+    }
+  }
 
   function scopeFor(identity: Identity): Promise<Scope> {
     const key = `draft-creation:${JSON.stringify([identity.serverId, identity.draftId])}`;
@@ -503,5 +531,5 @@ export function createDraftCreations(deps: Dependencies) {
     });
   }
 
-  return { submit, worktreeSlug, workspaceRetry, reconcileWorkspace, retireWorkspace };
+  return { submit, worktreeSlug, workspaceRetry, reconcileWorkspace, retireWorkspace, imageUpload };
 }

@@ -1075,3 +1075,66 @@ test("an explicit local draft retains the pre-upgrade workspace key encoding wit
     await client.close();
   }
 });
+
+test("an unchanged saved image draft recovers its completed workspace after reload", async ({
+  creation,
+  startup,
+  page,
+}) => {
+  const delay = await delayBrowserWorkspaceCreatedResponse(page);
+  const client = await connectNewWorkspaceDaemonClient();
+  const prompt = "Recover this saved image without another upload identity";
+  const frames = await loadSessionMessageReaders();
+  let uploads = 0;
+  page.on("websocket", (socket) => {
+    socket.on("framesent", ({ payload }) => {
+      if (frames.client(payload)?.type === "file.upload.request") uploads += 1;
+    });
+  });
+  try {
+    await creation.openWorkspaceForm("local");
+    const before = new Set((await client.fetchWorkspaces()).entries.map((entry) => entry.id));
+    await attachComposerTestImage(page);
+    await expectAttachmentPill(page, "composer-image-attachment-pill");
+    await creation.submitPrompt(prompt, "Create");
+    await delay.waitForCreateRequest();
+    await creation.leaveWorkspaceForm();
+    delay.release();
+    await page.waitForFunction(() =>
+      Object.keys(localStorage).some(
+        (key) =>
+          key.startsWith("draft-creation:") && JSON.parse(localStorage.getItem(key)!).workspace,
+      ),
+    );
+    await creation.returnToWorkspaceForm();
+    await page.reload();
+    await expectAttachmentPill(page, "composer-image-attachment-pill");
+    await startup.release();
+    await expect
+      .poll(
+        async () =>
+          (await client.fetchAgents()).entries.filter(
+            (entry) => !before.has(entry.agent.workspaceId ?? ""),
+          ).length,
+      )
+      .toBe(1);
+    await creation.submitPrompt(prompt, "Create");
+    await expect(
+      page.locator('[data-testid^="workspace-tab-agent_"][aria-selected="true"]:visible'),
+    ).toBeVisible();
+    await creation.expectPromptVisible(prompt);
+    expect(uploads).toBe(1);
+    expect(
+      (await client.fetchWorkspaces()).entries.filter((entry) => !before.has(entry.id)),
+    ).toHaveLength(1);
+    expect(
+      (await client.fetchAgents()).entries.filter(
+        (entry) => !before.has(entry.agent.workspaceId ?? ""),
+      ),
+    ).toHaveLength(1);
+  } finally {
+    delay.release();
+    await startup.release();
+    await client.close();
+  }
+});

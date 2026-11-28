@@ -201,7 +201,17 @@ async function submitDraftCreateRequest(input: {
     proposedId: input.draftId,
   });
   const attachmentsArray = Array.isArray(attachments) ? attachments : [];
-  const uploadedImageAttachments = await uploadImageAttachments({ client, images });
+  const uploadedImageAttachments = await uploadImageAttachments({
+    client,
+    images,
+    reuseUpload: (image, upload) =>
+      draftCreations.imageUpload({
+        serverId: input.serverId,
+        draftId: creationDraftId,
+        image,
+        upload,
+      }),
+  });
   const mergedAttachments = [...attachmentsArray, ...(uploadedImageAttachments ?? [])];
   const metadata = useDraftStore.getState().metadataByDraftKey[input.draftStoreKey] ?? {};
   const request = {

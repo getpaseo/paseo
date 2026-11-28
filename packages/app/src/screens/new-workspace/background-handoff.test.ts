@@ -243,3 +243,55 @@ it("clears consumed fork setup by its content route ID when the creation identit
   expect(store.getDraftCreationId({ serverId: SERVER_ID, draftKey: DRAFT_KEY })).toBeUndefined();
   expect(draftText()).toBe("");
 });
+
+it("preserves newer input when an empty submission receives its creation ID after preparation", async () => {
+  saveDraft("");
+  useDraftStore.setState({ creationIdByDraftKey: {} });
+  const cleanup = captureWorkspaceDraftCleanup({
+    serverId: SERVER_ID,
+    draftKey: DRAFT_KEY,
+    draftContextScopeKey: SCOPE_KEY,
+    clearDraft: (lifecycle) =>
+      useDraftStore.getState().clearDraftInput({ draftKey: DRAFT_KEY, lifecycle }),
+  });
+  let prepared!: (id: string) => void;
+  const preparation = new Promise<string>((resolve) => {
+    prepared = resolve;
+  });
+  const completed = preparation.then((id) => {
+    useDraftStore
+      .getState()
+      .ensureDraftCreationId({ serverId: SERVER_ID, draftKey: DRAFT_KEY, proposedId: id });
+    cleanup(id);
+    return null;
+  });
+  saveDraft("A new prompt entered after remount");
+  prepared(DRAFT_ID);
+  await completed;
+  expect(draftText()).toBe("A new prompt entered after remount");
+  expect(
+    useDraftStore.getState().getDraftCreationId({ serverId: SERVER_ID, draftKey: DRAFT_KEY }),
+  ).toBeUndefined();
+});
+
+it("consumes the unchanged empty draft after its prepared identity is bound", () => {
+  saveDraft("");
+  useDraftStore.setState({ creationIdByDraftKey: {} });
+  let clears = 0;
+  const cleanup = captureWorkspaceDraftCleanup({
+    serverId: SERVER_ID,
+    draftKey: DRAFT_KEY,
+    draftContextScopeKey: SCOPE_KEY,
+    clearDraft: () => {
+      clears += 1;
+    },
+  });
+  useDraftStore
+    .getState()
+    .ensureDraftCreationId({ serverId: SERVER_ID, draftKey: DRAFT_KEY, proposedId: DRAFT_ID });
+  cleanup(DRAFT_ID);
+  expect(clears).toBe(1);
+  expect(
+    useDraftStore.getState().getDraftCreationId({ serverId: SERVER_ID, draftKey: DRAFT_KEY }),
+  ).toBeUndefined();
+});

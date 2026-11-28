@@ -33,16 +33,19 @@ interface WorkspaceDraftCleanupInput {
   draftContextScopeKey: string | null;
 }
 
-/** Capture ownership before workspace creation starts, not when its response arrives. */
-export function captureWorkspaceDraftCleanup(input: WorkspaceDraftCleanupInput): () => void {
-  const draftId = input.draftId?.trim() ?? "";
-  const sourceDraftId = input.sourceDraftId?.trim() || draftId;
+/** Capture content before async preparation; bind the creation ID when preparation finishes. */
+export function captureWorkspaceDraftCleanup(
+  input: WorkspaceDraftCleanupInput,
+): (preparedDraftId?: string) => void {
+  const capturedSourceDraftId = input.sourceDraftId?.trim() || input.draftId?.trim() || "";
   const scopeKey = input.draftContextScopeKey ?? "";
   const draftVersion = useDraftStore.getState().drafts[input.draftKey]?.version;
-  const setup = useWorkspaceDraftSubmissionStore.getState().setupByDraftId[sourceDraftId];
+  const setup = useWorkspaceDraftSubmissionStore.getState().setupByDraftId[capturedSourceDraftId];
   const attachments = useWorkspaceAttachmentsStore.getState().attachmentsByScope[scopeKey];
 
-  return () => {
+  return (preparedDraftId = input.draftId) => {
+    const draftId = preparedDraftId?.trim() ?? "";
+    const sourceDraftId = capturedSourceDraftId || draftId;
     const store = useDraftStore.getState();
     if (store.getDraftCreationId(input) !== draftId) return;
     // Completion releases admission even when newer input must remain for the next creation.

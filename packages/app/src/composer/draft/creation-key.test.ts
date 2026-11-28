@@ -1622,3 +1622,89 @@ it.each(["missing", "different"] as const)(
     expect(observations).toBe(1);
   },
 );
+
+it("reuses uploaded image descriptors after reload within their host and creation scope", async () => {
+  const disk = storage();
+  const image = { id: "saved-image", mimeType: "image/png", createdAt: 1 };
+  let uploads = 0;
+  const upload = async () => {
+    uploads += 1;
+    return {
+      type: "uploaded_file" as const,
+      role: "image" as const,
+      id: `upload-${uploads}`,
+      path: `/uploads/${uploads}/image.png`,
+      fileName: "image.png",
+      mimeType: "image/png",
+      size: 4,
+    };
+  };
+  const first = await creationsFor(disk).imageUpload({ ...scope, image, upload });
+  expect(await creationsFor(disk).imageUpload({ ...scope, image, upload })).toEqual(first);
+  expect(uploads).toBe(1);
+  const restored = creationsFor(disk);
+  expect(
+    await restored.imageUpload({ ...scope, serverId: "other-host", image, upload }),
+  ).not.toEqual(first);
+  expect(
+    await restored.imageUpload({ ...scope, draftId: "new-creation", image, upload }),
+  ).not.toEqual(first);
+  expect(
+    await restored.imageUpload({ ...scope, image: { ...image, id: "different-image" }, upload }),
+  ).not.toEqual(first);
+  expect(uploads).toBe(4);
+});
+
+it("coalesces concurrent image uploads and checkpoints their descriptor before returning", async () => {
+  const disk = storage();
+  const gate = deferredValue<void>();
+  const started = deferredValue<void>();
+  const creations = creationsFor(disk);
+  let uploads = 0;
+  const upload = async () => {
+    uploads += 1;
+    started.resolve();
+    await gate.promise;
+    return {
+      type: "uploaded_file" as const,
+      role: "image" as const,
+      id: "shared-upload",
+      path: "/uploads/shared/image.png",
+      fileName: "image.png",
+      mimeType: "image/png",
+      size: 4,
+    };
+  };
+  const input = { ...scope, image: { id: "shared-image" }, upload };
+  const first = creations.imageUpload(input);
+  const second = creations.imageUpload(input);
+  await started.promise;
+  gate.resolve();
+  expect(await first).toEqual(await second);
+  expect(await creationsFor(disk).imageUpload(input)).toEqual(await first);
+  expect(uploads).toBe(1);
+});
+
+it("rejects an image descriptor that could not be durably checkpointed", async () => {
+  const disk = {
+    getItem: async () => null,
+    setItem: async () => {
+      throw new Error("Image checkpoint failed");
+    },
+  };
+  await expect(
+    creationsFor(disk).imageUpload({
+      ...scope,
+      image: { id: "image" },
+      upload: async () => ({
+        type: "uploaded_file",
+        role: "image",
+        id: "volatile",
+        path: "/uploads/volatile/image.png",
+        fileName: "image.png",
+        mimeType: "image/png",
+        size: 4,
+      }),
+    }),
+  ).rejects.toThrow("Image checkpoint failed");
+});
