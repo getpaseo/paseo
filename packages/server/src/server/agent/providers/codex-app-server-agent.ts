@@ -8350,6 +8350,13 @@ export class CodexAppServerAgentClient implements AgentClient {
     const processPort = this.deps.appServerProcess ?? defaultCodexAppServerProcess;
     const launchPrefix = await processPort.resolvePrefix({ runtimeSettings: this.runtimeSettings });
     const args = [...launchPrefix.args, "app-server"];
+    if (options.agentId) {
+      // Codex shell inheritance can filter the caller ID out of tool subprocesses.
+      args.push(
+        "-c",
+        `shell_environment_policy.set.PASEO_AGENT_ID=${JSON.stringify(options.agentId)}`,
+      );
+    }
     if (options.goalsEnabled) {
       args.push("--enable", "goals");
     }

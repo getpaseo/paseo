@@ -87,6 +87,7 @@ test("daemon resolves human and managed CLI workspace ownership", async () => {
     });
     expect(attachedAgent.workspaceId).toBe(firstWorkspaceId);
     expect(attachedAgent.cwd).toBe(cwd);
+    expect(attachedAgent.labels[PARENT_AGENT_ID_LABEL]).toBeUndefined();
     expect(await workspaceIds(client)).toEqual(idsBeforeAttach);
 
     await expect(
@@ -119,6 +120,12 @@ test("daemon resolves human and managed CLI workspace ownership", async () => {
     expect(crossWorkspaceChild.workspaceId).toBe(secondWorkspaceId);
     expect(crossWorkspaceChild.cwd).toBe(otherCwd);
     expect(crossWorkspaceChild.labels[PARENT_AGENT_ID_LABEL]).toBe(firstAgent.id);
+
+    const { entries } = await client.fetchAgents();
+    const childIds = entries
+      .filter(({ agent }) => agent.labels[PARENT_AGENT_ID_LABEL] === firstAgent.id)
+      .map(({ agent }) => agent.id);
+    expect(new Set(childIds)).toEqual(new Set([sameWorkspaceChild.id, crossWorkspaceChild.id]));
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
