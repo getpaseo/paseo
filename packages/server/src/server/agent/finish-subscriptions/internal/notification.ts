@@ -1,4 +1,5 @@
 import type { AgentPermissionRequest } from "../../agent-sdk-types.js";
+import type { PendingWork } from "../index.js";
 export type FinishNotificationReason =
   | "host unreachable"
   | "host removed"
@@ -20,6 +21,13 @@ export const finishNotificationEvents = {
   "was canceled": "errored",
 } as const;
 
+const PENDING_WORK_DESCRIPTIONS: Record<PendingWork, string> = {
+  turn: "a turn in progress",
+  "background work": "background work that will wake it",
+  "queued messages": "queued messages",
+  "delegated agents": "agents it is waiting on",
+};
+
 const FINISH_NOTIFICATION_MESSAGE_LIMIT = 4000;
 
 interface FinishNotificationBodyInput {
@@ -29,6 +37,10 @@ interface FinishNotificationBodyInput {
   reason: FinishNotificationReason;
   lastAssistantMessage: string | null;
   permissionRequest?: AgentPermissionRequest;
+  /** The turn ended with this work pending; the subscription stays. */
+  pendingWork?: readonly PendingWork[];
+  /** The follow limit ended the subscription while the child still had pending work. */
+  followLimit?: true;
 }
 
 export function formatFinishNotificationBody(params: FinishNotificationBodyInput): string {
@@ -42,6 +54,14 @@ export function formatFinishNotificationBody(params: FinishNotificationBodyInput
   const statusLine = `Agent ${params.childAgentId} (${params.title}) ${params.reason}.`;
   const sections = [statusLine];
   if (params.serverId) sections.push(`Server: ${params.serverId}`);
+  if (params.pendingWork?.length)
+    sections.push(
+      `It still has ${params.pendingWork.map((work) => PENDING_WORK_DESCRIPTIONS[work]).join(", ")}. You will be notified again when it settles, errors, or needs permission.`,
+    );
+  if (params.followLimit)
+    sections.push(
+      "Paseo stopped following it while it still had pending work. Check the agent with `get_agent_status`.",
+    );
   if (params.reason === "needs permission" && params.permissionRequest) {
     sections.push(
       "Respond with `respond_to_permission` using the `agentId` and `requestId` below.",

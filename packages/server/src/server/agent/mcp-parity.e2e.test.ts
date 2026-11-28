@@ -568,14 +568,14 @@ describe("Suite A: Core Fixes", () => {
           timeoutMs: 10000,
           label: `${outcome} notification`,
           check: () => {
-            const items = daemonHandle.daemon.agentManager
-              .getTimeline(parentAgentId)
-              .filter(
-                (item) =>
-                  item.type === "tool_call" &&
-                  item.detail.type === "plain_text" &&
-                  item.detail.label === "Follow-up child",
-              );
+            const items = daemonHandle.daemon.agentManager.getTimeline(parentAgentId).filter(
+              (item) =>
+                item.type === "tool_call" &&
+                item.detail.type === "plain_text" &&
+                item.detail.label === "Follow-up child" &&
+                // Each case creates its own child under the same title and parent.
+                item.detail.text.includes(childId),
+            );
             return items.length > 0 ? items : null;
           },
         });

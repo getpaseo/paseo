@@ -148,6 +148,35 @@ test("late initial permission snapshot cannot resurrect an already resolved requ
   }
 });
 
+test("the initial wait that resolves after a turn end does not report that turn again", async () => {
+  const { host, observation } = await scenario();
+  try {
+    host.emit("idle", { type: "turn_completed", provider: "codex" });
+    const ended = await observation.next();
+    expect(ended.status).toBe("idle");
+    // The ordinary wait was waiting on the same turn and resolves after it.
+    host.baseline.resolve({
+      status: "idle",
+      final: ended.final,
+      lastMessage: "Last response",
+      error: null,
+    });
+    await host.baseline.promise;
+    await Promise.resolve();
+    let settled = false;
+    const next = observation.next().then((result) => {
+      settled = true;
+      return result;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(settled).toBe(false);
+    host.emit("idle", { type: "turn_completed", provider: "codex" });
+    expect((await next).status).toBe("idle");
+  } finally {
+    await observation.close();
+  }
+});
+
 test("lookup failure uses its error channel and never fabricates a missing-child result", async () => {
   const { host, observation } = await scenario();
   try {

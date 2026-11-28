@@ -315,7 +315,7 @@ async function callPaseoToolAs(
   }
 }
 
-test("a delegated child reports once, as a compact tool call, when its own delegate is done", async ({
+test("a delegated child reports each turn end as a compact tool call until its own delegate is done", async ({
   page,
 }, testInfo) => {
   const frames: string[] = [];
@@ -345,27 +345,32 @@ test("a delegated child reports once, as a compact tool call, when its own deleg
       settings: { modeId: "load-test" },
       initialPrompt: "Take your time",
     });
-    await parent.client.waitForAgentUpsert(childId, (agent) => agent.status === "running");
-    await parent.client.waitForAgentUpsert(childId, (agent) => agent.status === "idle", 30_000);
+    const notices = page.getByRole("button", { name: /^Agent .*Child/ });
+    const finished = page.getByRole("button", { name: /^Agent finished.*Child/ });
 
-    // The child ended its turn while waiting on its delegate: the parent hears nothing yet.
-    await page.waitForTimeout(1_500);
+    // The child ended its turn while waiting on its delegate: the parent hears it now.
+    await expect(finished).toHaveCount(1, { timeout: 30_000 });
     const delegate = await parent.client.waitForAgentUpsert(String(grandchild.agentId), () => true);
     expect(delegate.status, "the delegate must still be running").toBe("running");
-    expect(childNoticeFrames()).toEqual([]);
-    await expect(page.getByRole("button", { name: /^Agent .*Child/ })).toHaveCount(0);
+    expect(
+      childNoticeFrames().some((frame) => frame.includes("It still has agents it is waiting on.")),
+    ).toBe(true);
 
-    const finished = page.getByRole("button", { name: /^Agent finished.*Child/ });
-    await expect(finished).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByRole("button", { name: /^Agent .*Child/ })).toHaveCount(1);
+    // The delegate reports to the child, and the child's settled turn reaches the parent.
+    await expect(finished).toHaveCount(2, { timeout: 60_000 });
+    await expect(notices).toHaveCount(2);
+    await expect(page.getByText(/still working/i)).toHaveCount(0);
     await expect(page.getByText(/Sent by/)).toHaveCount(0);
     await expect(page.getByText(/<agent-response>/)).toHaveCount(0);
-    await finished.scrollIntoViewIfNeeded();
+    await finished.last().scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath("child-notices.png") });
     // Notification events stay on the daemon: clients get only plain tool calls.
     expect(frames.filter((frame) => frame.includes('"agentMessage"'))).toEqual([]);
     expect(childNoticeFrames().some((frame) => frame.includes('"name":"agent_finished"'))).toBe(
       true,
+    );
+    expect(childNoticeFrames().filter((frame) => /"name":"agent_(?!finished)/.test(frame))).toEqual(
+      [],
     );
   } finally {
     await parent.cleanup();

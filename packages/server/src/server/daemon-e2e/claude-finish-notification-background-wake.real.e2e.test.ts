@@ -43,7 +43,7 @@ describe("daemon E2E (real claude) - finish notification across a background wak
     if (!canRun) context.skip();
   });
 
-  test("the caller hears nothing until the child's autonomous final reply", async () => {
+  test("the caller hears the turn that started the task, then the autonomous final reply", async () => {
     const logger = pino({ level: "silent" });
     const cwd = mkdtempSync(path.join(tmpdir(), "daemon-real-claude-finish-wake-"));
     const callerPrompts: string[] = [];
@@ -85,21 +85,26 @@ describe("daemon E2E (real claude) - finish notification across a background wak
         ].join(" "),
       });
 
-      await vi.waitFor(() => expect(callerPrompts).toHaveLength(1), {
+      await vi.waitFor(() => expect(callerPrompts).toHaveLength(2), {
         timeout: 360_000,
         interval: 250,
       });
-      // The turn that replied SPAWNED ended with the background task still running: no notice.
-      const final = parseAgentMessage(callerPrompts[0]!);
-      expect(final.source).toMatchObject({
-        kind: "agent-notification",
-        agentId: childId,
-        event: "finished",
-      });
-      expect(final.text).toContain("Background child) finished.");
-      expect(final.text).toContain(token);
+      const [spawned, final] = callerPrompts.map((prompt) => parseAgentMessage(prompt)!);
+      // The turn that replied SPAWNED ends with the background task still running: it reports now
+      // and names the pending work, and the subscription stays until the task wakes the child.
+      for (const notice of [spawned, final])
+        expect(notice.source).toMatchObject({
+          kind: "agent-notification",
+          agentId: childId,
+          event: "finished",
+        });
+      expect(spawned!.text).toContain("Background child) finished.");
+      expect(spawned!.text).toContain("SPAWNED");
+      expect(spawned!.text).toContain("It still has background work that will wake it.");
+      expect(final!.text).not.toContain("It still has");
+      expect(final!.text).toContain(token);
       expect(daemon.daemon.agentManager.getAgent(childId)?.lifecycle).toBe("idle");
-      expect(callerPrompts).toHaveLength(1);
+      expect(callerPrompts).toHaveLength(2);
     } finally {
       await client.close();
       await daemon.close();
