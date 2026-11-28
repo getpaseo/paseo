@@ -92,6 +92,7 @@ try {
     assert(result.stdout.includes("--host"), "help should mention --host option");
     assert(result.stdout.includes("--cwd"), "help should mention --cwd option");
     assert(result.stdout.includes("<name>"), "help should mention required name argument");
+    assert.match(result.stdout, /keeps the branch/i);
     console.log("✓ worktree archive --help shows options\n");
   }
 

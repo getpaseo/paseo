@@ -33,7 +33,7 @@ export function createWorktreeCommand(): Command {
   addJsonAndDaemonHostOptions(
     worktree
       .command("archive")
-      .description("Archive a worktree (removes worktree and associated branch)")
+      .description("Archive a worktree (removes its directory and keeps the branch by default)")
       .argument("<name>", "Worktree name or branch name")
       .option("--cwd <path>", "Repository directory (default: current)"),
   ).action(withOutput(runArchiveCommand));
