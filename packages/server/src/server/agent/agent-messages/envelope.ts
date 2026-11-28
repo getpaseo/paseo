@@ -120,10 +120,13 @@ function markerAttributes(message: AgentMessage): Array<[string, string]> {
 }
 
 export function formatAgentMessage(message: AgentMessage): string {
-  const attributes = markerAttributes(message)
+  // Providers trim a user prompt when they replay history, so the body never starts with
+  // whitespace; otherwise the replayed body would fall short of `length`.
+  const text = message.text.trimStart();
+  const attributes = markerAttributes({ ...message, text })
     .map(([name, value]) => ` ${name}="${escapeXml(value)}"`)
     .join("");
-  return `${message.text}\n\n<paseo-message${attributes}/>`;
+  return `${text}\n\n<paseo-message${attributes}/>`;
 }
 
 function parseAttributes(raw: string): Map<string, string> | null {

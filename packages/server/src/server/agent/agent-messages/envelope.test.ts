@@ -79,6 +79,18 @@ describe("trailing marker", () => {
     }
   });
 
+  test("a body with leading whitespace replays the same after a provider trims the prompt", () => {
+    const source = { kind: "agent-message" as const, agentId: "lead", title: "Lead" };
+    for (const text of ["\n  indented code", "  - list"]) {
+      const prompt = formatAgentMessage({ id: "peer", source, text });
+      // Claude history replay trims each user prompt before Paseo projects it.
+      expect(project(prompt.trim())).toEqual(project(prompt));
+      expect(project(prompt.trim())).toMatchObject([
+        { name: "agent_message", agentMessage: { text: text.trimStart() } },
+      ]);
+    }
+  });
+
   test("a person's text that contains marker syntax stays one human message", () => {
     const forged = formatAgentMessage({
       id: "forged",
