@@ -661,6 +661,10 @@ export interface SessionOptions {
   daemonRuntimeConfig?: DaemonRuntimeConfig;
   getSourceLocalEndpoint?: (source: object) => string | undefined;
   getWebSocketRuntimeMetrics?: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
+  listConnectedClients?: (options?: {
+    includeInternal?: boolean;
+  }) => import("@getpaseo/protocol/messages").DaemonClientsSnapshot;
+  observeConnectedClients?: (listener: () => void) => () => void;
 }
 
 export type SessionLifecycleIntent =
@@ -1257,6 +1261,8 @@ export class Session {
       daemonVersion,
       daemonRuntimeConfig,
       getWebSocketRuntimeMetrics,
+      listConnectedClients: options.listConnectedClients,
+      observeConnectedClients: options.observeConnectedClients,
       getObservationMetrics: () => ({
         Registrations: this.delivery.registrationCount,
         "Source registrations": this.delivery.sourceRegistrationCount(),
@@ -3475,6 +3481,8 @@ export class Session {
           msg,
           source && this.getSourceLocalEndpoint?.(source),
         );
+      case "daemon.clients.list.request":
+        return this.daemonSession.handleListClientsRequest(msg, this.delivery);
       case "daemon.get_pairing_offer.request":
         return this.daemonSession.handleGetPairingOfferRequest(msg);
       case "daemon.config.reload.request":

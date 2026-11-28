@@ -296,8 +296,21 @@ export function createDaemonListeners(options: {
     };
   }
 
+  function isTailscaleEndpoint(localEndpoint?: string): boolean {
+    if (!localEndpoint) return false;
+    try {
+      const target = parseListenString(localEndpoint);
+      if (target.type !== "tcp") return false;
+      const network = getTailscaleNetwork();
+      return !network.otherAddresses.has(target.host) && network.addresses.includes(target.host);
+    } catch {
+      return false;
+    }
+  }
+
   return {
     status,
+    isTailscaleEndpoint,
     async refreshStatus(localEndpoint?: string) {
       if (!stopped) await extras.retryWaiting();
       return status(localEndpoint);

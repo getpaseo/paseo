@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DaemonPermissionSchema } from "./daemon-permissions.js";
 
 export const HostMetadataSchema = z.record(z.string().max(256), z.string().max(4096));
 export const HostAddSchema = z.object({
@@ -26,6 +27,10 @@ export const HostSummarySchema = z.object({
   lastOnlineAt: z.string().nullable(),
   nextRetryAt: z.string().nullable(),
   error: z.object({ code: z.string(), message: z.string() }).nullable(),
+  // COMPAT(connectedClients): added in v0.19.0; older daemons omit version, permissions, and connectedAt.
+  version: z.string().nullable().optional(),
+  permissions: z.array(DaemonPermissionSchema).optional(),
+  connectedAt: z.string().nullable().optional(),
 });
 export const HostDirectorySchema = z.object({
   self: z.object({ serverId: z.string(), label: z.string() }),

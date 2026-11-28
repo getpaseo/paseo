@@ -5,14 +5,26 @@ import { PairDeviceModal } from "./pair-device-modal";
 import { CONNECTIVITY_DOCS_URL } from "./pair-device-section";
 import { TailscaleRow } from "./tailscale-row";
 
+export interface WaysToConnectProps {
+  serverId: string;
+  /** When provided, tapping Relay delegates to the caller (e.g., to advance inside an existing sheet) instead of opening a stacked modal. */
+  onOpenRelay?: () => void;
+}
+
 /**
  * The ways another device can connect to a host: Relay, which pairs through a QR code in a sheet,
  * and Tailscale, a switch and an address. Settings and the setup's phone step show this same block.
  */
-export function WaysToConnect({ serverId }: { serverId: string }) {
+export function WaysToConnect({ serverId, onOpenRelay }: WaysToConnectProps) {
   const { t } = useTranslation();
   const [pairing, setPairing] = useState(false);
-  const openPairing = useCallback(() => setPairing(true), []);
+  const openPairing = useCallback(() => {
+    if (onOpenRelay) {
+      onOpenRelay();
+      return;
+    }
+    setPairing(true);
+  }, [onOpenRelay]);
   const closePairing = useCallback(() => setPairing(false), []);
   const docsLink = useMemo(
     () => ({
@@ -34,12 +46,14 @@ export function WaysToConnect({ serverId }: { serverId: string }) {
         />
         <TailscaleRow serverId={serverId} />
       </SettingsCard>
-      <PairDeviceModal
-        serverId={serverId}
-        visible={pairing}
-        onClose={closePairing}
-        testID="devices-relay-pairing"
-      />
+      {onOpenRelay ? null : (
+        <PairDeviceModal
+          serverId={serverId}
+          visible={pairing}
+          onClose={closePairing}
+          testID="devices-relay-pairing"
+        />
+      )}
     </SettingsSection>
   );
 }

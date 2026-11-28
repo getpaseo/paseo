@@ -43,6 +43,9 @@ export interface HostActor {
 interface Live {
   client: DaemonClient;
   accepted: boolean;
+  version: string | null;
+  permissions?: DaemonPermission[];
+  connectedAt: string | null;
   stop(): void;
 }
 interface Route {
@@ -62,7 +65,7 @@ export class ConnectedHosts {
   private closed = false;
   constructor(
     private readonly home: string,
-    private readonly self: HostDirectory["self"],
+    private readonly self: HostDirectory["self"] & { version?: string },
   ) {
     this.ready = this.load();
     void this.ready.catch(() => {});
@@ -86,8 +89,8 @@ export class ConnectedHosts {
   async list(): Promise<HostDirectory> {
     await this.ready;
     return {
-      self: { ...this.self },
-      hosts: this.rows.map(({ connection: _secret, ...row }) => structuredClone(row)),
+      self: { serverId: this.self.serverId, label: this.self.label },
+      hosts: this.rows.map((row) => this.summary(row)),
     };
   }
   observe(changed: () => void): () => void {
@@ -118,7 +121,17 @@ export class ConnectedHosts {
   }
   private summary(row: Saved): HostSummary {
     const { connection: _secret, ...summary } = row;
-    return structuredClone(summary);
+    const live = this.live.get(row.registrationId);
+    const enriched =
+      live?.accepted && row.status === "online"
+        ? {
+            ...summary,
+            ...(live.version !== null ? { version: live.version } : {}),
+            ...(live.permissions ? { permissions: [...live.permissions] } : {}),
+            ...(live.connectedAt ? { connectedAt: live.connectedAt } : {}),
+          }
+        : summary;
+    return structuredClone(enriched);
   }
   add(input: HostAdd, actor: HostActor): Promise<HostSummary> {
     return this.mutate(async () => {
@@ -254,10 +267,18 @@ export class ConnectedHosts {
       clientId: `host-link-${this.self.serverId}-${row.registrationId}`,
       connectTimeoutMs: 10000,
       transportFactory: transports,
+      ...(this.self.version ? { appVersion: this.self.version } : {}),
+      clientInfo: {
+        name: this.self.label,
+        kind: "daemon",
+        peerServerId: this.self.serverId,
+      },
     });
     const live: Live = {
       client,
       accepted: false,
+      version: null,
+      connectedAt: null,
       stop: () => {
         stopped = true;
         clearTimeout(retry);
@@ -313,6 +334,9 @@ export class ConnectedHosts {
           if (stopped || client.getLastServerInfoMessage() !== info || !client.isConnected) return;
           Object.assign(row, next);
           live.accepted = true;
+          live.version = info.version ?? null;
+          live.permissions = info.permissions ? [...info.permissions] : undefined;
+          live.connectedAt = next.lastOnlineAt;
           attempts = 0;
           this.changed();
         });
@@ -336,6 +360,9 @@ export class ConnectedHosts {
     client.subscribeConnectionStatus((state) => {
       if (stopped || row.status === "error") return;
       live.accepted = false;
+      live.version = null;
+      live.permissions = undefined;
+      live.connectedAt = null;
       if (state.status === "connected") {
         void accept();
         return;

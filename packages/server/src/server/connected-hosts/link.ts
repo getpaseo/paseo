@@ -77,8 +77,15 @@ export class DaemonLinkEndpoint {
       bufferedAmount(): number | null;
       delivery: SessionDelivery;
       admit(socket: VirtualHostSocket, permissions: readonly DaemonPermission[]): Promise<void>;
+      onChannelsChanged?: () => void;
     },
   ) {}
+  listChannelSockets(): VirtualHostSocket[] {
+    return [...this.channels.values()].map((channel) => channel.socket);
+  }
+  private notifyChannelsChanged(): void {
+    this.parent.onChannelsChanged?.();
+  }
   handles(message: SessionInboundMessage): boolean {
     return (
       message.type === "hosts.link.open.request" ||
@@ -128,6 +135,7 @@ export class DaemonLinkEndpoint {
         this.channels.delete(owner.id);
         flowControl?.close();
         socket?.close();
+        this.notifyChannelsChanged();
       });
       const id = owner.id;
       // Capture actual authenticated authority. The caller hello can only reduce it.
@@ -171,6 +179,7 @@ export class DaemonLinkEndpoint {
         (code, reason) => {
           this.channels.delete(id);
           flowControl?.close();
+          this.notifyChannelsChanged();
           let failure = "host_offline";
           if (code === 1009) failure = "resource_limit";
           if (code === 1008) failure = "permission_denied";
@@ -200,6 +209,7 @@ export class DaemonLinkEndpoint {
         },
       );
       this.channels.set(id, { scopeId: message.channelId, socket, flowControl });
+      this.notifyChannelsChanged();
       try {
         await this.parent.admit(socket, ceiling);
         if (this.closed || socket.readyState !== 1) {

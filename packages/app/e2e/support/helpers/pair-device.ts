@@ -66,6 +66,12 @@ type PairingHost =
   | Pick<IsolatedHostDaemon, "serverId" | "port">
   | Pick<OutdatedDaemon, "serverId" | "endpoint">;
 
+export async function openPairDeviceWaysSheet(page: Page): Promise<void> {
+  await expect(page.getByTestId("devices-pair-button")).toBeVisible();
+  await page.getByTestId("devices-pair-button").click();
+  await expect(page.getByTestId("devices-relay")).toBeVisible();
+}
+
 export async function preparePairingHost(
   page: Page,
   daemon: PairingHost,
@@ -74,9 +80,9 @@ export async function preparePairingHost(
   await openAppOnPairingHost(page, daemon, additionalHosts);
   await openSettings(page);
   await openSettingsHost(page, daemon.serverId);
-  await expect(page.getByTestId("devices-relay")).toHaveCount(0);
+  await expect(page.getByTestId("devices-pair-button")).toHaveCount(0);
   await openSettingsHostSection(page, daemon.serverId, "devices");
-  await expect(page.getByTestId("devices-relay")).toBeVisible();
+  await openPairDeviceWaysSheet(page);
 }
 
 /** Loads the app afresh with `daemon` as its first host, then opens the setup's Mobile step. */
@@ -372,6 +378,12 @@ function deliverInOrderAfter(delay: () => number, deliver: (message: string | Bu
 }
 
 export async function expectTailscaleUpdateRequired(page: Page): Promise<void> {
+  if (
+    (await page.getByTestId("devices-pair-button").count()) > 0 &&
+    (await page.getByTestId("devices-relay").count()) === 0
+  ) {
+    await openPairDeviceWaysSheet(page);
+  }
   await expect(page.getByRole("switch", { name: "Tailscale", exact: true })).toBeDisabled();
   await expect(page.getByText("Update this host to use Tailscale", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "How to update", exact: true })).toBeVisible();
@@ -460,6 +472,11 @@ export function observeDaemonStatusPolling(page: Page, port: number) {
 }
 
 export async function openPairDeviceModal(page: Page): Promise<void> {
+  const pairButton = page.getByTestId("devices-pair-button");
+  if ((await pairButton.count()) > 0 && (await page.getByTestId("devices-relay").count()) === 0) {
+    await pairButton.click();
+    await expect(page.getByTestId("devices-relay")).toBeVisible();
+  }
   await page.getByRole("button", { name: "Relay", exact: true }).click();
   await expect(page.getByTestId("devices-relay-pairing")).toBeVisible();
 }
@@ -581,7 +598,7 @@ export async function expectPairingDisconnected(page: Page): Promise<void> {
 export async function switchPairDeviceToHost(page: Page, serverId: string): Promise<void> {
   await selectSettingsHost(page, serverId);
   await expectAppRoute(page, buildSettingsHostSectionRoute(serverId, "devices"));
-  await expect(page.getByTestId("devices-relay")).toBeVisible();
+  await openPairDeviceWaysSheet(page);
 }
 
 export async function openRelaySecurityDocs(page: Page): Promise<void> {

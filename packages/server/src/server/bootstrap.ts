@@ -1928,6 +1928,7 @@ export async function createPaseoDaemon(
               {
                 listen: formatListenTarget(boundListenTarget ?? listenTarget),
                 getListenStatus: listeners.refreshStatus,
+                isTailscaleEndpoint: listeners.isTailscaleEndpoint,
                 setTailscaleEnabled: (enabled, localEndpoint, confirmed) =>
                   daemonConfigStore.setTailscaleEnabled(enabled, localEndpoint, confirmed),
                 worktreesRoot: config.worktreesRoot,

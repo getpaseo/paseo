@@ -6,6 +6,17 @@ export type { AgentAddress } from "@getpaseo/protocol/addresses";
 import { createHostActions, type PaseoHostActions } from "./hosts/index.js";
 export type { PaseoHostActions } from "./hosts/index.js";
 export type { HostAdd, HostUpdate, HostSummary, HostDirectory } from "@getpaseo/protocol/hosts";
+export type {
+  ConnectedClientKind,
+  ConnectedClientSummary,
+  ConnectedClientTransport,
+  DaemonClientsSnapshot,
+  HelloClientInfo,
+  HelloClientKind,
+  HelloClientPlatform,
+  InboundDaemonSummary,
+  RoutedClientSummary,
+} from "@getpaseo/protocol/daemon-clients";
 import type { OwnedSubscription } from "./connection/index.js";
 export type { OwnedSubscription, SubscriptionObserver } from "./connection/index.js";
 import type { DaemonClientConfig } from "./daemon-client.js";

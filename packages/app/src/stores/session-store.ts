@@ -298,6 +298,7 @@ export interface DaemonServerInfo {
   version: string | null;
   machineKind?: string | null;
   desktopManaged?: boolean;
+  permissions?: ServerInfoStatusPayload["permissions"];
   capabilities?: ServerCapabilities;
   features?: ServerInfoStatusPayload["features"];
 }
@@ -311,6 +312,7 @@ export function toDaemonServerInfo(serverInfo: ServerInfoStatusPayload): DaemonS
     ...(serverInfo.desktopManaged !== undefined
       ? { desktopManaged: serverInfo.desktopManaged }
       : {}),
+    ...(serverInfo.permissions ? { permissions: serverInfo.permissions } : {}),
     ...(serverInfo.capabilities ? { capabilities: serverInfo.capabilities } : {}),
     ...(serverInfo.features ? { features: serverInfo.features } : {}),
   };

@@ -36,6 +36,8 @@ export interface SettingsRowHeaderProps {
   summary?: string;
   /** An icon drawn directly before the summary text, such as a provider glyph beside a model name. */
   summaryLeading?: ReactNode;
+  /** Passive trailing element (such as a status pill) shown before the chevron; lets presses pass through to the row. */
+  trailing?: ReactNode;
   onPress: () => void;
   disabled?: boolean;
   /** Turns the chevron down, for a row whose children are revealed in place. */
@@ -75,6 +77,7 @@ export function SettingsRowHeader({
   hintStatus,
   summary,
   summaryLeading,
+  trailing,
   onPress,
   disabled,
   expanded = false,
@@ -133,6 +136,14 @@ export function SettingsRowHeader({
       {control ? (
         <View style={styles.control}>
           <ControlSizeProvider size={layout.controlSize}>{control}</ControlSizeProvider>
+        </View>
+      ) : null}
+      {trailing ? (
+        <View
+          style={[styles.trailingAccessory, styles.passThrough]}
+          {...HIDDEN_FROM_ASSISTIVE_TECH}
+        >
+          {trailing}
         </View>
       ) : null}
       <RowTrailing
@@ -245,6 +256,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   control: {
     marginRight: theme.spacing[3],
+  },
+  trailingAccessory: {
+    marginRight: theme.spacing[2],
+    flexShrink: 0,
   },
   // The button under the row's content; it fills the row, padding included.
   pressTarget: {

@@ -35,7 +35,7 @@ import {
   TerminalProfileEditModal,
 } from "@/screens/settings/terminal-profile-edit-modal";
 import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
-import { WaysToConnect } from "@/devices";
+import { ConnectedDevicesView } from "@/devices";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { useHostFeature } from "@/runtime/host-features";
@@ -238,7 +238,7 @@ export function HostDevicesPage({ serverId }: { serverId: string }) {
     return <HostNotFound />;
   }
 
-  return <WaysToConnect serverId={serverId} />;
+  return <ConnectedDevicesView serverId={serverId} />;
 }
 
 export function HostToolsPage({ serverId }: { serverId: string }) {
