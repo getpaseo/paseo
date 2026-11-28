@@ -5,6 +5,9 @@ import { describe, expect, test } from "vitest";
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
 import { streamPiHistory, type PiCapturedUserMessageEntry } from "./history-mapper.js";
 import type { PiAgentMessage } from "./rpc-types.js";
+import { isolatePaseoHome } from "../../../../test-utils/isolated-paseo-home.js";
+
+isolatePaseoHome();
 
 async function collectHistory(
   messages: PiAgentMessage[],
