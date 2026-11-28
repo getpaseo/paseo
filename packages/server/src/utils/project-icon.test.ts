@@ -490,6 +490,39 @@ describe("getProjectIcon", () => {
     expect(result).toBeNull();
   });
 
+  it("uses the root SVG when a priority directory icon exceeds 32KB", async () => {
+    mkdirSync(join(tempDir, "assets"));
+    writeFileSync(join(tempDir, "assets", "icon.png"), Buffer.alloc(33 * 1024));
+    const svg = '<svg viewBox="0 0 24 24"></svg>';
+    writeFileSync(join(tempDir, "icon.svg"), svg);
+
+    expect(await getProjectIcon(tempDir)).toEqual({
+      data: Buffer.from(svg).toString("base64"),
+      mimeType: "image/svg+xml",
+    });
+  });
+
+  it("tries a smaller icon in the same directory after an oversized favicon", async () => {
+    mkdirSync(join(tempDir, "public"));
+    writeFileSync(join(tempDir, "public", "favicon.svg"), Buffer.alloc(33 * 1024));
+    writeFileSync(join(tempDir, "public", "icon.png"), squarePng);
+
+    expect(await getProjectIcon(tempDir)).toEqual({
+      data: squarePng.toString("base64"),
+      mimeType: "image/png",
+    });
+  });
+
+  it("accepts icons exactly 32KB in size", async () => {
+    const svg = "<svg></svg>".padEnd(32 * 1024, " ");
+    writeFileSync(join(tempDir, "favicon.svg"), svg);
+
+    expect(await getProjectIcon(tempDir)).toEqual({
+      data: Buffer.from(svg).toString("base64"),
+      mimeType: "image/svg+xml",
+    });
+  });
+
   it("returns null when no icon is found", async () => {
     const result = await getProjectIcon(tempDir);
     expect(result).toBeNull();
