@@ -40,7 +40,7 @@ Some fork changes are backports. A sync past the upstream version drops them in 
 
 ## Engine constraints
 
-Math and video are disabled. Task lists and admonitions are enabled; task checkboxes are read-only. Source adaptation spaces adjacent empty GFM table delimiters before escaping prose spoiler delimiters and decodes entity text before the engine can discard it. Code spans and fences keep their literal source. Comment HTML is normalized to Markdown before parsing; details show their summary and body expanded.
+Math is opt-in through the plugin `Markdown` component's `math` prop; the host's own Markdown keeps math disabled. Video is disabled. Task lists and admonitions are enabled; task checkboxes are read-only. Source adaptation spaces adjacent empty GFM table delimiters before escaping prose spoiler delimiters and decodes entity text before the engine can discard it. Code spans and fences keep their literal source. Comment HTML is normalized to Markdown before parsing; details show their summary and body expanded.
 
 Mermaid fences use the existing isolated diagram runtime and fullscreen viewer. Web dispatches them through the library’s code-block override. Native has no block-renderer hook, so the renderer extracts only Mermaid fences and places the existing WebView host between library-rendered segments. This is the only block exception; see [native selection limitations](native-text-selection.md) for diagram grouping and leading inline images. Streaming keeps the last valid diagram visible while the next revision renders.
 

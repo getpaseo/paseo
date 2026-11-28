@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -48,6 +49,123 @@ for (const platform of ["ios", "android"]) {
     }
   });
 }
+
+test("RaTeX vendoring verifies and installs only the requested native sources", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "paseo-ratex-test-"));
+  try {
+    const source = path.join(root, "fixture");
+    for (const directory of [
+      "swift",
+      "fonts",
+      "crates/demo",
+      "platforms/android/src/main/kotlin",
+      "platforms/android/src/main/assets",
+      "unused",
+    ]) {
+      mkdirSync(path.join(source, directory), { recursive: true });
+    }
+    for (const [name, contents] of Object.entries({
+      "Cargo.toml": "[workspace]",
+      LICENSE: "MIT",
+      "swift/core.swift": "swift",
+      "fonts/test.ttf": "font",
+      "crates/demo/Cargo.toml": "crate",
+      "platforms/android/src/main/kotlin/Test.kt": "kotlin",
+      "platforms/android/src/main/assets/font.ttf": "font",
+      "unused/other.txt": "unused",
+    })) {
+      writeFileSync(path.join(source, name), contents);
+    }
+    const tarball = path.join(root, "source.tar.gz");
+    assert.equal(spawnSync("tar", ["-czf", tarball, "fixture"], { cwd: root }).status, 0);
+    const archive = path.join(root, "framework.zip");
+    // ZIP containing RaTeX.xcframework/Info.plist, so tests do not need a zip writer.
+    writeFileSync(
+      archive,
+      Buffer.from(
+        "UEsDBBQAAAAIAABAIVDuQOUFCQAAAAcAAAAcAAAAUmFUZVgueGNmcmFtZXdvcmsvSW5mby5wbGlzdEvLrCgpLUoFAFBLAQIUABQAAAAIAABAIVDuQOUFCQAAAAcAAAAcAAAAAAAAAAAAAAAAAAAAAABSYVRlWC54Y2ZyYW1ld29yay9JbmZvLnBsaXN0UEsFBgAAAAABAAEASgAAAEMAAAAAAA==",
+        "base64",
+      ),
+    );
+    const hash = (file) => createHash("sha256").update(readFileSync(file)).digest("hex");
+    const manifest = {
+      tag: "fixture",
+      xcframework: { url: archive, sha256: hash(archive) },
+      source: {
+        url: tarball,
+        sha256: hash(tarball),
+        prefix: "fixture",
+        swiftSources: ["swift/core.swift"],
+        fontsDir: "fonts",
+        license: "LICENSE",
+      },
+    };
+    const manifestPath = path.join(root, "manifest.json");
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    const ios = path.join(root, "ios");
+    const android = path.join(root, "android");
+    const run = (extra = []) =>
+      spawnSync(
+        process.execPath,
+        [
+          path.resolve("packages/react-native-enriched-markdown/vendor-ratex.mjs"),
+          "--manifest",
+          manifestPath,
+          "--output",
+          ios,
+          "--android-output",
+          android,
+          ...extra,
+        ],
+        { encoding: "utf8" },
+      );
+    let result = run();
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(
+      readFileSync(path.join(android, "platforms/android/src/main/kotlin/Test.kt"), "utf8"),
+      "kotlin",
+    );
+    assert.equal(existsSync(path.join(android, "Cargo.lock")), true);
+    assert.equal(existsSync(path.join(android, "unused")), false);
+    result = run();
+    assert.match(result.stdout, /already up to date/);
+    const androidOnly = path.join(root, "android-only");
+    const unusedIos = path.join(root, "unused-ios");
+    manifest.xcframework.url = path.join(root, "missing.zip");
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    const androidResult = spawnSync(
+      process.execPath,
+      [
+        path.resolve("packages/react-native-enriched-markdown/vendor-ratex.mjs"),
+        "--manifest",
+        manifestPath,
+        "--output",
+        unusedIos,
+        "--android-output",
+        androidOnly,
+        "--android-only",
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(androidResult.status, 0, androidResult.stdout + androidResult.stderr);
+    assert.equal(existsSync(unusedIos), false);
+    assert.equal(
+      readFileSync(path.join(androidOnly, "platforms/android/src/main/kotlin/Test.kt"), "utf8"),
+      "kotlin",
+    );
+    manifest.xcframework.url = archive;
+    manifest.source.sha256 = "0".repeat(64);
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    result = run(["--force"]);
+    assert.notEqual(result.status, 0);
+    assert.equal(
+      readFileSync(path.join(android, "platforms/android/src/main/kotlin/Test.kt"), "utf8"),
+      "kotlin",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function createCheckout() {
   const root = mkdtempSync(path.join(tmpdir(), "postinstall-patches-"));

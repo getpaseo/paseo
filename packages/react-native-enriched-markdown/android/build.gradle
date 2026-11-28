@@ -12,6 +12,9 @@ buildscript {
     classpath "com.android.tools.build:gradle:8.7.2"
     // noinspection DifferentKotlinGradleVersion
     classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:${getExtOrDefault('kotlinVersion')}"
+    if (System.getenv("PASEO_FDROID_BUILD") == "1") {
+      classpath "org.jetbrains.kotlin:kotlin-serialization:${getExtOrDefault('kotlinVersion')}"
+    }
   }
 }
 
@@ -36,6 +39,10 @@ def shouldApplyKotlinPlugin() {
 
 if (shouldApplyKotlinPlugin()) {
     apply plugin: "kotlin-android"
+}
+def fdroidMath = System.getenv("PASEO_FDROID_BUILD") == "1"
+if (fdroidMath) {
+    apply plugin: "org.jetbrains.kotlin.plugin.serialization"
 }
 
 apply plugin: "com.facebook.react"
@@ -171,6 +178,25 @@ if (consumerConfig.get("codeHighlightLanguages") instanceof List) {
 }
 def codeHighlightActive = enableCodeHighlight && !codeHighlightLanguages.isEmpty()
 
+def configuredAbis = (rootProject.findProperty("reactNativeArchitectures") ?: "armeabi-v7a,arm64-v8a,x86,x86_64")
+  .toString().split(",").collect { it.trim() }.findAll { !it.isEmpty() }
+def ratexSourceAbis = !enableMath ? [] : (fdroidMath ? configuredAbis : configuredAbis.findAll { it == "x86" })
+def ratexSource = new File(projectDir, "vendor/ratex")
+def ratexMode = fdroidMath ? "source" : "supplement"
+def ratexOutput = new File(projectDir, "build/generated/ratex/${ratexMode}/${ratexSourceAbis.join('-')}/jniLibs")
+if (!ratexSourceAbis.isEmpty()) {
+  def buildRatex = tasks.register("buildRatex", Exec) {
+    inputs.dir(ratexSource)
+    inputs.property("abis", ratexSourceAbis.join(","))
+    inputs.file(new File(projectDir, "build-ratex.mjs"))
+    outputs.dir(ratexOutput)
+    commandLine(["node", new File(projectDir, "build-ratex.mjs").absolutePath, ratexOutput.absolutePath] + ratexSourceAbis)
+  }
+  tasks.matching { it.name == "preBuild" || it.name.matches("merge.*JniLibFolders") }.configureEach {
+    dependsOn(buildRatex)
+  }
+}
+
 android {
   namespace "com.swmansion.enriched.markdown"
 
@@ -216,6 +242,11 @@ android {
       ]
       if (enableMath) {
         java.srcDirs += ["src/math/java"]
+        if (fdroidMath) {
+          java.srcDirs += [new File(ratexSource, "platforms/android/src/main/kotlin")]
+          assets.srcDirs += [new File(ratexSource, "platforms/android/src/main/assets")]
+        }
+        if (!ratexSourceAbis.isEmpty()) jniLibs.srcDirs += [ratexOutput]
       }
       if (enableVideo) {
         java.srcDirs += ["src/video/java"]
@@ -296,7 +327,13 @@ dependencies {
   implementation "androidx.profileinstaller:profileinstaller:1.3.1"
   // LaTeX math rendering (optional — set enrichedMarkdown.enableMath=false in gradle.properties to exclude)
   if (enableMath) {
-    implementation("io.github.erweixin:ratex-android:0.1.14")
+    if (fdroidMath) {
+      implementation("androidx.annotation:annotation:1.7.1")
+      implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+      implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    } else {
+      implementation("io.github.erweixin:ratex-android:0.1.14")
+    }
   }
   // Video playback (optional — set "enriched-markdown".enableVideo = false in package.json to exclude)
   if (enableVideo) {

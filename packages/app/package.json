@@ -7,7 +7,7 @@
     "start": "npm run start:expo",
     "start:expo": "cross-env APP_VARIANT=development expo start",
     "reset-project": "node ./scripts/reset-project.js",
-    "eas-build-post-install": "npm --prefix ../.. run build:app-deps",
+    "eas-build-post-install": "npm --prefix ../.. run build:app-deps && bash scripts/eas-ratex-setup.sh",
     "android": "npm run dev:android",
     "android:development": "npm run dev:android",
     "android:production": "npm --prefix ../.. run build:client && cross-env APP_VARIANT=production expo prebuild --platform android --clean --non-interactive && cross-env APP_VARIANT=production expo run:android --variant=release",
@@ -109,6 +109,7 @@
     "fast-deep-equal": "^3.1.3",
     "htmlparser2": "^12.0.0",
     "i18next": "^26.3.0",
+    "katex": "0.16.47",
     "lucide-react-native": "^1.50.0",
     "markdown-it": "^10.0.0",
     "mdast-util-from-markdown": "2.0.3",
@@ -177,7 +178,7 @@
     "ws": "^8.20.0"
   },
   "enriched-markdown": {
-    "enableMath": false,
+    "enableMath": true,
     "enableCodeHighlight": true,
     "codeHighlightLanguages": [
       "json",

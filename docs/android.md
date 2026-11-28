@@ -59,6 +59,19 @@ emulator @paseo     # start it; leave running
 
 Gradle auto-fetches the platform/build-tools it needs once licenses are accepted, so adjust `android-35` only if it asks for a different level.
 
+Math rendering uses RaTeX. Normal Android builds that include `x86` compile its missing native
+library from the pinned source; F-Droid builds compile every selected ABI from source. Install
+Rust, `cargo-ndk` 4.1.2, the Android NDK, and the matching Rust targets before building. For a
+universal build, add all four targets:
+
+```bash
+rustup target add i686-linux-android aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+cargo install cargo-ndk --version 4.1.2 --locked
+```
+
+An arm64-only ordinary build uses the published RaTeX AAR and does not require Rust. Set
+`ANDROID_NDK_HOME` if `cargo-ndk` cannot find the NDK. EAS installs the tools for Android builds.
+
 ## Local build + install
 
 The `react-native-svg@15.15.4` patch prevents header fades retaining their old painted size after

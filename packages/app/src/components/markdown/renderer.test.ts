@@ -15,6 +15,35 @@ import { darkTheme, lightTheme } from "@/styles/theme";
 import { createMarkdownStyles } from "./styles";
 import { isRecognizedLink, prepareMarkdownSource, PENDING_MARKDOWN_IMAGE } from "./source";
 import { normalizeMarkdownHtml } from "./html";
+import katex from "katex";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createElement } from "react";
+import { KaTeXRenderer } from "react-native-enriched-markdown/src/web/renderers/KaTeXRenderer";
+import { extractNodeText } from "react-native-enriched-markdown/src/web/utils";
+
+it("renders enabled math as MathML and leaves code literal", async () => {
+  const tree = await parseMarkdown("Value $x^2$\n\n$$\\frac{1}{2}$$\n\n`$x$`", {
+    hardSoftBreaks: true,
+    latexMath: true,
+  });
+  const nodes: ASTNode[] = [];
+  const collect = (node: ASTNode) => {
+    nodes.push(node);
+    node.children?.forEach(collect);
+  };
+  collect(tree);
+  expect(nodes.filter((node) => node.type === "LatexMathInline").map(extractNodeText)).toEqual([
+    "x^2",
+  ]);
+  expect(nodes.filter((node) => node.type === "LatexMathDisplay").map(extractNodeText)).toEqual([
+    "\\frac{1}{2}",
+  ]);
+  expect(nodes.some((node) => node.type === "Code" && extractNodeText(node) === "$x$")).toBe(true);
+  const html = renderToStaticMarkup(
+    createElement(KaTeXRenderer, { content: "\\frac{1}{2}", katex, displayMode: true, style: {} }),
+  );
+  expect(html).toContain("<mfrac>");
+});
 
 it("recognizes complete known commands in inline code", () => {
   const names = new Set(["code-review", "review:fast"]);

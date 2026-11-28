@@ -27,6 +27,7 @@ const ThemedMarkdown = withUnistyles(EnrichedMarkdownText);
 const MD4C_FLAGS = { latexMath: false, hardSoftBreaks: true, admonitions: true };
 // A README is written for its forge, where the lines of a paragraph join into one.
 const EXTERNAL_MD4C_FLAGS = { ...MD4C_FLAGS, hardSoftBreaks: false };
+const MATH_MD4C_FLAGS = { ...MD4C_FLAGS, latexMath: true };
 
 // Reading the breakpoint here makes Unistyles restyle the text when the layout crosses it.
 const markdownStyle =
@@ -55,6 +56,8 @@ export interface MarkdownRendererProps extends MarkdownImageContext {
   streaming?: boolean;
   onLinkPress?: (url: string) => unknown;
   agentCommands?: boolean;
+  /** Enable math parsing for content whose source explicitly uses math delimiters. */
+  math?: boolean;
   /**
    * Author-controlled Markdown from outside this host, such as a plugin README: only its https
    * links and images work, nothing is read as a file, forge reference or command, and the lines of
@@ -95,6 +98,7 @@ const MarkdownPart = memo(function MarkdownPart({
   streaming = false,
   onLinkPress,
   agentCommands: _agentCommands,
+  math = false,
   external = false,
   commandHints = null,
   ...imageContext
@@ -153,6 +157,7 @@ const MarkdownPart = memo(function MarkdownPart({
       isWeb ? [{ kind: "markdown", id: "0", source: markdown }] : splitMermaidFences(markdown),
     [markdown],
   );
+  const normalFlags = external ? EXTERNAL_MD4C_FLAGS : MD4C_FLAGS;
   return (
     <MermaidStreamingContext.Provider value={streaming}>
       <MarkdownBlockStack imageSources={imageSources}>
@@ -166,7 +171,7 @@ const MarkdownPart = memo(function MarkdownPart({
               uniProps={pickMarkdownStyle(compact, muted)}
               flavor="github"
               selectable={selectable}
-              md4cFlags={external ? EXTERNAL_MD4C_FLAGS : MD4C_FLAGS}
+              md4cFlags={math ? MATH_MD4C_FLAGS : normalFlags}
               linkRecognition={linkRecognition}
               enableTaskListItemToggle={false}
               enableLinkPreview={false}

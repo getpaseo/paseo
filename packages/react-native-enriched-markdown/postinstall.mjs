@@ -286,6 +286,8 @@ if (!enableMath) {
     vendorRatex,
     '--manifest', ratexManifest,
     '--output', iosVendor,
+    '--android-output', path.join(PKG_ROOT, 'android/vendor/ratex'),
+    ...(process.platform === 'darwin' ? [] : ['--android-only']),
   ], { stdio: 'inherit' });
   if (r2.status !== 0) {
     console.warn(`${LOG} WARNING: vendor-ratex failed. iOS math rendering may not work.`);

@@ -71,6 +71,7 @@ CLAUDE.local.md
 **/.tanstack/
 
 # Local agent/tooling artifacts (do not commit)
+packages/react-native-enriched-markdown/android/vendor/
 PLAN.md
 .valknut/
 valknut-report.html/
