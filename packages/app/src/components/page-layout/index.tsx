@@ -137,9 +137,9 @@ export function PageTitle({
   descriptionTestID,
 }: PageTitleProps) {
   return (
-    <View style={styles.titleBlock} testID={testID}>
+    <View style={styles.titleBlock}>
       <View style={styles.titleRow}>
-        <View style={styles.titleParts}>
+        <View style={styles.titleParts} testID={testID}>
           {parent ? (
             <PressHighlight
               accessibilityRole="button"
