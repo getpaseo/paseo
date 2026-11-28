@@ -1364,7 +1364,8 @@ export const en = {
       title: "Set up worktree scripts",
       description:
         "Add setup commands so new worktrees can install dependencies and prepare themselves automatically.",
-      openProjectSettings: "Open project settings",
+      askAgent: "Ask agent",
+      addManually: "Add manually",
     },
     project: {
       actions: {

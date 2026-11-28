@@ -25,7 +25,8 @@ export interface WorktreeSetupCalloutPolicy {
   priority: number;
   title: string;
   description: string;
-  actionLabel: string;
+  askAgentLabel: string;
+  addManuallyLabel: string;
   projectSettingsRoute: ReturnType<typeof buildProjectSettingsRoute>;
   testID: string;
 }
@@ -62,7 +63,8 @@ export function buildWorktreeSetupCalloutPolicy(
     priority: 100,
     title: i18n.t("sidebar.worktreeSetup.title"),
     description: i18n.t("sidebar.worktreeSetup.description"),
-    actionLabel: i18n.t("sidebar.worktreeSetup.openProjectSettings"),
+    askAgentLabel: i18n.t("sidebar.worktreeSetup.askAgent"),
+    addManuallyLabel: i18n.t("sidebar.worktreeSetup.addManually"),
     projectSettingsRoute: buildProjectSettingsRoute(project.serverId, project.projectId),
     testID: `worktree-setup-callout-${project.projectId}`,
   };
