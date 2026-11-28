@@ -1,6 +1,13 @@
 import { describe, expect, test } from "vitest";
-import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
-import { filterWorkspacesByProjects, resolveActiveProjectFilters } from "./sidebar-project-filter";
+import type {
+  SidebarProjectEntry,
+  SidebarWorkspaceEntry,
+} from "@/hooks/use-sidebar-workspaces-list";
+import {
+  filterEmptyProjects,
+  filterWorkspacesByProjects,
+  resolveActiveProjectFilters,
+} from "./sidebar-project-filter";
 
 function workspace(workspaceId: string, projectViewKey: string): SidebarWorkspaceEntry {
   return {
@@ -79,5 +86,41 @@ describe("filterWorkspacesByProjects", () => {
 
   test("keeps nothing for a project with no workspaces", () => {
     expect(filtered(["gamma"])).toEqual([]);
+  });
+});
+
+describe("filterEmptyProjects", () => {
+  function project(viewKey: string, workspaceIds: string[]): SidebarProjectEntry {
+    return {
+      viewKey,
+      projectName: viewKey,
+      projectKind: "git",
+      iconWorkingDir: `/repo/${viewKey}`,
+      hosts: [],
+      workspaces: workspaceIds.map((workspaceId) => ({
+        serverId: "host",
+        workspaceId,
+        workspaceKey: `host:${workspaceId}`,
+        projectViewKey: viewKey,
+        projectName: viewKey,
+        projectKind: "git",
+        workspaceKind: "worktree",
+        name: workspaceId,
+      })),
+    };
+  }
+
+  const projects = [project("alpha", ["one"]), project("empty", []), project("beta", ["two"])];
+
+  function visible(projectFilters: string[]) {
+    return filterEmptyProjects({ projects, projectFilters }).map((entry) => entry.viewKey);
+  }
+
+  test("drops projects that own no workspaces", () => {
+    expect(visible([])).toEqual(["alpha", "beta"]);
+  });
+
+  test("keeps an empty project the Project filter names", () => {
+    expect(visible(["empty"])).toEqual(["alpha", "empty", "beta"]);
   });
 });

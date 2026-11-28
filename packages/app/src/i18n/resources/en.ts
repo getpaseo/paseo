@@ -1277,6 +1277,7 @@ export const en = {
     },
     display: {
       showBackground: "Show background",
+      showEmptyProjects: "Show empty projects",
       trigger: "Display preferences",
       heading: "Display",
       sort: {
