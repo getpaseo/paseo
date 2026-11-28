@@ -19,6 +19,9 @@ import {
   type ClaudeReplayEntry,
   type ClaudeReplayParentFacts,
 } from "./replay-source.js";
+import { isolatePaseoHome } from "../../../../../test-utils/isolated-paseo-home.js";
+
+isolatePaseoHome();
 
 const TOOL_USE_ID = "toolu_01DgLoPMW9";
 const AGENT_ID = "a1730a6215e1f5cf6";

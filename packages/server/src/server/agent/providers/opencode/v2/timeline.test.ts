@@ -4,6 +4,9 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { V2Timeline } from "./timeline.js";
+import { isolatePaseoHome } from "../../../../../test-utils/isolated-paseo-home.js";
+
+isolatePaseoHome();
 
 function assistant(content: SessionMessageAssistant["content"]): SessionMessageAssistant {
   return {

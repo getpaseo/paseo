@@ -26,6 +26,9 @@ import { createPiExtensionHost } from "./extensions/index.js";
 import { PiExtensionHost } from "./extensions/host.js";
 import type { PiModel, PiThinkingLevel } from "./rpc-types.js";
 import type { PiUsagePollScheduler } from "./usage-poller.js";
+import { isolatePaseoHome } from "../../../../test-utils/isolated-paseo-home.js";
+
+isolatePaseoHome();
 
 // A run Pi starts by itself carries the id the session assigns to it.
 const AUTONOMOUS_TURN_ID = expect.stringMatching(/^autonomous-/);

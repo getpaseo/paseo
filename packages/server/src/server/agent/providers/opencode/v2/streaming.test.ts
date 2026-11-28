@@ -6,6 +6,9 @@ import { OpenCodeV2AgentClient } from "./agent.js";
 import { V2Harness } from "../test-utils/v2-harness.js";
 import { createTestLogger } from "../../../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../../../agent-sdk-types.js";
+import { isolatePaseoHome } from "../../../../../test-utils/isolated-paseo-home.js";
+
+isolatePaseoHome();
 
 function collectAssistantText(session: {
   subscribe: (cb: (e: AgentStreamEvent) => void) => () => void;
