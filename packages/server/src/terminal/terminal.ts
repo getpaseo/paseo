@@ -30,6 +30,7 @@ import {
   findExecutable,
   findExecutableWithoutProbing,
 } from "../executable-resolution/executable-resolution.js";
+import { signalProcessTree } from "../utils/tree-kill.js";
 import { createHeadlessTerminal } from "./headless-terminal.js";
 import { createTerminalSerializer } from "./terminal-serializer.js";
 import {
@@ -1236,12 +1237,20 @@ export async function createTerminal(
     void waitForProcessExit(1000).finally(disposeResources);
   }
 
-  function killPtyProcess(signal?: NodeJS.Signals): void {
-    if (process.platform === "win32") {
-      ptyProcess.kill();
+  function killPtyProcess(): void {
+    ptyProcess.kill();
+  }
+
+  // On Windows, node-pty's kill only closes the pseudoconsole and kills the console's
+  // processes after a helper process it forks reports them. A worker that exits right after
+  // killAndWait drops that kill, and the program keeps running. Kill the tree ourselves.
+  async function forceKillPtyProcess(): Promise<void> {
+    if (process.platform !== "win32") {
+      ptyProcess.kill("SIGKILL");
       return;
     }
-    ptyProcess.kill(signal);
+    const pid = ptyProcess.pid;
+    await signalProcessTree({ pid, kill: (signal) => process.kill(pid, signal) }, "SIGKILL");
   }
 
   function waitForProcessExit(timeoutMs: number): Promise<boolean> {
@@ -1289,7 +1298,7 @@ export async function createTerminal(
     const exitedGracefully = await waitForProcessExit(gracefulTimeoutMs);
     if (!exitedGracefully) {
       try {
-        killPtyProcess("SIGKILL");
+        await forceKillPtyProcess();
       } catch {
         // process may already be gone
       }
