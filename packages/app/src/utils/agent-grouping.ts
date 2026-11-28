@@ -2,21 +2,6 @@ import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { isSidebarActiveAgent } from "@/utils/sidebar-agent-state";
 
 /**
- * Derives the project key for grouping agents.
- * For worktrees, returns the parent repo path.
- * For regular repos/directories, returns the cwd.
- */
-export function deriveProjectKey(cwd: string): string {
-  const worktreeMarker = ".paseo/worktrees/";
-  const idx = cwd.indexOf(worktreeMarker);
-  if (idx !== -1) {
-    // Return parent repo path (before .paseo/worktrees/)
-    return cwd.slice(0, idx).replace(/\/$/, "");
-  }
-  return cwd;
-}
-
-/**
  * Produces a stable grouping key from a git remote URL.
  *
  * Waterfall:
@@ -314,7 +299,7 @@ function buildProjectActivityMap(
   const projectMap = new Map<string, ProjectActivityBucket>();
   for (const agent of activeAgents) {
     const remoteKey = deriveRemoteProjectKey(options?.getRemoteUrl?.(agent) ?? null);
-    const projectKey = remoteKey ?? deriveProjectKey(agent.cwd);
+    const projectKey = remoteKey ?? agent.cwd;
     const existing = projectMap.get(projectKey) || { trulyActive: [], recentlyActive: [] };
 
     if (isAgentTrulyActive(agent)) {
