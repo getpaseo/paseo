@@ -114,7 +114,7 @@ export class CodexAsyncQuestions {
     if (response.behavior === "allow") {
       const answers = z.record(z.string(), z.string()).parse(response.updatedInput?.answers);
       resolution = record.item.questions.map((_, index) => {
-        const answer = answers[`Question ${index + 1}`]?.trim();
+        const answer = (answers[String(index)] ?? answers[`Question ${index + 1}`])?.trim();
         if (!answer) throw new Error(`Answer Question ${index + 1} before submitting`);
         return answer;
       });

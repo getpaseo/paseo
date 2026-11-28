@@ -291,37 +291,44 @@ test("a failed submission releases the request so the user can retry", async () 
   }
 });
 
-test("shows an async question, keeps streaming, and delivers its answer without interrupting", async () => {
-  const { session, appServer, events, ask, say } = await setup();
-  try {
-    await ask();
-    const [permission] = session.getPendingPermissions();
-    expect(permission).toMatchObject({
-      kind: "question",
-      input: {
-        questions: [
-          {
-            header: "Question 1",
-            question: "Which color?",
-            isOther: true,
-            options: [{ label: "Blue" }, { label: "Green" }],
-          },
-        ],
-      },
-    });
-    await say("I am still inspecting the project.");
-    expect(
-      events.some(
-        (event) =>
-          event.type === "timeline" &&
-          event.item.type === "assistant_message" &&
-          event.item.text.includes("still inspecting"),
-      ),
-    ).toBe(true);
-    await session.respondToPermission(permission.id, answer);
-    expect(session.getPendingPermissions()).toEqual([]);
-    expect(appServer.requests().filter((request) => request.method === "turn/steer")).toMatchObject(
-      [
+test.each(["0", "Question 1"])(
+  "steers an async answer keyed by %s without interrupting",
+  async (key) => {
+    const { session, appServer, events, ask, say } = await setup();
+    try {
+      await ask();
+      const [permission] = session.getPendingPermissions();
+      expect(permission).toMatchObject({
+        kind: "question",
+        input: {
+          questions: [
+            {
+              id: "0",
+              header: "Question 1",
+              question: "Which color?",
+              isOther: true,
+              options: [{ label: "Blue" }, { label: "Green" }],
+            },
+          ],
+        },
+      });
+      await say("I am still inspecting the project.");
+      expect(
+        events.some(
+          (event) =>
+            event.type === "timeline" &&
+            event.item.type === "assistant_message" &&
+            event.item.text.includes("still inspecting"),
+        ),
+      ).toBe(true);
+      await session.respondToPermission(permission.id, {
+        behavior: "allow",
+        updatedInput: { answers: { [key]: "Green" } },
+      });
+      expect(session.getPendingPermissions()).toEqual([]);
+      expect(
+        appServer.requests().filter((request) => request.method === "turn/steer"),
+      ).toMatchObject([
         {
           params: {
             expectedTurnId: "native-turn",
@@ -329,20 +336,20 @@ test("shows an async question, keeps streaming, and delivers its answer without 
             input: [{ type: "text", text: expect.stringContaining("Which color?\nGreen") }],
           },
         },
-      ],
-    );
-    expect(appServer.requests().filter((request) => request.method === "turn/interrupt")).toEqual(
-      [],
-    );
-    expect(
-      events.some(
-        (event) => event.type === "permission_resolved" && event.requestId === permission.id,
-      ),
-    ).toBe(true);
-  } finally {
-    await session.close();
-  }
-});
+      ]);
+      expect(appServer.requests().filter((request) => request.method === "turn/interrupt")).toEqual(
+        [],
+      );
+      expect(
+        events.some(
+          (event) => event.type === "permission_resolved" && event.requestId === permission.id,
+        ),
+      ).toBe(true);
+    } finally {
+      await session.close();
+    }
+  },
+);
 
 test("keeps a failed answer pending for retry", async () => {
   const { session, ask } = await setup(undefined, true);
