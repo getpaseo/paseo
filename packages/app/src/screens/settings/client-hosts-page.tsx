@@ -38,6 +38,9 @@ import {
 } from "@/types/host-connection";
 import { formatLatency } from "@/utils/latency";
 
+import { ClientCertificateField } from "@/components/mtls/client-certificate-field";
+import { connectionCertificateTarget } from "@/components/mtls/pairing-client-certificate";
+
 const ThemedPlus = withUnistyles(Plus);
 const ThemedServer = withUnistyles(Server);
 const ThemedTrash2 = withUnistyles(Trash2);
@@ -242,6 +245,7 @@ function ClientHostRouteRow({
   const { t } = useTranslation();
   const title = formatConnectionTitle(connection, isLocalHost, t);
   const endpoint = formatConnectionEndpoint(connection, isLocalHost, hosts);
+  const certificateTarget = connectionCertificateTarget(connection);
 
   const latencyText = (() => {
     if (latencyLoading) return "...";
@@ -263,14 +267,23 @@ function ClientHostRouteRow({
   );
 
   return (
-    <SettingsRow label={title} labelAccessory={activeBadge} hint={endpoint}>
-      <View style={styles.routeTrailing}>
-        <Text style={latencyError ? styles.latencyError : styles.latencyText}>{latencyText}</Text>
-        <Button variant="ghost" textStyle={styles.destructiveText} onPress={handlePressRemove}>
-          {t("settings.host.connections.removeAction")}
-        </Button>
-      </View>
-    </SettingsRow>
+    <View>
+      <SettingsRow label={title} labelAccessory={activeBadge} hint={endpoint}>
+        <View style={styles.routeTrailing}>
+          <Text style={latencyError ? styles.latencyError : styles.latencyText}>{latencyText}</Text>
+          <Button variant="ghost" textStyle={styles.destructiveText} onPress={handlePressRemove}>
+            {t("settings.host.connections.removeAction")}
+          </Button>
+        </View>
+      </SettingsRow>
+      {certificateTarget ? (
+        <ClientCertificateField
+          host={certificateTarget.host}
+          port={String(certificateTarget.port)}
+          useTls
+        />
+      ) : null}
+    </View>
   );
 }
 

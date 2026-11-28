@@ -13,6 +13,51 @@ EAS profiles: `development`, `production`, and `production-apk` in `packages/app
 
 `development` uses Android `debug`.
 
+## Client certificates (mTLS)
+
+Install the identity in Android's credential settings first. When you confirm a
+pairing link or QR code, Paseo checks the relay's TLS endpoint. If the relay
+requires a missing client certificate, Android opens its certificate picker
+before pairing. Cancelling the picker cancels the pairing attempt. A working
+saved identity, a relay without mTLS, and plaintext relays do not open the picker.
+
+For a direct HTTPS host, enter the host and port in **Add host**, enable SSL, and
+choose **Client certificate (mTLS)** before connecting. Existing direct and relay
+connections expose the same control in **Settings > Hosts > Routes**. A link
+served from port 8444 may name a relay on port 443; its certificate assignment
+belongs to the relay's hostname and port.
+
+Selections belong to a hostname and effective port, not to a daemon or a relay
+pairing. Android keeps the private key; Paseo persists only the granted KeyChain
+alias. Cancelling the picker retains the previous selection. Removing a selection
+forgets that assignment without deleting the Android credential. Reconnect the
+host after changing a selection; an already open session keeps its current TLS
+identity. A removed, expired or revoked credential requires selecting a valid
+identity again.
+
+The Android module covers React Native HTTPS requests, WebSockets and direct file
+downloads. Ordinary downloads keep their existing transport. mTLS downloads stream
+to a temporary file and reject redirects. Server certificate and hostname checks
+use normal platform trust. HTTP/2 is disabled while certificate assignments exist
+to prevent connection coalescing across different certificate origins.
+
+This requires a native Android build, not an Expo Go or JavaScript-only update.
+iOS certificate selection is not implemented. Browser clients use the browser's
+own certificate selection.
+
+The native regressions exercise real HTTPS and WebSocket handshakes and streamed
+downloads against local test servers:
+
+```sh
+cd packages/app/android
+./gradlew :paseo-mtls:testReleaseUnitTest --no-daemon --max-workers=2 -Dorg.gradle.parallel=false
+```
+
+On a device, select an installed certificate, connect to a server requiring it,
+restart the app and reconnect, download a file, then remove the assignment and
+confirm the next connection is rejected. Also check picker cancellation and an
+expired or removed credential. These steps require an actual Android KeyChain.
+
 ## Version codes
 
 `packages/app/native-release-version.js` is the single definition of native and F-Droid version-code math. Do not re-derive these numbers anywhere else — a drifted copy produces changelog files that match no published APK, and nothing fails loudly.

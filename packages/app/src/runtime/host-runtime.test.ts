@@ -586,11 +586,13 @@ function createPairingStore(
     serverIdForHost?: (host: HostProfile) => string;
     storage?: HostRuntimeStorage;
     probeSecurityFloor?: "legacy" | "protected";
+    preparePairingCertificate?: HostRuntimeControllerDeps["preparePairingCertificate"];
   } = {},
 ): HostRuntimeStore {
   return new HostRuntimeStore({
     storage: input.storage ?? createMemoryHostRuntimeStorage(),
     deps: {
+      preparePairingCertificate: input.preparePairingCertificate,
       createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
       connectToDaemon: async ({ host, connection }) => {
         input.connectAttempts?.push(connection.id);
@@ -5254,6 +5256,53 @@ describe("HostRuntimeStore", () => {
     expect(store.getHosts()[0]?.label).toBe("mbp");
 
     store.syncHosts([]);
+  });
+
+  it("prepares link certificates before probing, and only after approving the host", async () => {
+    const attempts: string[] = [];
+    const prepare = vi.fn(async () => {
+      expect(attempts).toEqual([]);
+      return true;
+    });
+    const store = createPairingStore({
+      connectAttempts: attempts,
+      preparePairingCertificate: prepare,
+    });
+    answerHostConfirmations(store, true);
+    await store.beginLinkPairing().submit(encodeOfferUrl(makeOffer()));
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "relay", relayEndpoint: "relay.paseo.sh:443" }),
+    );
+    expect(attempts.length).toBeGreaterThan(0);
+    store.syncHosts([]);
+
+    const declined = createPairingStore({ preparePairingCertificate: prepare });
+    answerHostConfirmations(declined, false);
+    await expect(declined.beginLinkPairing().submit(encodeOfferUrl(makeOffer()))).resolves.toEqual({
+      status: "cancelled",
+    });
+    expect(prepare).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels pasted, scanned and deep links before saving when certificate selection is cancelled", async () => {
+    const attempts: string[] = [];
+    const prepare = vi.fn(async () => false);
+    const store = createPairingStore({
+      connectAttempts: attempts,
+      preparePairingCertificate: prepare,
+    });
+    answerHostConfirmations(store, true);
+    const link = encodeOfferUrl(makeOffer());
+    await expect(store.beginLinkPairing().submit(link)).resolves.toEqual({ status: "cancelled" });
+    await expect(store.importConnectionLink(link, "hostRoot")).resolves.toEqual({
+      status: "cancelled",
+    });
+    await expect(store.importConnectionLink(link, "openProject")).resolves.toEqual({
+      status: "cancelled",
+    });
+    expect(prepare).toHaveBeenCalledTimes(3);
+    expect(attempts).toEqual([]);
+    expect(store.getHosts()).toEqual([]);
   });
 
   it("uses the advertised hostname when adding a relay host from a pairing offer", async () => {

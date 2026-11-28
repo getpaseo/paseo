@@ -2,6 +2,14 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
+  clientCertificate: {
+    title: "Клиентский сертификат (mTLS)",
+    none: "Клиентский сертификат не выбран",
+    scope: "Только для {{host}}:{{port}}. После изменения подключитесь заново.",
+    choose: "Выбрать сертификат",
+    remove: "Отменить выбор",
+    failed: "Не удалось обновить клиентский сертификат. Повторите попытку.",
+  },
   pluginCombobox: {
     searching: "Поиск…",
     empty: "Нет результатов",

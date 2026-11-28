@@ -1,0 +1,21 @@
+apply plugin: 'com.android.library'
+
+group = 'sh.paseo.mtls'
+version = '0.1.0'
+
+def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useDefaultAndroidSdkVersions()
+
+android {
+  namespace "sh.paseo.mtls"
+}
+
+dependencies {
+  implementation "com.facebook.react:react-android"
+  testImplementation "junit:junit:4.13.2"
+  testImplementation "com.squareup.okhttp3:mockwebserver:4.9.2"
+  testImplementation "com.squareup.okhttp3:okhttp-tls:4.9.2"
+}

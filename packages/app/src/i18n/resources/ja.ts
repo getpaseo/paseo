@@ -2,6 +2,14 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  clientCertificate: {
+    title: "クライアント証明書（mTLS）",
+    none: "クライアント証明書が選択されていません",
+    scope: "{{host}}:{{port}} 専用です。変更後に再接続してください。",
+    choose: "証明書を選択",
+    remove: "選択を解除",
+    failed: "クライアント証明書を更新できません。もう一度お試しください。",
+  },
   pluginCombobox: {
     searching: "検索中…",
     empty: "結果がありません",

@@ -2,6 +2,14 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  clientCertificate: {
+    title: "شهادة العميل (mTLS)",
+    none: "لم يتم اختيار شهادة عميل",
+    scope: "لهذا العنوان فقط: {{host}}:{{port}}. أعد الاتصال بعد التغيير.",
+    choose: "اختيار شهادة",
+    remove: "إزالة الاختيار",
+    failed: "تعذر تحديث شهادة العميل. حاول مرة أخرى.",
+  },
   pluginCombobox: {
     searching: "جارٍ البحث…",
     empty: "لا توجد نتائج",
