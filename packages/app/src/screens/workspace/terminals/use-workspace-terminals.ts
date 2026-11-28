@@ -7,6 +7,7 @@ import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useTranslation } from "react-i18next";
 import { useReplicaQuery } from "@/data/query";
 import { workspaceTerminalsPushRoute } from "@/data/push-router";
+import { preloadTerminalPane } from "@/panels/terminal-pane-content";
 import {
   buildTerminalsQueryKey,
   canCreateWorkspaceTerminal,
@@ -134,6 +135,7 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       const profile = _input.profile ? resolveTerminalProfileLaunch(_input.profile, "") : undefined;
+      preloadTerminalPane();
       const payload = profile
         ? await client.createTerminal(workspaceDirectory, profile.name, undefined, {
             command: profile.command,
