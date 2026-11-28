@@ -70,6 +70,28 @@ paseo --host <host:port> provider diagnostic <provider> --json
 
 关于替代端点、多个配置、自定义二进制文件和 ACP Agent，请参见[自定义 Provider](/docs/custom-providers)。各 Agent 的安装链接见[支持的 Provider](/docs/supported-providers)。
 
+## Pi 的 Thinking 被正文打断 {#pi-splits-thinking-around-the-answer}
+
+使用推理模型时，实时回复可能显示为 **Thinking → 几个正文词语 → Thinking → 剩余正文**，但保存的 Pi 会话里只有一个思考块和一个正文块。这个问题记录在 [#2803](https://github.com/getpaseo/paseo/issues/2803)。
+
+一种原因是旧版 Pi 的 OpenAI 兼容适配器在同一个 SSE delta 同时包含 `content` 和 `reasoning` 或 `reasoning_content` 时，先处理正文再处理思考。即使后端没有在正文之后单独发送思考数据包，也会触发这个问题。
+
+检查受影响主机实际使用的 Pi 安装：
+
+```bash
+paseo provider diagnostic pi
+```
+
+将该安装更新到包含 [Pi 混合 delta 顺序修复](https://github.com/earendil-works/pi/commit/63035734f2714a20f8c9ed382e256a73760f3571) 的版本（v1.4.0 已包含）。单独更新 Paseo 不会更新独立安装的 Pi CLI。等受影响的 Agent 空闲后，重新加载它的进程以使用新代码：
+
+```bash
+paseo agent reload <agent-id>
+```
+
+如果使用远程 daemon，给两个 Paseo 命令都添加 `--host <host:port>`，并在 daemon 所在机器上更新 Pi。
+
+如果仍然出现，请向 [#2803](https://github.com/getpaseo/paseo/issues/2803) 补充 Paseo、Pi 版本及脱敏后的 delta 顺序。区分“一个 delta 同时包含两个字段”和“后续 delta 才到达的思考”，有 Pi 的 `contentIndex` 时也一并提供。上游修复针对前一种情况，不代表所有交错流都已修复。分享日志前移除提示词、凭据及私密思考内容。
+
 ## Paseo 的环境为何可能与终端不同 {#why-paseos-environment-can-differ-from-your-terminal}
 
 只要 Paseo 运行你的工具、Agent 或终端，就可能出现同样的不一致：你每天都在用的命令被报告为 `command not found`。

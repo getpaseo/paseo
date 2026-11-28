@@ -72,6 +72,28 @@ If you'd rather pin it directly, set the binary path in `~/.paseo/config.json`:
 
 For alternative endpoints, multiple profiles, custom binaries, and ACP agents, see [Custom providers](/docs/custom-providers). For per-agent install links, see [Supported providers](/docs/supported-providers).
 
+## Pi splits Thinking around the answer
+
+With a reasoning model, the live reply can appear as **Thinking → a few answer words → Thinking → the rest of the answer**, while the saved Pi session has one thinking block followed by one text block. This is tracked in [#2803](https://github.com/getpaseo/paseo/issues/2803).
+
+One cause is an older Pi OpenAI-compatible adapter processing `content` before `reasoning` or `reasoning_content` when both arrive in the same SSE delta. The backend does not need to send a separate reasoning packet after the answer for this to happen.
+
+Check which Pi installation the affected host uses:
+
+```bash
+paseo provider diagnostic pi
+```
+
+Update that installation to a release containing [Pi's mixed-delta ordering fix](https://github.com/earendil-works/pi/commit/63035734f2714a20f8c9ed382e256a73760f3571) (included in v1.4.0). Updating Paseo alone does not update the separately installed Pi CLI. Once the affected agent is idle, reload its process to pick up the new Pi code:
+
+```bash
+paseo agent reload <agent-id>
+```
+
+For a remote daemon, pass `--host <host:port>` to both Paseo commands and update Pi on that daemon's machine.
+
+If it still happens, add the Paseo and Pi versions and a redacted delta sequence to [#2803](https://github.com/getpaseo/paseo/issues/2803). Distinguish a single delta containing both fields from reasoning arriving in a later delta, and include Pi's `contentIndex` values when available. The upstream fix addresses the mixed-delta case; it does not establish that every interleaved stream is fixed. Remove prompts, credentials, and private reasoning before sharing logs.
+
 ## Why Paseo's environment can differ from your terminal
 
 The same mismatch shows up anywhere Paseo runs your tools, an agent, or a terminal, reporting `command not found` for something you use every day.
