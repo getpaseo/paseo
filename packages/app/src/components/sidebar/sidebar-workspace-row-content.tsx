@@ -368,13 +368,16 @@ export const sidebarWorkspaceRowStyles = StyleSheet.create((theme) => ({
     lineHeight: 14,
   },
   hidden: { opacity: 0 },
-  // Stays position:relative at zero width so the absolutely-positioned kebab keeps
-  // anchoring to the same right edge whether or not the slot holds anything.
+  // The slot lays its children out right-to-left: the trailing content (timestamp/diff) pins
+  // to the row's right edge, and the hover actions anchor just left of it. The anchor is
+  // zero-width so the actions never change the slot's laid-out width (the title keeps its
+  // width); the actions paint leftward over the title's tail, not over the trailing content.
   trailingActionSlot: {
     position: "relative",
     minHeight: 20,
     flexShrink: 0,
-    alignItems: "flex-end",
+    flexDirection: "row-reverse",
+    alignItems: "center",
     justifyContent: "flex-start",
   },
   trailingActionSlotReserved: {
@@ -382,8 +385,14 @@ export const sidebarWorkspaceRowStyles = StyleSheet.create((theme) => ({
     minWidth: 18,
     minHeight: 20,
     flexShrink: 0,
-    alignItems: "flex-end",
+    flexDirection: "row-reverse",
+    alignItems: "center",
     justifyContent: "flex-start",
+  },
+  trailingActionOverlayAnchor: {
+    width: 0,
+    position: "relative",
+    alignSelf: "stretch",
   },
   trailingActionOverlay: {
     position: "absolute",
@@ -410,9 +419,10 @@ export type SidebarWorkspaceTrailingPresentation = "visible" | "hidden" | "absen
  * into each of them and immediately drifted — one call site kept hiding the diff after the
  * others stopped.
  *
- * The trailing content survives the kebab on hover and fades under the scrim instead of
- * blinking out. Touch has no hover, so its permanent kebab still hides the content outright
- * rather than scrimming an unhovered row whose background doesn't match the gradient.
+ * The trailing content stays visible on hover: the actions anchor to its left and the scrim
+ * fades the title's tail rather than the content. Touch has no hover, so its permanent kebab
+ * still hides the content outright rather than scrimming an unhovered row whose background
+ * doesn't match the gradient.
  */
 export function resolveTrailingActionVisibility({
   workspace,
@@ -508,19 +518,20 @@ export function SidebarWorkspaceTrailingActionOverlay({
   children,
 }: {
   visible: boolean;
-  /** Fade the row into the kebab when something (the diff stat) is still rendered behind it. */
+  /** Fade the title's tail into the hover surface beneath the overlaid actions. */
   scrimBackdrop?: SidebarSurfaceBackdrop;
   workspaceKey: string;
   /**
-   * Shows the archive button left of the kebab. It overlays the title like the kebab does, so
-   * the scrim widens to cover it rather than the slot reserving its width.
+   * Shows the archive button left of the kebab. The actions sit left of the trailing content
+   * (which stays visible) and overlay the title's tail, so the scrim widens to cover them
+   * rather than the slot reserving their width.
    */
   onArchiveButtonPress?: () => void;
   children: ReactNode;
 }) {
   if (!visible || !children) return null;
   return (
-    <>
+    <View style={sidebarWorkspaceRowStyles.trailingActionOverlayAnchor}>
       {scrimBackdrop ? (
         <TrailingActionScrim
           backdrop={scrimBackdrop}
@@ -537,7 +548,7 @@ export function SidebarWorkspaceTrailingActionOverlay({
         ) : null}
         {children}
       </View>
-    </>
+    </View>
   );
 }
 
