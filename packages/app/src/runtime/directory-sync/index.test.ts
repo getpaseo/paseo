@@ -23,7 +23,7 @@ import { normalizeAgentSnapshot, projectAgentSnapshot } from "@/utils/agent-snap
 import { deriveProjectPlacementFromCwd } from "@/utils/project-placement";
 import { selectWorkspaceDirectoryServerIds } from "@/stores/session-store-hooks/selectors";
 import { useWorkspaceLabels } from "@/workspace-labels";
-import type { DirectoryReplicaMutation } from "@/runtime/replica-cache";
+import type { DirectoryCheckpoint, DirectoryReplicaMutation } from "@/runtime/replica-cache";
 import {
   DirectoryRefreshSupersededError,
   DirectorySync,
@@ -2145,3 +2145,206 @@ it.each(["before", "during", "before-metadata", "damaged"] as const)(
     }
   },
 );
+
+it("batches a burst of 200 workspace_update frames into one mergeWorkspaces commit and one checkpoint write", async () => {
+  const serverId = "workspace-update-burst-batching";
+  serverIds.add(serverId);
+  const client = new FakeDirectoryClient();
+  const checkpointWrites: Array<{
+    mutations: readonly DirectoryReplicaMutation[];
+    checkpoint: DirectoryCheckpoint | undefined;
+  }> = [];
+  const directory = new DirectorySync(
+    serverId,
+    {
+      onAgentStoppedRunning: () => {},
+      markAgentLoading: () => {},
+      markAgentReady: () => {},
+      markAgentError: () => {},
+    },
+    {
+      readAgent: async () => undefined,
+      readWorkspace: async () => undefined,
+      readDirectory: async () => ({
+        agents: new Map(),
+        workspaces: new Map(),
+        projects: new Map(),
+      }),
+      commitDirectoryMutations: (_serverId, mutations, checkpoint) => {
+        checkpointWrites.push({ mutations: [...mutations], checkpoint });
+      },
+    },
+  );
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+  store.updateSessionServerInfo(serverId, {
+    serverId,
+    hostname: null,
+    version: "test",
+    features: { workspaceMultiplicity: true, directorySync: true },
+  });
+  directory.connectionChanged({
+    client: client as unknown as DaemonClient,
+    status: "online",
+    source: { clientGeneration: 1, connectionEpoch: 1 },
+  });
+  directory.setDemand({}, true);
+  await directory.refreshDemand();
+
+  let workspaceStoreCommits = 0;
+  let lastWorkspacesMap = useSessionStore.getState().sessions[serverId]?.workspaces;
+  const unsubscribeStore = useSessionStore.subscribe((state) => {
+    const nextMap = state.sessions[serverId]?.workspaces;
+    if (nextMap !== lastWorkspacesMap) {
+      lastWorkspacesMap = nextMap;
+      workspaceStoreCommits += 1;
+    }
+  });
+  checkpointWrites.length = 0;
+
+  try {
+    for (let index = 0; index < 200; index += 1) {
+      client.emit({
+        type: "workspace_update",
+        payload: {
+          kind: "upsert",
+          workspace: {
+            ...createWorkspaceEntry(`ws-burst-${index}`),
+            name: `Workspace ${index}`,
+          },
+          generation: "gen-burst",
+          seq: index + 1,
+        },
+      });
+    }
+
+    await expect
+      .poll(() => useSessionStore.getState().sessions[serverId]?.workspaces.size)
+      .toBe(200);
+
+    expect(workspaceStoreCommits).toBe(1);
+    expect(checkpointWrites).toHaveLength(1);
+    expect(checkpointWrites[0]?.mutations).toHaveLength(200);
+    expect(checkpointWrites[0]?.checkpoint?.workspaces).toEqual({
+      generation: "gen-burst",
+      afterSeq: 200,
+    });
+    expect(
+      useSessionStore.getState().sessions[serverId]?.workspaces.get("ws-burst-199")?.name,
+    ).toBe("Workspace 199");
+  } finally {
+    unsubscribeStore();
+    directory.dispose();
+  }
+});
+
+it("coalesces duplicate upserts and removals within a single workspace_update batch in arrival order", async () => {
+  const serverId = "workspace-update-batch-ordering";
+  serverIds.add(serverId);
+  const client = new FakeDirectoryClient();
+  const checkpointWrites: Array<{
+    mutations: readonly DirectoryReplicaMutation[];
+    checkpoint: DirectoryCheckpoint | undefined;
+  }> = [];
+  const directory = new DirectorySync(
+    serverId,
+    {
+      onAgentStoppedRunning: () => {},
+      markAgentLoading: () => {},
+      markAgentReady: () => {},
+      markAgentError: () => {},
+    },
+    {
+      readAgent: async () => undefined,
+      readWorkspace: async () => undefined,
+      readDirectory: async () => ({
+        agents: new Map(),
+        workspaces: new Map(),
+        projects: new Map(),
+      }),
+      commitDirectoryMutations: (_serverId, mutations, checkpoint) => {
+        checkpointWrites.push({ mutations: [...mutations], checkpoint });
+      },
+    },
+  );
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+  store.updateSessionServerInfo(serverId, {
+    serverId,
+    hostname: null,
+    version: "test",
+    features: { workspaceMultiplicity: true, directorySync: true },
+  });
+  directory.connectionChanged({
+    client: client as unknown as DaemonClient,
+    status: "online",
+    source: { clientGeneration: 1, connectionEpoch: 1 },
+  });
+  directory.setDemand({}, true);
+  await directory.refreshDemand();
+  checkpointWrites.length = 0;
+
+  try {
+    client.emit({
+      type: "workspace_update",
+      payload: {
+        kind: "upsert",
+        workspace: { ...createWorkspaceEntry("ws-1"), name: "v1" },
+        generation: "gen-ord",
+        seq: 1,
+      },
+    });
+    client.emit({
+      type: "workspace_update",
+      payload: {
+        kind: "upsert",
+        workspace: { ...createWorkspaceEntry("ws-1"), name: "v2" },
+        generation: "gen-ord",
+        seq: 2,
+      },
+    });
+    client.emit({
+      type: "workspace_update",
+      payload: {
+        kind: "upsert",
+        workspace: { ...createWorkspaceEntry("ws-2"), name: "ephemeral" },
+        generation: "gen-ord",
+        seq: 3,
+      },
+    });
+    client.emit({
+      type: "workspace_update",
+      payload: {
+        kind: "remove",
+        id: "ws-2",
+        generation: "gen-ord",
+        seq: 4,
+      },
+    });
+    client.emit({
+      type: "workspace_update",
+      payload: {
+        kind: "upsert",
+        workspace: { ...createWorkspaceEntry("ws-3"), name: "kept" },
+        generation: "gen-ord",
+        seq: 5,
+      },
+    });
+
+    await expect
+      .poll(() => useSessionStore.getState().sessions[serverId]?.workspaces.get("ws-3")?.name)
+      .toBe("kept");
+
+    const workspaces = useSessionStore.getState().sessions[serverId]?.workspaces;
+    expect(workspaces?.get("ws-1")?.name).toBe("v2");
+    expect(workspaces?.has("ws-2")).toBe(false);
+    expect(workspaces?.get("ws-3")?.name).toBe("kept");
+    expect(checkpointWrites).toHaveLength(1);
+    expect(checkpointWrites[0]?.checkpoint?.workspaces).toEqual({
+      generation: "gen-ord",
+      afterSeq: 5,
+    });
+  } finally {
+    directory.dispose();
+  }
+});

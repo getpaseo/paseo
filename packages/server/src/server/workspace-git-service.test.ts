@@ -615,6 +615,157 @@ describe("WorkspaceGitServiceImpl", () => {
     }
   });
 
+  test("past the 90s release grace, getSnapshot returns the retained snapshot immediately while refreshing in the background", async () => {
+    const delayedRefresh = createDeferred<CheckoutStatusGit>();
+    const delayedStarted = createDeferred<void>();
+    let delayNextRefresh = false;
+    const getCheckoutStatus = vi.fn(async (cwd: string) => {
+      if (!delayNextRefresh) {
+        return createCheckoutStatus(cwd, { currentBranch: "main" });
+      }
+      delayedStarted.resolve();
+      return delayedRefresh.promise;
+    });
+    const service = createService({ getCheckoutStatus });
+    const published: WorkspaceGitRuntimeSnapshot[] = [];
+    service.onSnapshotUpdated((snapshot) => published.push(snapshot));
+    try {
+      const first = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+      const initial = await service.getSnapshot(REPO_CWD);
+      await waitForObservationToSettle(service, 1);
+      first.unsubscribe();
+
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(service.getMetrics().workspaceTargetCount).toBe(0);
+
+      // Reconnecting past the 90s grace must return the retained snapshot immediately
+      // without waiting on the slow background Git refresh.
+      delayNextRefresh = true;
+      const stale = await service.getSnapshot(REPO_CWD);
+      expect(stale).toEqual(initial);
+
+      // Background revalidation still runs and publishes the fresh snapshot when it lands.
+      await delayedStarted.promise;
+      delayedRefresh.resolve(
+        createCheckoutStatus(REPO_CWD, { currentBranch: "feature/revalidated" }),
+      );
+      await settle(() => {
+        expect(published.at(-1)?.git.currentBranch).toBe("feature/revalidated");
+      });
+      await expect(service.getSnapshot(REPO_CWD)).resolves.toMatchObject({
+        git: { currentBranch: "feature/revalidated" },
+      });
+    } finally {
+      delayedRefresh.resolve(
+        createCheckoutStatus(REPO_CWD, { currentBranch: "feature/revalidated" }),
+      );
+      await service.dispose();
+    }
+  });
+
+  test("reconnecting past the 90s release grace stays quiet on unchanged revalidation and emits when Git changed", async () => {
+    let branch = "main";
+    const getCheckoutStatus = vi.fn(async (cwd: string) =>
+      createCheckoutStatus(cwd, { currentBranch: branch }),
+    );
+    const service = createService({ getCheckoutStatus });
+    const published: WorkspaceGitRuntimeSnapshot[] = [];
+    service.onSnapshotUpdated((snapshot) => published.push(snapshot));
+    try {
+      const first = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+      await service.getSnapshot(REPO_CWD);
+      await waitForObservationToSettle(service, 1);
+      first.unsubscribe();
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(service.getMetrics().workspaceTargetCount).toBe(0);
+      expect(published).toHaveLength(1);
+
+      // Unchanged revalidation after grace must not emit redundant updates.
+      const secondListener = vi.fn();
+      const second = service.registerWorkspace({ cwd: REPO_CWD }, secondListener);
+      await waitForRefreshesToSettle(service);
+      await waitForObservationToSettle(service, 1);
+      expect(secondListener).toHaveBeenCalledTimes(0);
+      expect(published).toHaveLength(1);
+      second.unsubscribe();
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(service.getMetrics().workspaceTargetCount).toBe(0);
+
+      // A real Git change during disconnect must emit once revalidation finishes.
+      branch = "feature/changed-while-away";
+      const thirdListener = vi.fn();
+      const third = service.registerWorkspace({ cwd: REPO_CWD }, thirdListener);
+      await settle(() => {
+        expect(thirdListener).toHaveBeenCalledTimes(1);
+      });
+      expect(thirdListener.mock.calls[0]?.[0]?.git.currentBranch).toBe(
+        "feature/changed-while-away",
+      );
+      expect(published).toHaveLength(2);
+      third.unsubscribe();
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  test("late refresh retains its snapshot unless a newer target generation already exists, and forced reads bypass retention", async () => {
+    const staleStatus = createDeferred<CheckoutStatusGit>();
+    const staleStarted = createDeferred<void>();
+    let mode: "initial" | "stale" | "newer" | "forced" = "initial";
+    const service = new WorkspaceGitServiceImpl({
+      logger: createLogger() as unknown as pino.Logger,
+      paseoHome: "/tmp/paseo-test",
+      releaseGraceMs: 0,
+      deps: {
+        ...buildDefaultTestServiceDeps(),
+        getCheckoutStatus: async (cwd: string) => {
+          if (mode === "initial") return createCheckoutStatus(cwd, { currentBranch: "main" });
+          if (mode === "stale") {
+            staleStarted.resolve();
+            return staleStatus.promise;
+          }
+          if (mode === "newer")
+            return createCheckoutStatus(cwd, { currentBranch: "feature/newer" });
+          return createCheckoutStatus(cwd, { currentBranch: "feature/forced" });
+        },
+      },
+    });
+    try {
+      const older = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+      await service.getSnapshot(REPO_CWD);
+      await waitForObservationToSettle(service, 1);
+      mode = "stale";
+      const staleRefresh = service.getSnapshot(REPO_CWD, { force: true, reason: "stale" });
+      await staleStarted.promise;
+      older.unsubscribe();
+
+      mode = "newer";
+      const newer = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+      await service.getSnapshot(REPO_CWD, { force: true, reason: "newer" });
+      newer.unsubscribe();
+
+      // Older target's late refresh resolves after newer target already retained its snapshot.
+      staleStatus.resolve(createCheckoutStatus(REPO_CWD, { currentBranch: "feature/stale" }));
+      await staleRefresh;
+
+      // Non-forced read gets the newer retained snapshot, not the stale one.
+      mode = "forced";
+      await expect(service.getSnapshot(REPO_CWD)).resolves.toMatchObject({
+        git: { currentBranch: "feature/newer" },
+      });
+
+      // Forced read bypasses the retained snapshot and returns fresh Git state.
+      await expect(
+        service.getSnapshot(REPO_CWD, { force: true, reason: "explicit-refresh" }),
+      ).resolves.toMatchObject({
+        git: { currentBranch: "feature/forced" },
+      });
+    } finally {
+      staleStatus.resolve(createCheckoutStatus(REPO_CWD, { currentBranch: "feature/stale" }));
+      await service.dispose();
+    }
+  });
+
   test("onSnapshotUpdated delivers without workspace subscribers and can unsubscribe", async () => {
     const service = createService();
     const snapshots: WorkspaceGitRuntimeSnapshot[] = [];
