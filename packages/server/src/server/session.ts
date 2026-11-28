@@ -477,6 +477,8 @@ interface WorkspaceUpdatesSubscriptionState {
   visibleEmptyProjectIds?: Set<string>;
   activeFlush: Promise<void> | null;
   queuedFlush: PendingWorkspaceFlush | null;
+  outboundPacedByWorkspaceId: Map<string, WorkspaceUpdatePayload>;
+  outboundPump: Promise<void> | null;
 }
 
 class SessionRequestError extends Error {
@@ -6594,49 +6596,87 @@ export class Session {
     }
   }
 
-  private async emitWorkspaceUpdatePayloads(
+  private enqueueOutboundWorkspacePayloads(
     subscription: WorkspaceUpdatesSubscriptionState,
     payloads: readonly WorkspaceUpdatePayload[],
-  ): Promise<void> {
-    if (payloads.length === 0) return;
+  ): void {
+    if (
+      payloads.length === 0 ||
+      this.workspaceUpdatesSubscriptions.get(subscription.subscriptionId) !== subscription
+    ) {
+      return;
+    }
     if (payloads.length === 1) {
       const payload = payloads[0];
-      if (this.workspaceUpdatesSubscriptions.get(subscription.subscriptionId) !== subscription) {
-        return;
-      }
-      this.recordWorkspaceUpdateVisibility(subscription, payload);
       const workspaceId = payload.kind === "upsert" ? payload.workspace.id : payload.id;
+      // Supersede any older unsent burst frame for this workspace before emitting immediately
+      // so interactive RPC handlers (create/open/detach) never wait behind or get overwritten
+      // by a draining multi-workspace burst.
+      subscription.outboundPacedByWorkspaceId.delete(workspaceId);
+      this.recordWorkspaceUpdateVisibility(subscription, payload);
       subscription.lastEmittedByWorkspaceId.set(workspaceId, payload);
       subscription.owner.emit({ type: "workspace_update", payload });
       return;
     }
-    // Pace multi-workspace bursts one drained frame at a time so interactive RPC replies
-    // can interleave on the transport instead of head-of-line blocking behind the whole burst.
+    // Queue multi-workspace bursts for paced one-at-a-time draining without holding
+    // `activeFlush` or blocking unrelated interactive RPC replies. Latest-wins per
+    // workspace ID prevents stale queued frames from overwriting newer state.
     for (const payload of payloads) {
-      if (
-        this.workspaceUpdatesSubscriptions.get(subscription.subscriptionId) !== subscription ||
-        subscription.owner.signal.aborted
-      ) {
-        return;
-      }
-      this.recordWorkspaceUpdateVisibility(subscription, payload);
       const workspaceId = payload.kind === "upsert" ? payload.workspace.id : payload.id;
+      this.recordWorkspaceUpdateVisibility(subscription, payload);
       subscription.lastEmittedByWorkspaceId.set(workspaceId, payload);
-      try {
-        await subscription.owner.emitAndWait({ type: "workspace_update", payload });
-      } catch (error) {
-        if (!subscription.owner.signal.aborted) {
-          this.sessionLogger.debug(
-            { err: error, subscriptionId: subscription.subscriptionId },
-            "Stopping workspace_update burst after send failure",
-          );
-        }
-        return;
-      }
+      subscription.outboundPacedByWorkspaceId.set(workspaceId, payload);
+    }
+    if (!subscription.outboundPump) {
+      this.pumpOutboundWorkspaceUpdates(subscription);
     }
   }
 
-  private async flushBootstrappedWorkspaceUpdates(
+  private pumpOutboundWorkspaceUpdates(subscription: WorkspaceUpdatesSubscriptionState): void {
+    const pump = (async () => {
+      while (subscription.outboundPacedByWorkspaceId.size > 0) {
+        if (
+          this.workspaceUpdatesSubscriptions.get(subscription.subscriptionId) !== subscription ||
+          subscription.owner.signal.aborted
+        ) {
+          subscription.outboundPacedByWorkspaceId.clear();
+          return;
+        }
+        const nextEntry = subscription.outboundPacedByWorkspaceId.entries().next().value;
+        if (!nextEntry) {
+          return;
+        }
+        const [workspaceId, payload] = nextEntry;
+        subscription.outboundPacedByWorkspaceId.delete(workspaceId);
+        try {
+          await subscription.owner.emitAndWait({ type: "workspace_update", payload });
+        } catch (error) {
+          subscription.outboundPacedByWorkspaceId.clear();
+          if (!subscription.owner.signal.aborted) {
+            this.sessionLogger.debug(
+              { err: error, subscriptionId: subscription.subscriptionId },
+              "Stopping workspace_update burst after send failure",
+            );
+          }
+          return;
+        }
+      }
+    })().finally(() => {
+      if (subscription.outboundPump === pump) {
+        subscription.outboundPump = null;
+      }
+      if (
+        subscription.outboundPacedByWorkspaceId.size > 0 &&
+        this.workspaceUpdatesSubscriptions.get(subscription.subscriptionId) === subscription &&
+        !subscription.owner.signal.aborted
+      ) {
+        this.pumpOutboundWorkspaceUpdates(subscription);
+      }
+    });
+    subscription.outboundPump = pump;
+  }
+
+  private flushBootstrappedWorkspaceUpdates(
     subscription: WorkspaceUpdatesSubscriptionState,
     options?: {
       snapshotByWorkspaceId?: Map<
@@ -6644,7 +6684,7 @@ export class Session {
         { status: string; statusEnteredAt: string | null; activityAtMs: number | null }
       >;
     },
-  ): Promise<void> {
+  ): void {
     if (
       this.workspaceUpdatesSubscriptions.get(subscription.subscriptionId) !== subscription ||
       !subscription.isBootstrapping
@@ -6683,7 +6723,7 @@ export class Session {
       }
       payloadsToEmit.push(payload);
     }
-    await this.emitWorkspaceUpdatePayloads(subscription, payloadsToEmit);
+    this.enqueueOutboundWorkspacePayloads(subscription, payloadsToEmit);
   }
 
   private async buildProjectDescriptor(
@@ -7062,7 +7102,7 @@ export class Session {
       this.collectWorkspaceUpdatePayload(subscription, workspaceId, nextPayload, payloadsToEmit);
     }
 
-    await this.emitWorkspaceUpdatePayloads(subscription, payloadsToEmit);
+    this.enqueueOutboundWorkspacePayloads(subscription, payloadsToEmit);
   }
 
   private applyOptimisticWorkspaceStatus(
@@ -7298,6 +7338,7 @@ export class Session {
   ): Promise<void> {
     const owner = request.subscribe
       ? this.delivery.begin("workspaces", request.subscribe.subscriptionId, async (id) => {
+          this.workspaceUpdatesSubscriptions.get(id)?.outboundPacedByWorkspaceId.clear();
           this.workspaceUpdatesSubscriptions.delete(id);
           this.refreshObservationProducers();
           await this.reconcileWorkspaceGitObservers();
@@ -7319,6 +7360,8 @@ export class Session {
           visibleEmptyProjectIds: new Set(),
           activeFlush: null,
           queuedFlush: null,
+          outboundPacedByWorkspaceId: new Map(),
+          outboundPump: null,
         }
       : null;
     if (subscription) {
@@ -7372,7 +7415,7 @@ export class Session {
 
       if (subscription) {
         await this.reconcileWorkspaceGitObservers();
-        await this.flushBootstrappedWorkspaceUpdates(subscription, snapshot);
+        this.flushBootstrappedWorkspaceUpdates(subscription, snapshot);
       }
     } catch (error) {
       await owner?.release();
