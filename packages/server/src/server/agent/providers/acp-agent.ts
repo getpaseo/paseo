@@ -472,6 +472,8 @@ export interface ACPCatalogModelResolverContext {
   connection: Pick<ClientSideConnection, "setSessionConfigOption" | "extMethod">;
   sessionId: string;
   models: AgentModelDefinition[];
+  // The model state the probe session reported, with each model's own `_meta`.
+  sessionModels?: SessionModelState | null;
   configOptions: SessionConfigOption[] | null | undefined;
   runRequest: <T>(request: () => Promise<T>) => Promise<T>;
   transformConfigOptions: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
@@ -974,6 +976,129 @@ function deriveACPModelThinking(input: {
   };
 }
 
+const ACP_MODEL_THINKING_PROBE_MAX_MODELS = 32;
+const ACP_MODEL_THINKING_PROBE_TIMEOUT_MS = 5_000;
+
+interface ACPModelSelectMatch {
+  value: string;
+  // Suffix of a combined `<value>-<level>` model id, such as "xhigh" in "model-xhigh".
+  level: string | null;
+}
+
+/**
+ * Catalog resolver behind the `probeModelThinking` provider option, for ACP agents that
+ * report a thought_level select only for the selected model and publish no per-model
+ * reasoning metadata. It switches the throwaway probe session's `model` select to each model
+ * and reads the thought_level select that comes back. Opt-in because some agents save a
+ * model switch as the user's default. Models that report their own reasoning levels in
+ * `_meta` keep those; the probe replaces only the session-wide fallback the others got.
+ */
+export async function resolveACPModelThinkingByProbe({
+  connection,
+  sessionId,
+  models,
+  sessionModels,
+  configOptions,
+  runRequest,
+  transformConfigOptions,
+  logger,
+  provider,
+}: ACPCatalogModelResolverContext): Promise<AgentModelDefinition[]> {
+  const modelSelect = findSelectConfigOption({ configOptions, category: "model" });
+  if (!modelSelect || !findSelectConfigOption({ configOptions, category: "thought_level" })) {
+    return models;
+  }
+  const selectValues = flattenSelectOptions(modelSelect.options).map((choice) => choice.value);
+  const metadataById = new Map(
+    (sessionModels?.availableModels ?? []).map((model) => [model.modelId, model._meta]),
+  );
+  const matches = models.map((model) =>
+    reportsOwnACPModelThinking(metadataById.get(model.id) ?? model.metadata)
+      ? null
+      : matchACPModelSelectValue(model.id, selectValues),
+  );
+  const values = [...new Set(matches.flatMap((match) => (match ? [match.value] : [])))].slice(
+    0,
+    ACP_MODEL_THINKING_PROBE_MAX_MODELS,
+  );
+
+  const probed = new Map<string, ConfigOptionSelector[]>();
+  for (const value of values) {
+    try {
+      const response = await withTimeout(
+        runRequest(() =>
+          connection.setSessionConfigOption({ sessionId, configId: modelSelect.id, value }),
+        ),
+        ACP_MODEL_THINKING_PROBE_TIMEOUT_MS,
+        `ACP model thinking probe timed out after ${ACP_MODEL_THINKING_PROBE_TIMEOUT_MS}ms`,
+      );
+      const options = transformConfigOptions(response.configOptions ?? []);
+      if (deriveCurrentConfigValue(options, "model") !== value) {
+        logger.warn(
+          { model: value },
+          `${provider} catalog probe could not confirm the switch to model "${value}"; leaving its thinking options unknown`,
+        );
+        continue;
+      }
+      probed.set(value, deriveSelectorOptions(options, "thought_level"));
+    } catch (error) {
+      logger.warn(
+        { model: value, error: toDiagnosticErrorMessage(error) },
+        `${provider} catalog probe could not read thinking options for model "${value}"; stopping the probe`,
+      );
+      // After a failed or timed-out switch the session's model is unknown, so later reads
+      // could describe the wrong model.
+      break;
+    }
+  }
+
+  return models.map((model, index) => {
+    const match = matches[index];
+    const choices = match ? probed.get(match.value) : undefined;
+    if (!match || !choices) {
+      return model;
+    }
+    if (choices.length === 0) {
+      return { ...model, thinkingOptions: undefined, defaultThinkingOptionId: undefined };
+    }
+    const defaultThinkingOptionId =
+      match.level && choices.some((choice) => choice.id === match.level)
+        ? match.level
+        : choices.find((choice) => choice.isDefault)?.id;
+    // Models that share a base share one probed list, so mark the default on a copy.
+    const thinkingOptions: typeof choices = [];
+    for (const choice of choices) {
+      thinkingOptions.push({ ...choice, isDefault: choice.id === defaultThinkingOptionId });
+    }
+    return { ...model, thinkingOptions, defaultThinkingOptionId };
+  });
+}
+
+// True when upstream's per-model handling decided this model's thinking from its own `_meta`
+// (its levels, or that it has none) rather than falling back to the session's options.
+function reportsOwnACPModelThinking(metadata: Record<string, unknown> | null | undefined): boolean {
+  const fallback: ACPModelThinking = { ...NO_THINKING };
+  return (
+    deriveACPModelThinking({ metadata, isDefault: false, sessionThinking: fallback }) !== fallback
+  );
+}
+
+function matchACPModelSelectValue(
+  modelId: string,
+  selectValues: string[],
+): ACPModelSelectMatch | null {
+  if (selectValues.includes(modelId)) {
+    return { value: modelId, level: null };
+  }
+  let best: string | null = null;
+  for (const value of selectValues) {
+    if (modelId.startsWith(`${value}-`) && (!best || value.length > best.length)) {
+      best = value;
+    }
+  }
+  return best ? { value: best, level: modelId.slice(best.length + 1) } : null;
+}
+
 export function deriveControlsFromACP(
   configOptions: SessionConfigOption[] | null | undefined,
   featureOptions: ACPConfigFeatureOption[],
@@ -1322,14 +1447,20 @@ export class ACPAgentClient implements AgentClient {
         transformed.models,
         transformed.configOptions,
       );
-      const models = this.catalogModelResolver
+      const catalogModelResolver =
+        this.catalogModelResolver ??
+        (ACPProviderOptionsSchema.parse(options.providerOptions ?? {}).probeModelThinking
+          ? resolveACPModelThinkingByProbe
+          : undefined);
+      const models = catalogModelResolver
         ? await runProviderRefreshActivity(context, "catalog.resolve", () =>
             raceProviderRefreshAbort(
               context?.signal,
-              this.catalogModelResolver?.({
+              catalogModelResolver({
                 connection: initializedProbe.connection,
                 sessionId: response.sessionId,
                 models: derivedModels,
+                sessionModels: transformed.models,
                 configOptions: transformed.configOptions,
                 runRequest: (request) => this.runACPRequest(request),
                 transformConfigOptions: (configOptions) =>
@@ -1338,7 +1469,7 @@ export class ACPAgentClient implements AgentClient {
                     : configOptions,
                 logger: this.logger,
                 provider: this.provider,
-              }) ?? Promise.resolve(derivedModels),
+              }),
             ),
           )
         : derivedModels;
