@@ -31,6 +31,7 @@ struct dynamic;
 
 namespace rngpui {
 class GpuiMountingManager;
+class GpuiLoomHost;
 class GpuiLogBoxSurfaceDelegate;
 
 constexpr int32_t kAppSurfaceId = 1;
@@ -44,6 +45,7 @@ class GpuiHost {
       rust::Str devHost,
       uint32_t devPort,
       rust::Str jsEngine,
+      rust::Str jsThread,
       bool devMode);
   ~GpuiHost();
 
@@ -85,6 +87,11 @@ class GpuiHost {
       float maxHeight,
       float scale);
   void set_window_metrics(float w, float h, float scale);
+  void
+  set_display_metrics(float screenWidth, float screenHeight, float fontScale);
+  void emitDimensions() const;
+  void set_app_state(rust::Str state);
+  void emit_memory_warning() const;
   void set_window_top_inset(float top);
   void set_system_appearance(rust::Str appearance);
   void stop_surface(int32_t surfaceId);
@@ -95,6 +102,7 @@ class GpuiHost {
   void on_frame(double eventTimestampMs) const;
   void on_pointer_frame(double eventTimestampMs) const;
   void dispatch_event(int32_t tag, rust::Str type, rust::Str payloadJson) const;
+  void dispatch_wheel(int32_t tag, uint64_t id, rust::Str payloadJson) const;
   void emit_device_event(rust::Str event_name) const;
   void emit_device_event_bool(rust::Str event_name, bool value) const;
   void emit_device_event_json(rust::Str event_name, rust::Str payload_json)
@@ -127,6 +135,9 @@ class GpuiHost {
 
  private:
   std::shared_ptr<GpuiMountingManager> mountingManager_;
+  /// The Loom renderer's host, when the app runs it. Declared before
+  /// `reactHost_` so the React instance goes first.
+  std::shared_ptr<GpuiLoomHost> loomHost_;
   std::shared_ptr<facebook::react::RunLoopObserverManager>
       runLoopObserverManager_;
   /// Passed to ReactHost as its `logBoxSurfaceDelegate`. Created
@@ -153,6 +164,7 @@ std::unique_ptr<GpuiHost> new_gpui_host(
     rust::Str devHost,
     uint32_t devPort,
     rust::Str jsEngine,
+    rust::Str jsThread,
     bool devMode);
 std::shared_ptr<facebook::react::UIManager> get_gpui_ui_manager();
 void gpui_synchronously_update_props(int32_t tag, const folly::dynamic& props);

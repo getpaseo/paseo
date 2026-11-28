@@ -1,12 +1,29 @@
 {
   "name": "@react-native-gpui/fs",
-  "version": "0.1.0",
+  "version": "0.0.1-alpha.1",
+  "description": "File system access for React Native GPUI apps",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/streetwriters/react-native-gpui-modules.git",
+    "directory": "modules/fs"
+  },
+  "homepage": "https://github.com/streetwriters/react-native-gpui-modules/tree/main/modules/fs#readme",
+  "bugs": {
+    "url": "https://github.com/streetwriters/react-native-gpui-modules/issues"
+  },
   "main": "src/index.ts",
   "files": [
     "src",
     "desktop",
     "react-native.config.js",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "!**/*.test.js",
+    "!**/*.test.mjs",
+    "!**/*.test.ts",
+    "!**/*.test.cjs"
   ],
   "codegenConfig": {
     "name": "RNFsModuleSpec",
@@ -14,6 +31,10 @@
     "jsSrcsDir": "src"
   },
   "peerDependencies": {
-    "react-native": ">=0.76"
+    "react-native": "0.87.x"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "latest"
   }
 }

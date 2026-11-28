@@ -3,6 +3,7 @@ const path = require('path');
 const { createRequire } = require('module');
 const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
 const { activeJsEngineBundle } = require('./js-engine');
+const { resolveRenderer } = require('./renderer');
 
 const PACKAGE_NAME = '@react-native-gpui/core';
 const PACKAGE_DIR = __dirname;
@@ -14,6 +15,44 @@ const DESKTOP_SUFFIX = /\.desktop\.(?:js|ts|tsx)$/;
 const FALLBACK_PLATFORM = 'ios';
 
 const isInside = (file, dir) => file.startsWith(dir + path.sep);
+
+// The first usable target of a package.json `exports` entry.
+function exportsTarget(value) {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const target = exportsTarget(entry);
+      if (target) return target;
+    }
+    return null;
+  }
+  if (value && typeof value === 'object') {
+    if (typeof value.default === 'string') return value.default;
+    for (const entry of Object.values(value)) {
+      const target = exportsTarget(entry);
+      if (target) return target;
+    }
+  }
+  return null;
+}
+
+// `react-native/<subpath>` inside another React Native tree: entries such as
+// `./asset-registry` only resolve through the `exports` map.
+function subpathIn(treeDir, subpath) {
+  let exportsMap;
+  try {
+    exportsMap = JSON.parse(
+      fs.readFileSync(path.join(treeDir, 'package.json'), 'utf8'),
+    ).exports;
+  } catch {
+    return `${treeDir}/${subpath}`;
+  }
+  const target = exportsTarget(exportsMap?.[`./${subpath}`]);
+  return path.join(
+    treeDir,
+    target?.startsWith('./') ? target.slice(2) : subpath,
+  );
+}
 const withFilePath = (resolution, filePath) => ({ ...resolution, filePath });
 
 // "<package>/<path in package>" for a file under node_modules, so an override
@@ -110,8 +149,26 @@ function isReExportShim(filePath) {
 
 function makeMetroConfig({ projectRoot = process.cwd() } = {}) {
   const appRequire = createRequire(path.join(projectRoot, 'package.json'));
-  const reactNativeEntry = appRequire.resolve('react-native');
-  const reactNativeDir = path.dirname(reactNativeEntry);
+  // Loom's tree replaces the installed package everywhere React Native's
+  // JavaScript is read; Fabric keeps the installed one.
+  const selection = resolveRenderer(projectRoot);
+  const loomDir =
+    selection.renderer === 'loom' ? selection.reactNativeDir : null;
+  const reactNativeDir = selection.reactNativeDir;
+  const reactNativeEntry = loomDir
+    ? path.join(loomDir, 'index.js')
+    : appRequire.resolve('react-native');
+  // `react-native/<subpath>` as the selected tree names it.
+  const inReactNative = moduleName =>
+    loomDir && moduleName.startsWith('react-native/')
+      ? subpathIn(loomDir, moduleName.slice('react-native/'.length))
+      : moduleName;
+  // "react-native/<path in package>" for a file of the selected tree, else the
+  // file's package key.
+  const fileKey = filePath =>
+    loomDir && isInside(filePath, loomDir)
+      ? `react-native/${path.relative(loomDir, filePath).split(path.sep).join('/')}`
+      : packageKey(filePath);
   const appPackage = JSON.parse(
     fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'),
   );
@@ -202,12 +259,12 @@ function makeMetroConfig({ projectRoot = process.cwd() } = {}) {
       } catch {
         return resolveWithFallback(
           context,
-          `react-native/${subpath}`,
+          inReactNative(`react-native/${subpath}`),
           platform,
         );
       }
     }
-    return resolveWithFallback(context, moduleName, platform);
+    return resolveWithFallback(context, inReactNative(moduleName), platform);
   };
 
   const resolveRequest = (context, moduleName, platform) => {
@@ -219,7 +276,7 @@ function makeMetroConfig({ projectRoot = process.cwd() } = {}) {
     ) {
       return resolution;
     }
-    let key = resolution?.filePath && packageKey(resolution.filePath);
+    let key = resolution?.filePath && fileKey(resolution.filePath);
     if (key?.startsWith('react-native/') && key.endsWith('.js')) {
       const variant = resolution.filePath.replace(
         /\.js$/,
@@ -227,21 +284,25 @@ function makeMetroConfig({ projectRoot = process.cwd() } = {}) {
       );
       if (fs.existsSync(variant) && isReExportShim(resolution.filePath)) {
         resolution = withFilePath(resolution, variant);
-        key = packageKey(variant);
+        key = fileKey(variant);
       }
     }
     const override = key && overrides.get(key);
-    // A platform wrapper can import the component it wraps without resolving
-    // that import back to itself (e.g. desktop Pressable wrapping RN Pressable).
-    return override && override !== context.originModulePath
-      ? withFilePath(resolution, override)
-      : resolution;
+    // An override that imports the module it replaces gets the upstream one.
+    if (override === context.originModulePath) return resolution;
+    return override ? withFilePath(resolution, override) : resolution;
   };
 
   const config = mergeConfig(getDefaultConfig(projectRoot), {
     watchFolders,
     // Leaves `Platform.OS` to the runtime: Metro would fold it to `desktop`.
     transformerPath: path.join(PACKAGE_DIR, 'metro-transform-worker.js'),
+    transformer: {
+      babelTransformerPath: path.join(
+        PACKAGE_DIR,
+        'metro-babel-transformer.js',
+      ),
+    },
     serializer: {
       // Ours, not RN's: the default names the RN beside @react-native/metro-config,
       // which is not in the app's graph when this package is linked.

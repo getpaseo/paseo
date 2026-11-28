@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/ammarahm-ed/Loom",
+  "commit": "4245aca0a7d869a09ce7298b13fb6003a6559346",
+  "branch": "0.87-stable",
+  "packagePath": "packages/react-native-loom",
+  "version": "0.87.0",
+  "archiveUrl": "https://codeload.github.com/ammarahm-ed/Loom/tar.gz/4245aca0a7d869a09ce7298b13fb6003a6559346",
+  "sha256": "e65fb1a37970afee4d716a442eeff1742b7b499612ff353c2a92979b5949aff5"
+}

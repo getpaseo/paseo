@@ -12,6 +12,7 @@ export type AlertArgs = {
   preferredButtonKey?: string;
   keyboardType?: string;
   userInterfaceStyle?: string;
+  cancelable?: boolean;
 };
 
 export interface Spec extends TurboModule {

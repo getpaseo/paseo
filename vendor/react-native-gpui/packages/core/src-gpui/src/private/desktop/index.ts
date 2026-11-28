@@ -8,6 +8,7 @@
  * @format
  */
 
+import React from 'react';
 import { TurboModuleRegistry } from 'react-native';
 import type { DesktopCapabilities, Spec } from '../specs/NativeGpuiDesktop';
 
@@ -122,6 +123,7 @@ const NO_CAPABILITIES: DesktopCapabilities = {
   trayPopoverAnchored: false,
   windowPosition: false,
   alwaysOnTop: false,
+  visibleOnAllWorkspaces: false,
   transparentTitlebar: false,
   clientDecorations: false,
   menuBarInWindow: false,
@@ -130,6 +132,43 @@ const NO_CAPABILITIES: DesktopCapabilities = {
 /** Read synchronously; never touches the GPUI main thread. */
 export function capabilities(): DesktopCapabilities {
   return NativeGpuiDesktop?.capabilities() ?? NO_CAPABILITIES;
+}
+
+/**
+ * Whether the window is frameless, so the app draws its own caption buttons.
+ * Follows the compositor: on Linux it can settle after the window opens.
+ */
+export function useClientDecorations(): boolean {
+  return React.useSyncExternalStore(
+    onChange => {
+      // Resolved here: the module loads before React Native has finished starting.
+      const { DeviceEventEmitter } = require('react-native');
+      const subscription = DeviceEventEmitter.addListener(
+        'gpuiDesktop:windowDecorations',
+        onChange,
+      );
+      return () => subscription.remove();
+    },
+    () => capabilities().clientDecorations,
+  );
+}
+
+/** The caption button layout of the desktop, in GTK `button-layout` syntax. */
+export function windowButtonLayout(): string {
+  return NativeGpuiDesktop?.windowButtonLayout() ?? ':minimize,maximize,close';
+}
+
+const iconCache = new Map<string, string | null>();
+
+/** The icon theme's caption button icon as an SVG data URI, or `null`. */
+export function windowButtonIcon(action: string, color: string): string | null {
+  const key = `${action}:${color}`;
+  let icon = iconCache.get(key);
+  if (icon === undefined) {
+    icon = NativeGpuiDesktop?.windowButtonIcon(action, color) || null;
+    iconCache.set(key, icon);
+  }
+  return icon;
 }
 
 /** The host platform, or `null` without a desktop shell. */

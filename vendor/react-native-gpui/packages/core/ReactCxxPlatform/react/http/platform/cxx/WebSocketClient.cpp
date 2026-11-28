@@ -530,27 +530,21 @@ void WebSocketClient::Impl::listen() {
 }
 
 void WebSocketClient::Impl::write() {
-  if (isClosing_) {
-    return;
-  }
-  if (isWriting_) {
-    return;
-  }
-  isWriting_ = true;
-
+  // `send()` calls this on the caller's thread and a finished write calls it
+  // on the I/O thread. Beast allows one write in flight per stream, so
+  // claiming the write slot and taking the message happen together under
+  // `mutexOut_`: two threads can't both start a write, and a message queued
+  // while a write finishes isn't left behind.
   std::shared_ptr<std::pair<std::string, bool>> message;
   {
     std::lock_guard<std::mutex> lock(mutexOut_);
-    if (!messagesOut_.empty()) {
-      message =
-          std::make_shared<std::pair<std::string, bool>>(messagesOut_.front());
-      messagesOut_.pop();
+    if (isClosing_ || isWriting_ || messagesOut_.empty()) {
+      return;
     }
-  }
-
-  if (!message) {
-    isWriting_ = false;
-    return;
+    isWriting_ = true;
+    message = std::make_shared<std::pair<std::string, bool>>(
+        std::move(messagesOut_.front()));
+    messagesOut_.pop();
   }
 
   auto ws = ws_.wlock();
@@ -567,13 +561,15 @@ void WebSocketClient::Impl::write() {
               if (!impl) {
                 return;
               }
+              {
+                std::lock_guard<std::mutex> lock(impl->mutexOut_);
+                impl->isWriting_ = false;
+              }
               if (ec) {
                 LOG(ERROR) << "Error writing to websocket: " << ec.message();
-                impl->isWriting_ = false;
                 return;
               }
-              impl->isWriting_ = false;
-              if (!impl->isClosing_) impl->write();
+              impl->write();
               message.reset(); // Release the message after it's been sent
             });
       },

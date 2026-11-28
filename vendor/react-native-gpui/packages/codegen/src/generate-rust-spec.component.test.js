@@ -89,6 +89,23 @@ describe('a component spec becomes the generated API', () => {
     expect(header).toContain(
       'pub fn set_insets(&mut self, top: f32, right: f32, bottom: f32, left: f32) {',
     );
+    expect(header).toContain(
+      'pub fn app(&mut self) -> Option<&mut gpui::App> {',
+    );
+    expect(header).toContain(
+      'pub fn window(&mut self) -> Option<&mut gpui::Window> {',
+    );
+    expect(header).toContain('pub fn with_window<R>(');
+  });
+
+  test('generates a measure method the component may implement, and the adapter that reads the props handle for it', () => {
+    expect(header).toContain(
+      'fn measure(props: &FixtureChartProps, constraint: &MeasureConstraint) -> Option<MeasuredSize> {',
+    );
+    expect(header).toContain(
+      'fn measure(props: *const core::ffi::c_void, constraint: &MeasureConstraint) -> Option<MeasuredSize> {',
+    );
+    expect(header).toContain('T::measure(&view, constraint)');
   });
 
   test('generates one typed event method per event', () => {
@@ -104,11 +121,15 @@ describe('a component spec becomes the generated API', () => {
   });
 
   test('queues an event with an owned payload instead of sending it mid-call', () => {
-    expect(header).toContain('self.context.host.queue_event(move || {');
-    expect(header).toContain('let emitter = self.context.emitter.clone();');
+    expect(header).toContain(
+      'self.context.host.as_mut().expect("a Fabric node has a host context").queue_event(move || {',
+    );
+    expect(header).toContain(
+      'let emitter = self.context.emitter.clone().expect("a Fabric node has an emitter");',
+    );
     expect(header).toContain('rn_gpui_fixture_chart_event_point_selected(');
     expect(header).toContain(
-      'pub struct FixtureChartContext {\n    host: HostContext,\n    emitter: EmitterHandle,\n}',
+      'pub struct FixtureChartContext {\n    host: Option<HostContext>,\n    emitter: Option<EmitterHandle>,\n    native: Option<NativeCall>,\n}',
     );
   });
 
@@ -116,6 +137,38 @@ describe('a component spec becomes the generated API', () => {
     expect(header).toContain('fn render_overlay(');
     expect(header).toContain(') -> Option<AnyElement> {');
     expect(header).toContain('let _ = (props, window, cx);');
+  });
+
+  test('hands out an owned event sender with the same typed methods', () => {
+    expect(header).toContain('pub struct FixtureChartEventSender {');
+    expect(header).toContain(
+      'pub fn event_sender(&self) -> FixtureChartEventSender',
+    );
+    expect(header).toContain(
+      'self.host.as_ref().expect("a Fabric node has an event sender").send(move || {',
+    );
+    expect(header).toContain(
+      'pub fn point_selected(&self, value: OnPointSelected)',
+    );
+    // The shim is declared once, although two types send through it.
+    expect(
+      countOf(header, 'fn rn_gpui_fixture_chart_event_point_selected('),
+    ).toBe(1);
+  });
+
+  test('gives a native view component a view hook that defaults to an error', () => {
+    expect(header).toContain('fn create_view(');
+    expect(header).toContain(
+      '-> react_native_gpui::native_surface::Result<NativeViewHandle>',
+    );
+    expect(header).toContain("parent: &NativeViewParent<'_>,");
+    expect(header).toContain('fn update_view(');
+    expect(header).toContain(
+      'self.component.create_view(&self.props, parent, window, &mut cx)',
+    );
+    expect(header).toContain(
+      'self.component.update_view(view, &self.props, changed, &mut cx)',
+    );
   });
 
   test('wires the spec into core through a generated instance', () => {
@@ -406,7 +459,7 @@ describe('the generated file', () => {
   test('imports only what a component needs', () => {
     expect(header).toContain('use gpui::{AnyElement, Window};');
     expect(header).toContain(
-      'EmitterHandle, HostArg, HostComponentSpec, HostContext, HostObject, PropsHandle, Value,',
+      'EmitterHandle, HostArg, HostComponentSpec, HostContext, HostEventSender, HostObject,',
     );
     expect(header).not.toContain('use rn_gpui_module::');
   });
@@ -440,5 +493,250 @@ describe('the generator fails, naming the prop', () => {
     expect(() => generateFrom(withProps('  host?: HostObject;'))).toThrow(
       /Unknown prop type for "host": "HostObject"/u,
     );
+  });
+});
+
+const nativeSpec = `import {
+  codegenNativeCommands,
+  codegenNativeComponent,
+  type CodegenTypes,
+  type ViewProps,
+} from 'react-native';
+
+type Reported = Readonly<{
+  kind: string;
+  level: CodegenTypes.Int32;
+  speed: 'fast' | 'slow';
+}>;
+
+export interface NativeProps extends ViewProps {
+  title: string;
+  size?: CodegenTypes.Double;
+  count?: CodegenTypes.Int32;
+  active?: boolean;
+  mode?: CodegenTypes.WithDefault<'compact' | 'roomy', 'compact'>;
+  values?: ReadonlyArray<CodegenTypes.Double>;
+  onReported?: CodegenTypes.DirectEventHandler<Reported>;
+  onPlain?: CodegenTypes.DirectEventHandler<null>;
+}
+
+export interface NativeFixtureCommands {
+  ping: (
+    ref: React.ComponentRef<typeof NativeFixture>,
+    label: string,
+    times: CodegenTypes.Int32,
+  ) => void;
+}
+
+export const Commands = codegenNativeCommands<NativeFixtureCommands>({
+  supportedCommands: ['ping'],
+});
+
+const NativeFixture: any = null;
+
+export default codegenNativeComponent<NativeProps>('NativeFixture', {
+  interfaceOnly: true,
+});
+`;
+
+describe('a component spec is also a component of a native tree', () => {
+  const generated = generateFrom(nativeSpec);
+
+  test('reads its props from the JSON of a native tree instance, with the accessors it has for C++', () => {
+    expect(generated).toContain(
+      'pub fn from_json(json: &Map<String, Value>) -> Self {',
+    );
+    expect(generated).toContain('if !self.json.is_null() {');
+    expect(generated).toContain(
+      'return json.get("title").and_then(Value::as_str).unwrap_or_default();',
+    );
+    expect(generated).toContain(
+      'return json.get("size").and_then(Value::as_f64).unwrap_or(0_f64) as f64;',
+    );
+    expect(generated).toContain(
+      'return json.get("count").and_then(Value::as_i64).unwrap_or(0_i64) as i32;',
+    );
+    expect(generated).toContain(
+      'return json.get("active").and_then(Value::as_bool).unwrap_or(false);',
+    );
+    expect(generated).toContain('return NativeFixtureMode::from_json(');
+    expect(generated).toContain('return self.native_values.get_or_init(|| {');
+  });
+
+  test('names the props an update changed by their JavaScript names', () => {
+    expect(generated).toContain(
+      'pub fn from_names(names: &[String]) -> Self {',
+    );
+    expect(generated).toContain('"title" => out[0] |= 1u64 << 0,');
+    expect(generated).toContain('"size" => out[0] |= 1u64 << 1,');
+  });
+
+  test('sends an event of a native tree as the payload of a native event', () => {
+    expect(generated).toContain(
+      'if let Some(native) = self.context.native.as_ref().map(|call| &call.emitter) {',
+    );
+    expect(generated).toContain(
+      'event.insert("nativeEvent".to_string(), value.to_json());',
+    );
+    expect(generated).toContain(
+      'native.emit("onReported", Value::Object(event));',
+    );
+    expect(generated).toContain('pub fn to_json(&self) -> Value {');
+    expect(generated).toContain(
+      'event.insert("nativeEvent".to_string(), Value::Object(Map::new()));',
+    );
+    expect(generated).toContain('if let Some(native) = self.native.as_ref() {');
+  });
+
+  test('gives the component its children and tells it apart from a Fabric node', () => {
+    expect(generated).toContain(
+      'pub fn children(&mut self) -> Vec<AnyElement> {',
+    );
+    expect(generated).toContain(
+      'pub fn new_native(call: NativeCall) -> Self {',
+    );
+    expect(generated).toContain(
+      'impl<T: NativeFixtureSpec> NativeComponent for NativeFixtureNative<T> {',
+    );
+    expect(generated).toContain(
+      'children: Vec<AnyElement>,\n        window: &mut Window,\n        app: &mut gpui::App,',
+    );
+    expect(generated).toContain('pub fn register_native_tree() {');
+    expect(generated).toContain(
+      'react_native_gpui::native_tree::register_native_component::<NativeFixtureNative<T>>(Self::NAME);',
+    );
+  });
+
+  test('calls a command by name with its JSON arguments', () => {
+    expect(generated).toContain('"ping" => self.component.ping(');
+    expect(generated).toContain(
+      'args.get(0).and_then(Value::as_str).unwrap_or_default().to_string()',
+    );
+    expect(generated).toContain(
+      'args.get(1).and_then(Value::as_i64).unwrap_or_default() as i32',
+    );
+  });
+
+  test('reads structs, arrays of structs, mirrors, images and arrays of strings from JSON too', () => {
+    expect(header).toContain('pub fn register_native_tree() {');
+    expect(header).not.toContain('unreachable!');
+    expect(header).toContain(
+      'pub fn from_json(json: &Map<String, Value>) -> Self {',
+    );
+    expect(header).toContain(
+      "pub fn from_json(json: &'a Map<String, Value>) -> Self {",
+    );
+    expect(header).toContain("pub fn from_json(items: &'a [Value]) -> Self {");
+    expect(header).toContain('return self.native_points.get_or_init(|| {');
+    expect(header).toContain('FixtureChartPoints::from_json');
+    expect(header).toContain('return RnGpuiStrArray::from_json(');
+    expect(header).toContain('return RnGpuiImageSource::from_json(');
+    expect(header).toContain(
+      'pub fn from_json(source: &Map<String, Value>) -> Self {',
+    );
+  });
+
+  test('sends an enum field of an event payload, as its discriminant to C++ and its name to a native tree', () => {
+    expect(generated).toContain('pub speed: NativeFixtureSpeed,');
+    expect(generated).toContain('pub enum NativeFixtureSpeed {');
+    expect(generated).toContain('Fast = 0,');
+    expect(generated).toContain('Slow = 1,');
+    expect(generated).toContain(
+      'object.insert("speed".to_string(), self.speed.to_json());',
+    );
+    expect(generated).toContain('Self::Slow => Value::from("slow"),');
+    expect(generated).toContain('speed.as_raw()');
+  });
+});
+
+describe('a crate with a module spec and a component spec', () => {
+  const moduleSpec = `import { TurboModuleRegistry, type TurboModule } from 'react-native';
+
+export interface Spec extends TurboModule {
+  greet(name: string): string;
+  load(options: { path: string }): Promise<Object>;
+}
+
+export default TurboModuleRegistry.getEnforcing<Spec>('NativeMixedCrate');
+`;
+  const componentSpec = `import {
+  codegenNativeCommands,
+  codegenNativeComponent,
+  type CodegenTypes,
+  type ViewProps,
+} from 'react-native';
+
+export interface NativeProps extends ViewProps {
+  title: string;
+  extra?: CodegenTypes.UnsafeMixed;
+  values?: ReadonlyArray<CodegenTypes.Double>;
+  items?: ReadonlyArray<Readonly<{ name: string; size: CodegenTypes.Double }>>;
+  onReported?: CodegenTypes.DirectEventHandler<Readonly<{ kind: string }>>;
+}
+
+export interface MixedCrateCommands {
+  ping: (ref: React.ComponentRef<typeof MixedCrate>, label: string) => void;
+}
+
+export const Commands = codegenNativeCommands<MixedCrateCommands>({
+  supportedCommands: ['ping'],
+});
+
+const MixedCrate: any = null;
+
+export default codegenNativeComponent<NativeProps>('MixedCrate', {
+  interfaceOnly: true,
+});
+`;
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'rust-mixed-crate-'));
+  const moduleFile = path.join(directory, 'NativeMixedCrate.ts');
+  const componentFile = path.join(directory, 'MixedCrateNativeComponent.ts');
+  fs.writeFileSync(moduleFile, moduleSpec);
+  fs.writeFileSync(componentFile, componentSpec);
+  const both = generateRustSpec({ specPaths: [moduleFile, componentFile] });
+  const componentOnly = generateRustSpec({ specPaths: [componentFile] });
+
+  test('keeps the module runtime Value for the module and names the component one HostValue', () => {
+    expect(both).toContain('ModuleThread, Value,');
+    expect(both).toContain('PropsHandle, Value as HostValue, empty_map,');
+    expect(both).toContain('pub fn extra(&self) -> &HostValue {');
+    expect(both).toContain('mixed_extra: std::cell::OnceCell<HostValue>,');
+    expect(both).toContain('and_then(HostValue::as_array)');
+    expect(both).toContain('and_then(HostValue::as_str)');
+    expect(both).toContain(
+      'pub fn from_json(json: &Map<String, HostValue>) -> Self {',
+    );
+    expect(both).toContain(
+      'fn create(props: &Map<String, HostValue>, cx: &mut NativeContext) -> Self {',
+    );
+    expect(both).toContain('"extra"');
+  });
+
+  test("leaves no module Value where the component means serde_json's", () => {
+    expect(both).not.toContain('Map<String, Value>');
+    expect(both).not.toContain('&Value');
+    expect(both).not.toContain('[Value]');
+    expect(both).toContain("json: Option<&'a [HostValue]>,");
+  });
+
+  test('a crate with only a component still uses the plain Value', () => {
+    expect(componentOnly).toContain('PropsHandle, Value, empty_map,');
+    expect(componentOnly).toContain('pub fn extra(&self) -> &Value {');
+    expect(componentOnly).not.toContain('HostValue');
+  });
+});
+
+describe('a native tree reads a prop that is not set as its default', () => {
+  test('scalar props fall back to the default of the spec', () => {
+    const out = generateFrom(
+      withProps(`  open?: CodegenTypes.WithDefault<boolean, true>;
+  count?: CodegenTypes.WithDefault<CodegenTypes.Int32, 7>;
+  ratio?: CodegenTypes.WithDefault<CodegenTypes.Double, 0.5>;
+  plain?: boolean;`),
+    );
+    expect(out).toContain('.and_then(Value::as_bool).unwrap_or(true)');
+    expect(out).toContain('.and_then(Value::as_i64).unwrap_or(7_i64)');
+    expect(out).toContain('.and_then(Value::as_f64).unwrap_or(0.5_f64)');
+    expect(out).toContain('.and_then(Value::as_bool).unwrap_or(false)');
   });
 });

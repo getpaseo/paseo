@@ -34,7 +34,11 @@ async function request<T>(
     throw toDesktopError(error);
   }
 }
-import { nativeMenuItems, type MenuItemSpec } from './menu';
+import {
+  collectMenuHandlers,
+  nativeMenuItems,
+  type MenuItemSpec,
+} from './menu';
 import { contextMenuHostFor } from './contextMenu/registry';
 import type { MenuRenderers } from './contextMenu/config';
 import {
@@ -70,9 +74,37 @@ function resolvePresentation(
   return resolved === 'custom' ? 'custom' : 'native';
 }
 
+async function showMenu(
+  items: MenuItemSpec[],
+  options: ContextMenuOptions,
+): Promise<string | null> {
+  const windowId = options.windowId ?? MAIN_WINDOW_ID;
+  if (resolvePresentation(options.presentation) === 'custom') {
+    const host = contextMenuHostFor(windowId);
+    if (host == null) {
+      // No host means no window rendered the shell's wrapper: falling back to
+      // the native menu is better than silently doing nothing.
+      const result = await request(native =>
+        native.contextMenuShow(nativeMenuItems(items), options),
+      );
+      return result.id ?? null;
+    }
+    const position =
+      options.x !== undefined && options.y !== undefined
+        ? { x: options.x, y: options.y }
+        : undefined;
+    return host.open({ items, position, presentation: 'custom' });
+  }
+  const result = await request(native =>
+    native.contextMenuShow(nativeMenuItems(items), options),
+  );
+  return result.id ?? null;
+}
+
 export const ContextMenu = {
   /**
    * Show a menu and resolve with the chosen item id, or `null` when dismissed.
+   * An item's `onPress` runs before the promise resolves.
    *
    * A custom menu is drawn in JS by the context menu host the shell mounts in
    * every window, so it needs a window to draw in and a host to have registered
@@ -80,30 +112,15 @@ export const ContextMenu = {
    * while JS is busy.
    */
   async show(
-    items: MenuItemSpec[],
+    menu: MenuItemSpec[],
     options: ContextMenuOptions = {},
   ): Promise<string | null> {
-    const windowId = options.windowId ?? MAIN_WINDOW_ID;
-    if (resolvePresentation(options.presentation) === 'custom') {
-      const host = contextMenuHostFor(windowId);
-      if (host == null) {
-        // No host means no window rendered the shell's wrapper: falling back to
-        // the native menu is better than silently doing nothing.
-        const result = await request(native =>
-          native.contextMenuShow(nativeMenuItems(items), options),
-        );
-        return result.id ?? null;
-      }
-      const position =
-        options.x !== undefined && options.y !== undefined
-          ? { x: options.x, y: options.y }
-          : undefined;
-      return host.open({ items, position, presentation: 'custom' });
+    const { items, handlers } = collectMenuHandlers(menu);
+    const id = await showMenu(items, options);
+    if (id != null) {
+      handlers.get(id)?.();
     }
-    const result = await request(native =>
-      native.contextMenuShow(nativeMenuItems(items), options),
-    );
-    return result.id ?? null;
+    return id;
   },
 
   /**

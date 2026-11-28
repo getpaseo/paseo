@@ -44,6 +44,20 @@ pub const APP_CONTEXT: &str = "rn-app";
 /// context core or a library already uses.
 const SCOPE_PREFIX: &str = "rn-scope-";
 
+/// The operating system whose spelling `secondary-` resolves to in keystroke
+/// text parsed outside a context that has an `App` to ask.
+pub fn host_os() -> gpui::OperatingSystem {
+    if cfg!(target_os = "macos") {
+        gpui::OperatingSystem::Mac
+    } else if cfg!(target_os = "windows") {
+        gpui::OperatingSystem::Windows
+    } else if cfg!(target_os = "freebsd") {
+        gpui::OperatingSystem::FreeBsd
+    } else {
+        gpui::OperatingSystem::Linux
+    }
+}
+
 /// One shortcut, as JS declares it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Shortcut {
@@ -56,12 +70,15 @@ pub struct Shortcut {
     pub scope: Option<String>,
     pub enabled: bool,
     pub allow_in_text_input: bool,
+    /// Registered with the operating system, so it fires with no window of the
+    /// app focused. Such a shortcut has no scope and is not part of the keymap.
+    pub global: bool,
 }
 
 impl Shortcut {
     /// Whether `keystroke` is the (first, for a chord) key this shortcut binds.
     pub fn key_matches(&self, keystroke: &gpui::Keystroke) -> bool {
-        match gpui::Keystroke::parse(&self.keys) {
+        match gpui::Keystroke::parse_with_os(&self.keys, host_os()) {
             Ok(parsed) => parsed.should_match(&gpui::KeybindingKeystroke::from_keystroke(
                 keystroke.clone(),
             )),
@@ -244,6 +261,18 @@ fn normalise_key(token: &str) -> Option<String> {
 ///
 /// `event.key` in the DOM is a single printable character for printable keys or
 /// one of the named values; `Shift+A` is `"A"`, which needs the modifiers to say.
+/// The GPUI spelling of a key name given in the W3C spelling (`ArrowDown`,
+/// `PageUp`, `Escape`), or the name as it was for anything else.
+pub fn gpui_key_name(key: &str) -> String {
+    match key.to_ascii_lowercase().as_str() {
+        "arrowup" => "up".to_string(),
+        "arrowdown" => "down".to_string(),
+        "arrowleft" => "left".to_string(),
+        "arrowright" => "right".to_string(),
+        other => other.to_string(),
+    }
+}
+
 pub fn normalise_web_key(key: &str, shift: bool) -> String {
     let named = match key {
         "enter" => "Enter",
@@ -426,6 +455,10 @@ pub fn parse_shortcuts(value: &Value) -> Result<Vec<Shortcut>, String> {
                 .get("allowInTextInput")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            global: object
+                .get("global")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         });
     }
     Ok(shortcuts)
@@ -443,6 +476,7 @@ pub fn shortcuts_json(cx: &App) -> Value {
                     "scope": shortcut.scope,
                     "enabled": shortcut.enabled,
                     "allowInTextInput": shortcut.allow_in_text_input,
+                    "global": shortcut.global,
                 })
             })
             .collect(),
@@ -491,14 +525,23 @@ impl Default for ShortcutGlobal {
 /// `scope_tags` is the set of mounted scope tags in the focused surface: a
 /// binding is only useful where its scope element exists, so this is part of the
 /// signature that decides whether to rebuild.
-pub fn install(cx: &mut App, shortcuts: Vec<Shortcut>) {
+///
+/// Returns the global shortcuts the system would not register. An unchanged list
+/// returns none: JS was told about them the first time.
+pub fn install(
+    cx: &mut App,
+    shortcuts: Vec<Shortcut>,
+) -> Vec<crate::desktop::global_shortcut::Failure> {
     let signature = signature(&shortcuts);
     let state = &mut ensure_global(cx).0;
     if state.built == signature {
-        return;
+        return Vec::new();
     }
+    let failures = crate::desktop::global_shortcut::install(cx, &shortcuts);
+    let state = &mut ensure_global(cx).0;
     state.shortcuts = shortcuts;
     schedule_rebuild(cx);
+    failures
 }
 
 /// The shortcuts currently installed.
@@ -540,9 +583,34 @@ pub fn is_installed(cx: &App, id: &str) -> bool {
 /// `Keymap::bindings_for_input` does it: deepest matching context first, later
 /// bindings before earlier ones.
 ///
-/// Only a *scoped* binding counts. An app-scope shortcut and a menu accelerator
-/// both live in the window root's context, where the menu keeps the key — which
-/// is what it did before this work, so nothing changes for the window scope.
+/// A scoped shortcut wins at a greater depth. A shortcut with no scope lives in
+/// the same context as a menu accelerator and wins the tie, as the documented
+/// order has it: shortcuts before menu accelerators.
+/// The shortcut with no scope that `keystroke` belongs to when nothing in the
+/// window has focus. The keymap resolves a key from the focused element's
+/// context, so with no focus no binding can match, and neither would the
+/// shortcut: it is taken here, ahead of the menu accelerator that would otherwise
+/// take the key.
+pub fn unfocused_app_shortcut(
+    cx: &App,
+    window: &gpui::Window,
+    keystroke: &gpui::Keystroke,
+) -> Option<String> {
+    if !window.context_stack().is_empty() {
+        return None;
+    }
+    shortcuts(cx)
+        .into_iter()
+        .find(|shortcut| {
+            shortcut.enabled
+                && !shortcut.global
+                && shortcut.scope.is_none()
+                && !shortcut.keys.contains(' ')
+                && shortcut.key_matches(keystroke)
+        })
+        .map(|shortcut| shortcut.id)
+}
+
 pub fn claims_keystroke(cx: &App, window: &gpui::Window, keystroke: &gpui::Keystroke) -> bool {
     let stack = window.context_stack();
     // The menu accelerator this key would trigger is in the app context, which
@@ -553,7 +621,7 @@ pub fn claims_keystroke(cx: &App, window: &gpui::Window, keystroke: &gpui::Keyst
         .and_then(|predicate| predicate.depth_of(&stack))
         .unwrap_or(0);
     shortcuts(cx).iter().any(|shortcut| {
-        if !shortcut.enabled || shortcut.scope.is_none() {
+        if !shortcut.enabled {
             return false;
         }
         // The shortcut's *own* context, not a guessed one: a shortcut that opted
@@ -566,7 +634,12 @@ pub fn claims_keystroke(cx: &App, window: &gpui::Window, keystroke: &gpui::Keyst
         else {
             return false;
         };
-        depth > app_depth && shortcut.key_matches(keystroke)
+        let wins = if shortcut.scope.is_some() {
+            depth > app_depth
+        } else {
+            depth >= app_depth
+        };
+        wins && shortcut.key_matches(keystroke)
     })
 }
 
@@ -595,7 +668,7 @@ pub fn dispatch_to(cx: &mut App, tag: i32, id: &str, window: Option<&mut gpui::W
 
 /// Sends `gpuiDesktop:shortcut` for a shortcut with no scope element, which is
 /// the window/app scope and any shortcut whose scope has not mounted.
-fn emit_app_shortcut(cx: &mut App, id: &str, scope: Option<&str>) {
+pub(crate) fn emit_app_shortcut(cx: &mut App, id: &str, scope: Option<&str>) {
     let Some(store) = store_from(cx) else {
         return;
     };
@@ -619,12 +692,13 @@ fn signature(shortcuts: &[Shortcut]) -> String {
         .iter()
         .map(|shortcut| {
             format!(
-                "{}|{}|{}|{}|{}",
+                "{}|{}|{}|{}|{}|{}",
                 shortcut.id,
                 shortcut.keys,
                 shortcut.scope.as_deref().unwrap_or(""),
                 shortcut.enabled,
-                shortcut.allow_in_text_input
+                shortcut.allow_in_text_input,
+                shortcut.global
             )
         })
         .collect();
@@ -688,7 +762,7 @@ fn rebuild_now(cx: &mut App) {
 
     let mut bindings = Vec::with_capacity(shortcuts.len());
     for shortcut in &shortcuts {
-        if !shortcut.enabled {
+        if !shortcut.enabled || shortcut.global {
             continue;
         }
         // `KeyBinding::new` panics on a malformed context, and a scope name is
@@ -719,7 +793,7 @@ fn rebuild_now(cx: &mut App) {
             predicate,
             false,
             None,
-            &gpui::DummyKeyboardMapper,
+            cx,
         ) else {
             log::warn!(
                 "[shortcut] {} has unparseable keys {:?}; skipped",
@@ -737,7 +811,7 @@ fn rebuild_now(cx: &mut App) {
     state.scheduled = false;
 }
 
-fn is_shortcut_action(action: &dyn Action) -> bool {
+pub(crate) fn is_shortcut_action(action: &dyn Action) -> bool {
     action.as_any().downcast_ref::<ShortcutAction>().is_some()
 }
 
@@ -763,6 +837,15 @@ pub fn register(cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_w3c_key_name_maps_to_the_gpui_one() {
+        assert_eq!(super::gpui_key_name("ArrowDown"), "down");
+        assert_eq!(super::gpui_key_name("arrowdown"), "down");
+        assert_eq!(super::gpui_key_name("down"), "down");
+        assert_eq!(super::gpui_key_name("Escape"), "escape");
+        assert_eq!(super::gpui_key_name("a"), "a");
+    }
+
     use super::*;
     use gpui::Keystroke;
 
@@ -847,6 +930,7 @@ mod tests {
             scope: Some("editor".to_string()),
             enabled: true,
             allow_in_text_input: false,
+            global: false,
         };
         assert_eq!(shortcut.context(), "rn-scope-editor && !rn-text-input");
 
@@ -865,6 +949,7 @@ mod tests {
             scope: None,
             enabled: true,
             allow_in_text_input: true,
+            global: false,
         };
         // The root context, which is the weakest binding in the keymap: any
         // scope overrides it.
@@ -896,9 +981,10 @@ mod tests {
             scope: None,
             enabled: true,
             allow_in_text_input: false,
+            global: false,
         };
         let binding = KeyBinding::new(
-            &shortcut.keys,
+            "ctrl-s",
             ShortcutAction {
                 id: shortcut.id.clone(),
             },
@@ -906,7 +992,7 @@ mod tests {
         );
         let mut keymap = gpui::Keymap::default();
         keymap.add_bindings([binding]);
-        let keystroke = Keystroke::parse("secondary-s").unwrap();
+        let keystroke = Keystroke::parse("ctrl-s").unwrap();
 
         // No root context at all: nothing matches. This is why `rn-app` exists.
         let (bindings, _) = keymap.bindings_for_input(&[keystroke.clone()], &[]);
@@ -925,14 +1011,14 @@ mod tests {
     #[test]
     fn a_scope_outranks_the_app_context() {
         let window = KeyBinding::new(
-            "secondary-j",
+            "ctrl-j",
             ShortcutAction {
                 id: "window".to_string(),
             },
             Some(APP_CONTEXT),
         );
         let scoped = KeyBinding::new(
-            "secondary-j",
+            "ctrl-j",
             ShortcutAction {
                 id: "scoped".to_string(),
             },
@@ -945,7 +1031,7 @@ mod tests {
             gpui::KeyContext::parse("rn-scope-editor").unwrap(),
         ];
         let (bindings, _) =
-            keymap.bindings_for_input(&[Keystroke::parse("secondary-j").unwrap()], &contexts);
+            keymap.bindings_for_input(&[Keystroke::parse("ctrl-j").unwrap()], &contexts);
         assert_eq!(
             bindings[0]
                 .action()
@@ -963,14 +1049,14 @@ mod tests {
     #[test]
     fn an_inner_scope_outranks_an_outer_one() {
         let outer = KeyBinding::new(
-            "secondary-s",
+            "ctrl-s",
             ShortcutAction {
                 id: "outer".to_string(),
             },
             Some("rn-scope-outer"),
         );
         let inner = KeyBinding::new(
-            "secondary-s",
+            "ctrl-s",
             ShortcutAction {
                 id: "inner".to_string(),
             },
@@ -984,7 +1070,7 @@ mod tests {
             gpui::KeyContext::parse("rn-scope-inner").unwrap(),
         ];
         let (bindings, pending) =
-            keymap.bindings_for_input(&[Keystroke::parse("secondary-s").unwrap()], &contexts);
+            keymap.bindings_for_input(&[Keystroke::parse("ctrl-s").unwrap()], &contexts);
         assert!(!pending);
         assert_eq!(bindings.len(), 2);
         // Innermost first: dispatch runs them in this order and stops at the
@@ -1005,7 +1091,7 @@ mod tests {
     #[test]
     fn a_text_input_disables_a_shortcut_that_opts_out() {
         let binding = KeyBinding::new(
-            "secondary-a",
+            "ctrl-a",
             ShortcutAction {
                 id: "select.all".to_string(),
             },
@@ -1019,7 +1105,7 @@ mod tests {
             gpui::KeyContext::parse("rn-text-input").unwrap(),
         ];
         let (bindings, _) =
-            keymap.bindings_for_input(&[Keystroke::parse("secondary-a").unwrap()], &in_editor);
+            keymap.bindings_for_input(&[Keystroke::parse("ctrl-a").unwrap()], &in_editor);
         assert!(
             bindings.is_empty(),
             "a text input must keep a key the shortcut opted out of"
@@ -1027,14 +1113,14 @@ mod tests {
 
         let outside = vec![gpui::KeyContext::parse("rn-scope-editor").unwrap()];
         let (bindings, _) =
-            keymap.bindings_for_input(&[Keystroke::parse("secondary-a").unwrap()], &outside);
+            keymap.bindings_for_input(&[Keystroke::parse("ctrl-a").unwrap()], &outside);
         assert_eq!(bindings.len(), 1);
     }
 
     #[test]
     fn a_chord_needs_both_keys() {
         let binding = KeyBinding::new(
-            "secondary-k secondary-s",
+            "ctrl-k ctrl-s",
             ShortcutAction {
                 id: "chord".to_string(),
             },
@@ -1042,8 +1128,8 @@ mod tests {
         );
         let mut keymap = gpui::Keymap::default();
         keymap.add_bindings([binding]);
-        let first = Keystroke::parse("secondary-k").unwrap();
-        let second = Keystroke::parse("secondary-s").unwrap();
+        let first = Keystroke::parse("ctrl-k").unwrap();
+        let second = Keystroke::parse("ctrl-s").unwrap();
 
         let (bindings, pending) = keymap.bindings_for_input(&[first.clone()], &[]);
         assert!(bindings.is_empty());
@@ -1134,6 +1220,7 @@ mod tests {
             scope: None,
             enabled: true,
             allow_in_text_input: false,
+            global: false,
         };
         let two = Shortcut {
             id: "b".to_string(),
@@ -1141,6 +1228,7 @@ mod tests {
             scope: Some("editor".to_string()),
             enabled: true,
             allow_in_text_input: false,
+            global: false,
         };
         assert_eq!(
             signature(&[one.clone(), two.clone()]),

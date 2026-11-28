@@ -1,0 +1,2023 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9449165..adf0bd1 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -234,7 +234,10 @@ set(HERMES_USE_STATIC_ICU OFF CACHE BOOL
+   "Force static linking of ICU. May only work on GNU/Linux.")
+ 
+ set(HERMES_ICU_RUNTIME_LOAD OFF CACHE BOOL
+-  "Resolve ICU with dlopen at run time instead of linking it. Linux only.")
++  "Resolve ICU at run time instead of linking it: icu.dll on Windows, libicucore on macOS, libicui18n.so.N on Linux.")
++
++set(HERMES_ICU_HEADERS_DIR "" CACHE PATH
++  "With HERMES_ICU_RUNTIME_LOAD, a folder holding the ICU C headers under unicode/.")
+ 
+ set(HERMES_UNICODE_LITE OFF CACHE BOOL
+   "Enable to use internal no-op unicode functionality instead of relying on underlying system libraries")
+@@ -639,6 +642,27 @@ if (APPLE OR EMSCRIPTEN OR HERMES_IS_ANDROID OR HERMES_UNICODE_LITE)
+   set(ICU_FOUND 1)
+ endif()
+ 
++if (HERMES_ICU_RUNTIME_LOAD)
++  # Nothing is linked. The ICU headers only give the signatures; the engine
++  # finds the system's ICU when it first needs it (see ICULoader.cpp).
++  if (NOT HERMES_ICU_HEADERS_DIR OR
++      NOT EXISTS "${HERMES_ICU_HEADERS_DIR}/unicode/utypes.h")
++    message(FATAL_ERROR
++      "HERMES_ICU_RUNTIME_LOAD needs HERMES_ICU_HEADERS_DIR, a folder with "
++      "the ICU C headers under unicode/")
++  endif()
++  if (EMSCRIPTEN OR HERMES_IS_ANDROID OR HERMES_UNICODE_LITE)
++    message(FATAL_ERROR "HERMES_ICU_RUNTIME_LOAD is for desktop platforms")
++  endif()
++  add_definitions(-DHERMES_ICU_RUNTIME_LOAD)
++  # Only the C API is used, and only its headers are vendored.
++  add_definitions(-DU_SHOW_CPLUSPLUS_API=0 -DU_SHOW_CPLUSPLUS_HEADER_API=0)
++  include_directories(${HERMES_ICU_HEADERS_DIR})
++  set(ICU_FOUND 1)
++  set(ICU_LIBRARIES "")
++  set(ICU_RPATH "")
++endif()
++
+ if (NOT ICU_FOUND)
+   set(CMAKE_FIND_LIBRARY_SUFFIXES_OLD "${CMAKE_FIND_LIBRARY_SUFFIXES}")
+   if (HERMES_USE_STATIC_ICU)
+@@ -668,18 +692,6 @@ if (NOT ICU_FOUND)
+     message("icu dir: ${ICU_RPATH}")
+     include_directories(${ICU_INCLUDE_DIRS})
+ 
+-    if (HERMES_ICU_RUNTIME_LOAD)
+-      if (HERMES_ENABLE_INTL)
+-        message(FATAL_ERROR "HERMES_ICU_RUNTIME_LOAD does not support HERMES_ENABLE_INTL yet")
+-      endif()
+-      if (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+-        message(FATAL_ERROR "HERMES_ICU_RUNTIME_LOAD is only supported on Linux")
+-      endif()
+-      add_definitions(-DHERMES_ICU_RUNTIME_LOAD)
+-      # Headers are still needed for types. Nothing is linked.
+-      set(ICU_LIBRARIES "")
+-      set(ICU_RPATH "")
+-    endif()
+   endif()
+ endif()
+ 
+diff --git a/include/hermes/Platform/Unicode/ICULoader.h b/include/hermes/Platform/Unicode/ICULoader.h
+index 2825e8c..2a03ca1 100644
+--- a/include/hermes/Platform/Unicode/ICULoader.h
++++ b/include/hermes/Platform/Unicode/ICULoader.h
+@@ -10,32 +10,88 @@
+ 
+ #ifdef HERMES_ICU_RUNTIME_LOAD
+ 
+-/// The ICU entry points Hermes uses. Every one of them is resolved with
+-/// dlsym() against the system's libicui18n at first use; see ICULoader.cpp.
+-/// Types come from the ICU headers, so they never drift.
++#include "unicode/ucal.h"
++#include "unicode/ucol.h"
++#include "unicode/ucurr.h"
++#include "unicode/udat.h"
++#include "unicode/udatpg.h"
++#include "unicode/ufieldpositer.h"
++#include "unicode/uloc.h"
++#include "unicode/unorm2.h"
++#include "unicode/unumberformatter.h"
++#include "unicode/ustring.h"
++
++/// The ICU entry points Hermes uses, resolved at first use from the ICU the
++/// system provides: `icu.dll` in System32 on Windows (Windows 10 1903 and
++/// later), `libicucore` on macOS, `libicui18n.so.N` on Linux. Nothing is
++/// linked, so no ICU version is baked into the engine.
++///
++/// ICU 64 is the oldest version loaded, so the required list holds only
++/// functions it has. The optional ones appeared later and are null when the
++/// system ICU lacks them; callers test for that.
++#define HERMES_ICU_REQUIRED_FUNCTIONS(X) \
++  X(u_getVersion) \
++  X(u_strToLower) \
++  X(u_strToUpper) \
++  X(ucol_open) \
++  X(ucol_close) \
++  X(ucol_setAttribute) \
++  X(ucol_getAttribute) \
++  X(ucol_strcoll) \
++  X(ucol_getKeywordValuesForLocale) \
++  X(uenum_unext) \
++  X(uenum_close) \
++  X(uloc_getDefault) \
++  X(uloc_forLanguageTag) \
++  X(uloc_toLanguageTag) \
++  X(uloc_countAvailable) \
++  X(uloc_getAvailable) \
++  X(uloc_acceptLanguage) \
++  X(udat_open) \
++  X(udat_close) \
++  X(udat_format) \
++  X(udat_formatForFields) \
++  X(udat_toPattern) \
++  X(udatpg_open) \
++  X(udatpg_close) \
++  X(udatpg_getBestPatternWithOptions) \
++  X(ucal_openTimeZones) \
++  X(ucal_getDefaultTimeZone) \
++  X(ucurr_getDefaultFractionDigits) \
++  X(ufieldpositer_open) \
++  X(ufieldpositer_next) \
++  X(ufieldpositer_close) \
++  X(unumf_openForSkeletonAndLocale) \
++  X(unumf_openResult) \
++  X(unumf_formatDouble) \
++  X(unumf_resultToString) \
++  X(unumf_resultGetAllFieldPositions) \
++  X(unumf_close) \
++  X(unumf_closeResult) \
++  X(unorm2_getNFCInstance) \
++  X(unorm2_getNFDInstance) \
++  X(unorm2_getNFKCInstance) \
++  X(unorm2_getNFKDInstance) \
++  X(unorm2_normalize)
++
++#define HERMES_ICU_OPTIONAL_FUNCTIONS(X) \
++  X(uloc_openAvailableByType) \
++  X(ucol_openAvailableLocales) \
++  X(ucal_getCanonicalTimeZoneID)
++
+ struct ICUFunctions {
+-  decltype(&::u_strToLower) u_strToLower;
+-  decltype(&::u_strToUpper) u_strToUpper;
+-  decltype(&::ucol_open) ucol_open;
+-  decltype(&::ucol_close) ucol_close;
+-  decltype(&::ucol_setAttribute) ucol_setAttribute;
+-  decltype(&::ucol_strcoll) ucol_strcoll;
+-  decltype(&::udat_open) udat_open;
+-  decltype(&::udat_close) udat_close;
+-  decltype(&::udat_format) udat_format;
+-  decltype(&::uloc_getDefault) uloc_getDefault;
+-  decltype(&::unorm2_getNFCInstance) unorm2_getNFCInstance;
+-  decltype(&::unorm2_getNFDInstance) unorm2_getNFDInstance;
+-  decltype(&::unorm2_getNFKCInstance) unorm2_getNFKCInstance;
+-  decltype(&::unorm2_getNFKDInstance) unorm2_getNFKDInstance;
+-  decltype(&::unorm2_normalize) unorm2_normalize;
++#define HERMES_ICU_MEMBER(name) decltype(&::name) name;
++  HERMES_ICU_REQUIRED_FUNCTIONS(HERMES_ICU_MEMBER)
++  HERMES_ICU_OPTIONAL_FUNCTIONS(HERMES_ICU_MEMBER)
++#undef HERMES_ICU_MEMBER
+ };
+ 
+ namespace hermes {
+ namespace platform_unicode {
+ 
+-/// Returns the function table for the system ICU, or nullptr when no ICU with
+-/// every required entry point could be loaded. The search runs once.
++/// Returns the function table for the system ICU, or nullptr when no ICU of
++/// version 64 or later with every required entry point could be loaded. The
++/// search runs once. When it finds none it logs one warning.
+ const ICUFunctions *icuFunctions();
+ 
+ } // namespace platform_unicode
+@@ -44,7 +100,9 @@ const ICUFunctions *icuFunctions();
+ #ifndef HERMES_ICU_LOADER_NO_MACROS
+ 
+ // Send the ICU names to the loaded table. Callers must check icuFunctions()
+-// first; the table is only handed out when every entry resolved.
++// first; the table is only handed out when every required entry resolved.
++#undef u_getVersion
++#define u_getVersion (::hermes::platform_unicode::icuFunctions()->u_getVersion)
+ #undef u_strToLower
+ #define u_strToLower (::hermes::platform_unicode::icuFunctions()->u_strToLower)
+ #undef u_strToUpper
+@@ -54,34 +112,87 @@ const ICUFunctions *icuFunctions();
+ #undef ucol_close
+ #define ucol_close (::hermes::platform_unicode::icuFunctions()->ucol_close)
+ #undef ucol_setAttribute
+-#define ucol_setAttribute \
+-  (::hermes::platform_unicode::icuFunctions()->ucol_setAttribute)
++#define ucol_setAttribute (::hermes::platform_unicode::icuFunctions()->ucol_setAttribute)
++#undef ucol_getAttribute
++#define ucol_getAttribute (::hermes::platform_unicode::icuFunctions()->ucol_getAttribute)
+ #undef ucol_strcoll
+ #define ucol_strcoll (::hermes::platform_unicode::icuFunctions()->ucol_strcoll)
++#undef ucol_openAvailableLocales
++#define ucol_openAvailableLocales (::hermes::platform_unicode::icuFunctions()->ucol_openAvailableLocales)
++#undef ucol_getKeywordValuesForLocale
++#define ucol_getKeywordValuesForLocale (::hermes::platform_unicode::icuFunctions()->ucol_getKeywordValuesForLocale)
++#undef uenum_unext
++#define uenum_unext (::hermes::platform_unicode::icuFunctions()->uenum_unext)
++#undef uenum_close
++#define uenum_close (::hermes::platform_unicode::icuFunctions()->uenum_close)
++#undef uloc_getDefault
++#define uloc_getDefault (::hermes::platform_unicode::icuFunctions()->uloc_getDefault)
++#undef uloc_forLanguageTag
++#define uloc_forLanguageTag (::hermes::platform_unicode::icuFunctions()->uloc_forLanguageTag)
++#undef uloc_toLanguageTag
++#define uloc_toLanguageTag (::hermes::platform_unicode::icuFunctions()->uloc_toLanguageTag)
++#undef uloc_countAvailable
++#define uloc_countAvailable (::hermes::platform_unicode::icuFunctions()->uloc_countAvailable)
++#undef uloc_getAvailable
++#define uloc_getAvailable (::hermes::platform_unicode::icuFunctions()->uloc_getAvailable)
++#undef uloc_acceptLanguage
++#define uloc_acceptLanguage (::hermes::platform_unicode::icuFunctions()->uloc_acceptLanguage)
+ #undef udat_open
+ #define udat_open (::hermes::platform_unicode::icuFunctions()->udat_open)
+ #undef udat_close
+ #define udat_close (::hermes::platform_unicode::icuFunctions()->udat_close)
+ #undef udat_format
+ #define udat_format (::hermes::platform_unicode::icuFunctions()->udat_format)
+-#undef uloc_getDefault
+-#define uloc_getDefault \
+-  (::hermes::platform_unicode::icuFunctions()->uloc_getDefault)
++#undef udat_formatForFields
++#define udat_formatForFields (::hermes::platform_unicode::icuFunctions()->udat_formatForFields)
++#undef udat_toPattern
++#define udat_toPattern (::hermes::platform_unicode::icuFunctions()->udat_toPattern)
++#undef udatpg_open
++#define udatpg_open (::hermes::platform_unicode::icuFunctions()->udatpg_open)
++#undef udatpg_close
++#define udatpg_close (::hermes::platform_unicode::icuFunctions()->udatpg_close)
++#undef udatpg_getBestPatternWithOptions
++#define udatpg_getBestPatternWithOptions (::hermes::platform_unicode::icuFunctions()->udatpg_getBestPatternWithOptions)
++#undef ucal_openTimeZones
++#define ucal_openTimeZones (::hermes::platform_unicode::icuFunctions()->ucal_openTimeZones)
++#undef ucal_getDefaultTimeZone
++#define ucal_getDefaultTimeZone (::hermes::platform_unicode::icuFunctions()->ucal_getDefaultTimeZone)
++#undef ucurr_getDefaultFractionDigits
++#define ucurr_getDefaultFractionDigits (::hermes::platform_unicode::icuFunctions()->ucurr_getDefaultFractionDigits)
++#undef ufieldpositer_open
++#define ufieldpositer_open (::hermes::platform_unicode::icuFunctions()->ufieldpositer_open)
++#undef ufieldpositer_next
++#define ufieldpositer_next (::hermes::platform_unicode::icuFunctions()->ufieldpositer_next)
++#undef ufieldpositer_close
++#define ufieldpositer_close (::hermes::platform_unicode::icuFunctions()->ufieldpositer_close)
++#undef unumf_openForSkeletonAndLocale
++#define unumf_openForSkeletonAndLocale (::hermes::platform_unicode::icuFunctions()->unumf_openForSkeletonAndLocale)
++#undef unumf_openResult
++#define unumf_openResult (::hermes::platform_unicode::icuFunctions()->unumf_openResult)
++#undef unumf_formatDouble
++#define unumf_formatDouble (::hermes::platform_unicode::icuFunctions()->unumf_formatDouble)
++#undef unumf_resultToString
++#define unumf_resultToString (::hermes::platform_unicode::icuFunctions()->unumf_resultToString)
++#undef unumf_resultGetAllFieldPositions
++#define unumf_resultGetAllFieldPositions (::hermes::platform_unicode::icuFunctions()->unumf_resultGetAllFieldPositions)
++#undef unumf_close
++#define unumf_close (::hermes::platform_unicode::icuFunctions()->unumf_close)
++#undef unumf_closeResult
++#define unumf_closeResult (::hermes::platform_unicode::icuFunctions()->unumf_closeResult)
+ #undef unorm2_getNFCInstance
+-#define unorm2_getNFCInstance \
+-  (::hermes::platform_unicode::icuFunctions()->unorm2_getNFCInstance)
++#define unorm2_getNFCInstance (::hermes::platform_unicode::icuFunctions()->unorm2_getNFCInstance)
+ #undef unorm2_getNFDInstance
+-#define unorm2_getNFDInstance \
+-  (::hermes::platform_unicode::icuFunctions()->unorm2_getNFDInstance)
++#define unorm2_getNFDInstance (::hermes::platform_unicode::icuFunctions()->unorm2_getNFDInstance)
+ #undef unorm2_getNFKCInstance
+-#define unorm2_getNFKCInstance \
+-  (::hermes::platform_unicode::icuFunctions()->unorm2_getNFKCInstance)
++#define unorm2_getNFKCInstance (::hermes::platform_unicode::icuFunctions()->unorm2_getNFKCInstance)
+ #undef unorm2_getNFKDInstance
+-#define unorm2_getNFKDInstance \
+-  (::hermes::platform_unicode::icuFunctions()->unorm2_getNFKDInstance)
++#define unorm2_getNFKDInstance (::hermes::platform_unicode::icuFunctions()->unorm2_getNFKDInstance)
+ #undef unorm2_normalize
+-#define unorm2_normalize \
+-  (::hermes::platform_unicode::icuFunctions()->unorm2_normalize)
++#define unorm2_normalize (::hermes::platform_unicode::icuFunctions()->unorm2_normalize)
++#undef uloc_openAvailableByType
++#define uloc_openAvailableByType (::hermes::platform_unicode::icuFunctions()->uloc_openAvailableByType)
++#undef ucal_getCanonicalTimeZoneID
++#define ucal_getCanonicalTimeZoneID (::hermes::platform_unicode::icuFunctions()->ucal_getCanonicalTimeZoneID)
+ 
+ #endif // HERMES_ICU_LOADER_NO_MACROS
+ 
+diff --git a/include/hermes/Platform/Unicode/icu.h b/include/hermes/Platform/Unicode/icu.h
+index f57dddb..54c6ce7 100644
+--- a/include/hermes/Platform/Unicode/icu.h
++++ b/include/hermes/Platform/Unicode/icu.h
+@@ -11,7 +11,13 @@
+ /// This header includes the correct ICU headers: system headers on Linux or
+ /// externally-supplied on Apple platforms.
+ 
+-#ifdef __APPLE__
++#ifdef HERMES_ICU_RUNTIME_LOAD
++/// The headers are the vendored ICU C headers; the library is found at run
++/// time. The plain names are used, so the headers must not rename them to a
++/// version suffix.
++#define U_DISABLE_RENAMING 1
++#include "hermes/Platform/Unicode/ICULoader.h"
++#elif defined(__APPLE__)
+ /// Prevent appending the ICU version to the namespace, so that we can link
+ /// properly against libicucore.dylib.
+ #define U_DISABLE_RENAMING 1
+@@ -45,11 +51,6 @@
+ #include <unicode/unorm2.h>
+ #include <unicode/ustring.h>
+ #else
+-#ifdef HERMES_ICU_RUNTIME_LOAD
+-/// The runtime loader resolves the plain names, so the ICU headers must not
+-/// rename them to the library's version suffix.
+-#define U_DISABLE_RENAMING 1
+-#endif
+ #include <unicode/ucnv.h>
+ #include <unicode/ucol.h>
+ #include <unicode/udat.h>
+@@ -57,9 +58,6 @@
+ #include <unicode/uniset.h>
+ #include <unicode/unorm2.h>
+ #include <unicode/ustring.h>
+-#ifdef HERMES_ICU_RUNTIME_LOAD
+-#include "hermes/Platform/Unicode/ICULoader.h"
+-#endif
+ #endif
+ 
+ #endif // HERMES_SUPPORT_ICU_H
+diff --git a/lib/Platform/Intl/CMakeLists.txt b/lib/Platform/Intl/CMakeLists.txt
+index 0503bc1..6244035 100644
+--- a/lib/Platform/Intl/CMakeLists.txt
++++ b/lib/Platform/Intl/CMakeLists.txt
+@@ -12,7 +12,7 @@ if(HERMES_ENABLE_INTL)
+         LINK_OBJLIBS hermesPublic
+     )
+     target_compile_options(hermesPlatformIntl_obj PRIVATE -frtti -fexceptions)
+-  elseif(APPLE)
++  elseif(APPLE AND NOT HERMES_ICU_RUNTIME_LOAD)
+     add_hermes_library(hermesPlatformIntl PlatformIntlApple.mm
+         LINK_LIBS ${FOUNDATION}
+         LINK_OBJLIBS hermesPublic
+@@ -29,6 +29,7 @@ if(HERMES_ENABLE_INTL)
+         impl_icu/LocaleConverter.cpp
+         impl_icu/LocaleBCP47Object.cpp
+         impl_icu/LocaleResolver.cpp
++        impl_icu/NumberFormat.cpp
+         impl_icu/OptionHelpers.cpp
+         LINK_OBJLIBS
+         hermesBCP47Parser
+diff --git a/lib/Platform/Intl/PlatformIntlICU.cpp b/lib/Platform/Intl/PlatformIntlICU.cpp
+index ccdc133..cd7c198 100644
+--- a/lib/Platform/Intl/PlatformIntlICU.cpp
++++ b/lib/Platform/Intl/PlatformIntlICU.cpp
+@@ -10,6 +10,7 @@
+ #include "hermes/Platform/Intl/PlatformIntlShared.h"
+ #include "impl_icu/Collator.h"
+ #include "impl_icu/IntlUtils.h"
++#include "impl_icu/LocaleConverter.h"
+ #include "impl_icu/LocaleBCP47Object.h"
+ #include "impl_icu/LocaleResolver.h"
+ #include "impl_icu/OptionHelpers.h"
+@@ -18,18 +19,11 @@
+ #include <string>
+ #include <unordered_map>
+ 
+-// ICU changed the default UChar type on version 59, but we still need to
+-// support 52+ However, ICU allows us to manually set a type for UChar using
+-// UCHAR_TYPE so UChar isn't platform dependent.
+-#define UCHAR_TYPE char16_t
++#include "hermes/Platform/Unicode/icu.h"
++#include "impl_icu/NumberFormat.h"
+ 
+-#include "unicode/dtptngen.h"
+-#include "unicode/strenum.h"
+-#include "unicode/timezone.h"
+-#include "unicode/udat.h"
+-#include "unicode/unistr.h"
+-
+-using namespace U_ICU_NAMESPACE;
++#include <cmath>
++#include <ctime>
+ 
+ namespace hermes {
+ namespace platform_intl {
+@@ -41,16 +35,21 @@ class TimeZoneNames {
+   /// Initializing the underlying map with all known time zone names in
+   /// ICU::TimeZone
+   TimeZoneNames() {
+-    std::unique_ptr<StringEnumeration> icuTimeZones(
+-        TimeZone::createEnumeration());
+     UErrorCode status = U_ZERO_ERROR;
+-    auto *zoneId = icuTimeZones->unext(nullptr, status);
++    UEnumeration *icuTimeZones = ucal_openTimeZones(&status);
++    if (U_FAILURE(status) || !icuTimeZones) {
++      return;
++    }
++    int32_t length = 0;
++    const UChar *zoneId = uenum_unext(icuTimeZones, &length, &status);
+ 
+     while (zoneId != nullptr && status == U_ZERO_ERROR) {
+-      auto upper = toASCIIUppercase(zoneId);
+-      timeZoneNamesMap_.emplace(std::move(upper), std::move(zoneId));
+-      zoneId = icuTimeZones->unext(nullptr, status);
++      std::u16string zone(reinterpret_cast<const char16_t *>(zoneId), length);
++      auto upper = toASCIIUppercase(zone);
++      timeZoneNamesMap_.emplace(std::move(upper), std::move(zone));
++      zoneId = uenum_unext(icuTimeZones, &length, &status);
+     }
++    uenum_close(icuTimeZones);
+   }
+ 
+   /// Check if \p tz is a valid time zone name.
+@@ -106,10 +105,20 @@ static bool isValidTimeZoneName(std::u16string_view tz) {
+ 
+ /// https://402.ecma-international.org/8.0/#sec-defaulttimezone
+ std::u16string getDefaultTimeZone(vm::Runtime &runtime) {
+-  std::unique_ptr<TimeZone> timeZone(TimeZone::createDefault());
+-  UnicodeString unicodeTz;
+-  timeZone->getID(unicodeTz);
+-  std::u16string tz(unicodeTz.getBuffer(), unicodeTz.length());
++  UErrorCode status = U_ZERO_ERROR;
++  std::u16string tz(64, u'\0');
++  int32_t length = ucal_getDefaultTimeZone(
++      reinterpret_cast<UChar *>(&tz[0]), static_cast<int32_t>(tz.size()), &status);
++  if (status == U_BUFFER_OVERFLOW_ERROR) {
++    status = U_ZERO_ERROR;
++    tz.resize(length);
++    ucal_getDefaultTimeZone(
++        reinterpret_cast<UChar *>(&tz[0]), length, &status);
++  }
++  tz.resize(U_SUCCESS(status) ? length : 0);
++  if (tz.empty()) {
++    tz = u"UTC";
++  }
+   validTimeZoneNames().update(tz);
+   return tz;
+ }
+@@ -153,19 +162,76 @@ vm::CallResult<std::unique_ptr<BaseT>> createInstance(
+ 
+ } // namespace
+ 
+-// Not yet implemented.
++namespace {
++/// Lower- or upper-cases \p str for the first of \p locales (or the default
++/// locale), with ICU's full, locale-sensitive mapping. Without an ICU, only
++/// ASCII letters change.
++vm::CallResult<std::u16string> mapCase(
++    vm::Runtime &runtime,
++    const std::vector<std::u16string> &locales,
++    const std::u16string &str,
++    bool upper) {
++  auto requested =
++      impl_icu::LocaleBCP47Object::canonicalizeLocaleList(runtime, locales);
++  if (LLVM_UNLIKELY(requested == vm::ExecutionStatus::EXCEPTION))
++    return vm::ExecutionStatus::EXCEPTION;
++
++  if (!platform_unicode::icuFunctions()) {
++    std::u16string out = str;
++    for (char16_t &c : out) {
++      if (upper && c >= u'a' && c <= u'z')
++        c = c - u'a' + u'A';
++      else if (!upper && c >= u'A' && c <= u'Z')
++        c = c - u'A' + u'a';
++    }
++    return out;
++  }
++
++  std::string icuLocale = requested->empty()
++      ? std::string(uloc_getDefault())
++      : impl_icu::convertBCP47toICULocale(
++            requested->front().getLocaleNoExt());
++  UErrorCode status = U_ZERO_ERROR;
++  std::u16string out(str.size() + 4, u'\0');
++  auto convert = upper ? u_strToUpper : u_strToLower;
++  int32_t length = convert(
++      reinterpret_cast<UChar *>(&out[0]),
++      static_cast<int32_t>(out.size()),
++      reinterpret_cast<const UChar *>(str.data()),
++      static_cast<int32_t>(str.size()),
++      icuLocale.c_str(),
++      &status);
++  if (status == U_BUFFER_OVERFLOW_ERROR) {
++    status = U_ZERO_ERROR;
++    out.assign(length, u'\0');
++    convert(
++        reinterpret_cast<UChar *>(&out[0]),
++        length,
++        reinterpret_cast<const UChar *>(str.data()),
++        static_cast<int32_t>(str.size()),
++        icuLocale.c_str(),
++        &status);
++  }
++  if (U_FAILURE(status)) {
++    return str;
++  }
++  out.resize(length);
++  return out;
++}
++} // namespace
++
+ vm::CallResult<std::u16string> toLocaleLowerCase(
+     vm::Runtime &runtime,
+     const std::vector<std::u16string> &locales,
+     const std::u16string &str) {
+-  return std::u16string(u"lowered");
++  return mapCase(runtime, locales, str, false);
+ }
+-// Not yet implemented.
++
+ vm::CallResult<std::u16string> toLocaleUpperCase(
+     vm::Runtime &runtime,
+     const std::vector<std::u16string> &locales,
+     const std::u16string &str) {
+-  return std::u16string(u"uppered");
++  return mapCase(runtime, locales, str, true);
+ }
+ 
+ Collator::Collator() = default;
+@@ -203,7 +269,9 @@ struct DateTimeFormatICU : DateTimeFormat {
+  public:
+   DateTimeFormatICU() = default;
+   ~DateTimeFormatICU() {
+-    udat_close(dateTimeFormatter_);
++    if (dateTimeFormatter_) {
++      udat_close(dateTimeFormatter_);
++    }
+   };
+ 
+   vm::ExecutionStatus initialize(
+@@ -213,6 +281,7 @@ struct DateTimeFormatICU : DateTimeFormat {
+   Options resolvedOptions() noexcept;
+ 
+   std::u16string format(double jsTimeValue) noexcept;
++  std::vector<Part> formatToParts(double jsTimeValue) noexcept;
+ 
+  private:
+   UDateFormat *getUDateFormatter(vm::Runtime &runtime);
+@@ -268,7 +337,7 @@ struct DateTimeFormatICU : DateTimeFormat {
+   /// UTF-8 version of locale_. Used for ICU calls.
+   std::string locale8_;
+   /// Internal initialized ICU date formatter.
+-  UDateFormat *dateTimeFormatter_;
++  UDateFormat *dateTimeFormatter_ = nullptr;
+ };
+ } // namespace
+ 
+@@ -280,6 +349,8 @@ vm::CallResult<std::vector<std::u16string>> DateTimeFormat::supportedLocalesOf(
+     vm::Runtime &runtime,
+     const std::vector<std::u16string> &locales,
+     const Options &options) noexcept {
++  if (!platform_unicode::icuFunctions())
++    return std::vector<std::u16string>{};
+   return impl_icu::supportedLocales(runtime, locales, options);
+ }
+ 
+@@ -287,6 +358,12 @@ vm::ExecutionStatus DateTimeFormatICU::initialize(
+     vm::Runtime &runtime,
+     const std::vector<std::u16string> &locales,
+     const Options &inputOptions) noexcept {
++  if (!platform_unicode::icuFunctions()) {
++    // No ICU: format as ISO 8601 in UTC.
++    locale_ = u"en-US";
++    timeZone_ = u"UTC";
++    return vm::ExecutionStatus::RETURNED;
++  }
+   // 1. Let requestedLocales be ? CanonicalizeLocaleList(locales).
+   auto requestedLocalesRes =
+       impl_icu::LocaleBCP47Object::canonicalizeLocaleList(runtime, locales);
+@@ -790,8 +867,13 @@ UDateFormat *DateTimeFormatICU::getUDateFormatter(vm::Runtime &runtime) {
+   std::u16string bestpattern;
+   int32_t patternLength;
+ 
+-  std::unique_ptr<UDateTimePatternGenerator, decltype(&udatpg_close)>
+-      dtpGenerator(udatpg_open(&locale8_[0], &status), &udatpg_close);
++  struct PatternGeneratorDeleter {
++    void operator()(UDateTimePatternGenerator *generator) const {
++      udatpg_close(generator);
++    }
++  };
++  std::unique_ptr<UDateTimePatternGenerator, PatternGeneratorDeleter>
++      dtpGenerator(udatpg_open(&locale8_[0], &status));
+   patternLength = udatpg_getBestPatternWithOptions(
+       dtpGenerator.get(),
+       &skeleton[0],
+@@ -938,7 +1020,78 @@ Options DateTimeFormat::resolvedOptions() noexcept {
+   return static_cast<DateTimeFormatICU *>(this)->resolvedOptions();
+ }
+ 
++namespace {
++/// The time as an ISO 8601 string in UTC, which is what DateTimeFormat gives
++/// when there is no ICU.
++std::u16string isoTime(double jsTimeValue) {
++  if (!std::isfinite(jsTimeValue)) {
++    return u"Invalid Date";
++  }
++  std::time_t seconds = static_cast<std::time_t>(std::floor(jsTimeValue / 1000));
++  std::tm parts;
++#ifdef _WIN32
++  gmtime_s(&parts, &seconds);
++#else
++  gmtime_r(&seconds, &parts);
++#endif
++  char buffer[32];
++  std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &parts);
++  std::string text(buffer);
++  return std::u16string(text.begin(), text.end());
++}
++
++/// The ECMA-402 part type of an ICU date field, or nullptr when the spec has
++/// no part for it.
++const char16_t *datePartType(int32_t field) {
++  switch (field) {
++    case UDAT_ERA_FIELD:
++      return u"era";
++    case UDAT_YEAR_FIELD:
++    case UDAT_YEAR_WOY_FIELD:
++    case UDAT_EXTENDED_YEAR_FIELD:
++      return u"year";
++    case UDAT_MONTH_FIELD:
++    case UDAT_STANDALONE_MONTH_FIELD:
++      return u"month";
++    case UDAT_DATE_FIELD:
++      return u"day";
++    case UDAT_HOUR_OF_DAY1_FIELD:
++    case UDAT_HOUR_OF_DAY0_FIELD:
++    case UDAT_HOUR1_FIELD:
++    case UDAT_HOUR0_FIELD:
++      return u"hour";
++    case UDAT_MINUTE_FIELD:
++      return u"minute";
++    case UDAT_SECOND_FIELD:
++      return u"second";
++    case UDAT_FRACTIONAL_SECOND_FIELD:
++      return u"fractionalSecond";
++    case UDAT_DAY_OF_WEEK_FIELD:
++    case UDAT_DOW_LOCAL_FIELD:
++    case UDAT_STANDALONE_DAY_FIELD:
++      return u"weekday";
++    case UDAT_AM_PM_FIELD:
++    case UDAT_FLEXIBLE_DAY_PERIOD_FIELD:
++    case UDAT_AM_PM_MIDNIGHT_NOON_FIELD:
++      return u"dayPeriod";
++    case UDAT_TIMEZONE_FIELD:
++    case UDAT_TIMEZONE_RFC_FIELD:
++    case UDAT_TIMEZONE_GENERIC_FIELD:
++    case UDAT_TIMEZONE_SPECIAL_FIELD:
++    case UDAT_TIMEZONE_LOCALIZED_GMT_OFFSET_FIELD:
++    case UDAT_TIMEZONE_ISO_FIELD:
++    case UDAT_TIMEZONE_ISO_LOCAL_FIELD:
++      return u"timeZoneName";
++    default:
++      return nullptr;
++  }
++}
++} // namespace
++
+ std::u16string DateTimeFormatICU::format(double jsTimeValue) noexcept {
++  if (!dateTimeFormatter_) {
++    return isoTime(jsTimeValue);
++  }
+   auto timeInSeconds = jsTimeValue;
+   UDate date = UDate(timeInSeconds);
+   UErrorCode status = U_ZERO_ERROR;
+@@ -967,23 +1120,87 @@ std::u16string DateTimeFormat::format(double jsTimeValue) noexcept {
+   return static_cast<DateTimeFormatICU *>(this)->format(jsTimeValue);
+ }
+ 
++std::vector<Part> DateTimeFormatICU::formatToParts(
++    double jsTimeValue) noexcept {
++  std::vector<Part> parts;
++  auto literalOnly = [&](const std::u16string &text) {
++    if (!text.empty()) {
++      Part part;
++      part[u"type"] = u"literal";
++      part[u"value"] = text;
++      parts.push_back(std::move(part));
++    }
++    return parts;
++  };
++  if (!dateTimeFormatter_) {
++    return literalOnly(isoTime(jsTimeValue));
++  }
++
++  UErrorCode status = U_ZERO_ERROR;
++  UFieldPositionIterator *positions = ufieldpositer_open(&status);
++  std::u16string text;
++  int32_t length = udat_formatForFields(
++      dateTimeFormatter_, UDate(jsTimeValue), nullptr, 0, positions, &status);
++  if (status == U_BUFFER_OVERFLOW_ERROR) {
++    status = U_ZERO_ERROR;
++    text.resize(length);
++    // The first call used the iterator up; ask again for the fields.
++    ufieldpositer_close(positions);
++    positions = ufieldpositer_open(&status);
++    udat_formatForFields(
++        dateTimeFormatter_,
++        UDate(jsTimeValue),
++        reinterpret_cast<UChar *>(&text[0]),
++        length,
++        positions,
++        &status);
++  }
++  if (U_FAILURE(status)) {
++    ufieldpositer_close(positions);
++    return literalOnly(text);
++  }
++
++  // Each character belongs to the narrowest field that contains it.
++  std::vector<int32_t> fieldOf(text.size(), -1);
++  std::vector<int32_t> spanOf(text.size(), INT32_MAX);
++  int32_t begin = 0, end = 0;
++  for (;;) {
++    int32_t field = ufieldpositer_next(positions, &begin, &end);
++    if (field < 0) {
++      break;
++    }
++    for (int32_t i = begin; i < end && i < (int32_t)text.size(); ++i) {
++      if (end - begin < spanOf[i]) {
++        spanOf[i] = end - begin;
++        fieldOf[i] = field;
++      }
++    }
++  }
++  ufieldpositer_close(positions);
++
++  size_t start = 0;
++  while (start < text.size()) {
++    const char16_t *type = fieldOf[start] < 0 ? nullptr : datePartType(fieldOf[start]);
++    size_t stop = start + 1;
++    while (stop < text.size() &&
++           (fieldOf[stop] < 0 ? nullptr : datePartType(fieldOf[stop])) == type &&
++           fieldOf[stop] == fieldOf[start]) {
++      ++stop;
++    }
++    Part part;
++    part[u"type"] = type ? type : u"literal";
++    part[u"value"] = text.substr(start, stop - start);
++    parts.push_back(std::move(part));
++    start = stop;
++  }
++  return parts;
++}
++
+ std::vector<std::unordered_map<std::u16string, std::u16string>>
+ DateTimeFormat::formatToParts(double jsTimeValue) noexcept {
+-  std::unordered_map<std::u16string, std::u16string> part;
+-  part[u"type"] = u"integer";
+-  // This isn't right, but I didn't want to do more work for a stub.
+-  std::string s = std::to_string(jsTimeValue);
+-  part[u"value"] = {s.begin(), s.end()};
+-  return std::vector<std::unordered_map<std::u16string, std::u16string>>{part};
++  return static_cast<DateTimeFormatICU *>(this)->formatToParts(jsTimeValue);
+ }
+ 
+-namespace {
+-struct NumberFormatDummy : NumberFormat {
+-  NumberFormatDummy(const char16_t *l) : locale(l) {}
+-  std::u16string locale;
+-};
+-} // namespace
+-
+ NumberFormat::NumberFormat() = default;
+ NumberFormat::~NumberFormat() = default;
+ 
+@@ -991,37 +1208,30 @@ vm::CallResult<std::vector<std::u16string>> NumberFormat::supportedLocalesOf(
+     vm::Runtime &runtime,
+     const std::vector<std::u16string> &locales,
+     const Options &options) noexcept {
+-  return std::vector<std::u16string>{u"en-CA", u"de-DE"};
++  if (!platform_unicode::icuFunctions())
++    return std::vector<std::u16string>{};
++  return impl_icu::NumberFormat::supportedLocalesOf(runtime, locales, options);
+ }
+ 
+ vm::CallResult<std::unique_ptr<NumberFormat>> NumberFormat::create(
+     vm::Runtime &runtime,
+     const std::vector<std::u16string> &locales,
+     const Options &options) noexcept {
+-  return std::make_unique<NumberFormatDummy>(u"en-US");
++  return createInstance<impl_icu::NumberFormat, NumberFormat>(
++      runtime, locales, options);
+ }
+ 
+ Options NumberFormat::resolvedOptions() noexcept {
+-  Options options;
+-  options.emplace(
+-      u"locale", Option(static_cast<NumberFormatDummy *>(this)->locale));
+-  options.emplace(u"numeric", Option(false));
+-  return options;
++  return static_cast<impl_icu::NumberFormat *>(this)->resolvedOptions();
+ }
+ 
+ std::u16string NumberFormat::format(double number) noexcept {
+-  auto s = std::to_string(number);
+-  return std::u16string(s.begin(), s.end());
++  return static_cast<impl_icu::NumberFormat *>(this)->format(number);
+ }
+ 
+ std::vector<std::unordered_map<std::u16string, std::u16string>>
+ NumberFormat::formatToParts(double number) noexcept {
+-  std::unordered_map<std::u16string, std::u16string> part;
+-  part[u"type"] = u"integer";
+-  // This isn't right, but I didn't want to do more work for a stub.
+-  std::string s = std::to_string(number);
+-  part[u"value"] = {s.begin(), s.end()};
+-  return std::vector<std::unordered_map<std::u16string, std::u16string>>{part};
++  return static_cast<impl_icu::NumberFormat *>(this)->formatToParts(number);
+ }
+ 
+ } // namespace platform_intl
+diff --git a/lib/Platform/Intl/impl_icu/Collator.cpp b/lib/Platform/Intl/impl_icu/Collator.cpp
+index 01378e6..940b182 100644
+--- a/lib/Platform/Intl/impl_icu/Collator.cpp
++++ b/lib/Platform/Intl/impl_icu/Collator.cpp
+@@ -30,6 +30,15 @@ vm::ExecutionStatus Collator::initialize(
+     vm::Runtime &runtime,
+     const std::vector<std::u16string> &locales,
+     const Options &options) noexcept {
++  if (!platform_unicode::icuFunctions()) {
++    // No ICU: strings compare by UTF-16 code unit.
++    resolvedLocale_ = u"en-US";
++    resolvedUsageValue_ = u"sort";
++    resolvedSensitivityValue_ = u"variant";
++    resolvedCollationValue_ = u"default";
++    resolvedCaseFirstValue_ = u"false";
++    return vm::ExecutionStatus::RETURNED;
++  }
+   if (LLVM_UNLIKELY(
+           initializeCollator(runtime, locales, options) ==
+           vm::ExecutionStatus::EXCEPTION)) {
+@@ -471,6 +480,9 @@ double Collator::compare(
+   // UChar * strings and their lengths as parameters, as well as a pointer to a
+   // valid UCollator instance. The result is a UCollationResult constant, which
+   // can be one of UCOL_LESS, UCOL_EQUAL or UCOL_GREATER.
++  if (coll_ == nullptr) {
++    return x < y ? -1 : (x == y ? 0 : 1);
++  }
+   auto result = ucol_strcoll(
+       coll_,
+       (const UChar *)x.data(),
+@@ -515,6 +527,8 @@ vm::CallResult<std::vector<std::u16string>> Collator::supportedLocalesOf(
+     vm::Runtime &runtime,
+     const std::vector<std::u16string> &locales,
+     const Options &options) noexcept {
++  if (!platform_unicode::icuFunctions())
++    return std::vector<std::u16string>{};
+   return supportedLocales(runtime, locales, options);
+ }
+ 
+diff --git a/lib/Platform/Intl/impl_icu/LocaleResolver.cpp b/lib/Platform/Intl/impl_icu/LocaleResolver.cpp
+index 844a314..5d8ffed 100644
+--- a/lib/Platform/Intl/impl_icu/LocaleResolver.cpp
++++ b/lib/Platform/Intl/impl_icu/LocaleResolver.cpp
+@@ -169,8 +169,15 @@ std::string bestFitBestAvailableLocale(
+       convertBCP47toICULocale(localeBCP47Object.getLocaleNoExt());
+   const char *acceptList[1]{localeICU.c_str()};
+ 
+-  UEnumeration *availableLocales =
+-      uloc_openAvailableByType(ULOC_AVAILABLE_DEFAULT, &status);
++  // uloc_openAvailableByType is ICU 65; ICU 64 has the collation locales, which
++  // are the same list for matching purposes.
++  UEnumeration *availableLocales = uloc_openAvailableByType
++      ? uloc_openAvailableByType(ULOC_AVAILABLE_DEFAULT, &status)
++      : ucol_openAvailableLocales ? ucol_openAvailableLocales(&status)
++                                  : nullptr;
++  if (availableLocales == nullptr) {
++    return std::string();
++  }
+ 
+   int32_t localeLen = uloc_acceptLanguage(
+       result,
+diff --git a/lib/Platform/Intl/impl_icu/NumberFormat.cpp b/lib/Platform/Intl/impl_icu/NumberFormat.cpp
+new file mode 100644
+index 0000000..58da83f
+--- /dev/null
++++ b/lib/Platform/Intl/impl_icu/NumberFormat.cpp
+@@ -0,0 +1,798 @@
++/*
++ * Copyright (c) Meta Platforms, Inc. and affiliates.
++ *
++ * This source code is licensed under the MIT license found in the
++ * LICENSE file in the root directory of this source tree.
++ */
++
++#include "NumberFormat.h"
++
++#include "IntlUtils.h"
++#include "LocaleBCP47Object.h"
++#include "LocaleResolver.h"
++#include "OptionHelpers.h"
++#include "hermes/Platform/Intl/BCP47Parser.h"
++#include "hermes/Platform/Intl/PlatformIntlShared.h"
++
++#include <algorithm>
++#include <cmath>
++#include <limits>
++#include <cstdio>
++#include <cstdlib>
++
++namespace hermes {
++namespace platform_intl {
++namespace impl_icu {
++
++namespace {
++
++/// A sanctioned simple unit of ECMA-402 and the CLDR unit ICU names it by.
++struct UnitName {
++  const char16_t *ecma;
++  const char16_t *icu;
++};
++
++/// https://402.ecma-international.org/8.0/#table-sanctioned-single-unit-identifiers
++constexpr UnitName kUnits[] = {
++    {u"acre", u"area-acre"},
++    {u"bit", u"digital-bit"},
++    {u"byte", u"digital-byte"},
++    {u"celsius", u"temperature-celsius"},
++    {u"centimeter", u"length-centimeter"},
++    {u"day", u"duration-day"},
++    {u"degree", u"angle-degree"},
++    {u"fahrenheit", u"temperature-fahrenheit"},
++    {u"fluid-ounce", u"volume-fluid-ounce"},
++    {u"foot", u"length-foot"},
++    {u"gallon", u"volume-gallon"},
++    {u"gigabit", u"digital-gigabit"},
++    {u"gigabyte", u"digital-gigabyte"},
++    {u"gram", u"mass-gram"},
++    {u"hectare", u"area-hectare"},
++    {u"hour", u"duration-hour"},
++    {u"inch", u"length-inch"},
++    {u"kilobit", u"digital-kilobit"},
++    {u"kilobyte", u"digital-kilobyte"},
++    {u"kilogram", u"mass-kilogram"},
++    {u"kilometer", u"length-kilometer"},
++    {u"liter", u"volume-liter"},
++    {u"megabit", u"digital-megabit"},
++    {u"megabyte", u"digital-megabyte"},
++    {u"meter", u"length-meter"},
++    {u"mile", u"length-mile"},
++    {u"mile-scandinavian", u"length-mile-scandinavian"},
++    {u"milliliter", u"volume-milliliter"},
++    {u"millimeter", u"length-millimeter"},
++    {u"millisecond", u"duration-millisecond"},
++    {u"minute", u"duration-minute"},
++    {u"month", u"duration-month"},
++    {u"ounce", u"mass-ounce"},
++    {u"percent", u"concentr-percent"},
++    {u"petabyte", u"digital-petabyte"},
++    {u"pound", u"mass-pound"},
++    {u"second", u"duration-second"},
++    {u"stone", u"mass-stone"},
++    {u"terabit", u"digital-terabit"},
++    {u"terabyte", u"digital-terabyte"},
++    {u"week", u"duration-week"},
++    {u"yard", u"length-yard"},
++    {u"year", u"duration-year"},
++};
++
++const char16_t *icuUnit(std::u16string_view ecma) {
++  for (const UnitName &unit : kUnits) {
++    if (ecma == unit.ecma) {
++      return unit.icu;
++    }
++  }
++  return nullptr;
++}
++
++/// Splits "a-per-b" into its parts. Unit names themselves contain "-" but
++/// none contains "-per-".
++bool splitUnit(
++    std::u16string_view unit,
++    std::u16string_view &numerator,
++    std::u16string_view &denominator) {
++  size_t per = unit.find(u"-per-");
++  if (per == std::u16string_view::npos) {
++    numerator = unit;
++    denominator = {};
++    return icuUnit(unit) != nullptr;
++  }
++  numerator = unit.substr(0, per);
++  denominator = unit.substr(per + 5);
++  return icuUnit(numerator) != nullptr && icuUnit(denominator) != nullptr;
++}
++
++/// https://402.ecma-international.org/8.0/#sec-iswellformedcurrencycode
++bool isWellFormedCurrencyCode(std::u16string_view currency) {
++  if (currency.size() != 3) {
++    return false;
++  }
++  return std::all_of(currency.begin(), currency.end(), [](char16_t c) {
++    return (c >= u'A' && c <= u'Z') || (c >= u'a' && c <= u'z');
++  });
++}
++
++const char *roundingModeToken(std::u16string_view mode) {
++  if (mode == u"ceil")
++    return "rounding-mode-ceiling";
++  if (mode == u"floor")
++    return "rounding-mode-floor";
++  if (mode == u"expand")
++    return "rounding-mode-up";
++  if (mode == u"trunc")
++    return "rounding-mode-down";
++  if (mode == u"halfCeil")
++    return "rounding-mode-half-ceiling";
++  if (mode == u"halfFloor")
++    return "rounding-mode-half-floor";
++  if (mode == u"halfTrunc")
++    return "rounding-mode-half-down";
++  if (mode == u"halfEven")
++    return "rounding-mode-half-even";
++  // halfExpand, ECMA-402's default: ties go away from zero.
++  return "rounding-mode-half-up";
++}
++
++void append(std::u16string &out, const char *ascii) {
++  for (; *ascii; ++ascii) {
++    out.push_back(static_cast<char16_t>(*ascii));
++  }
++}
++
++std::u16string toU16(const std::string &ascii) {
++  return std::u16string(ascii.begin(), ascii.end());
++}
++
++/// The ECMA-402 part type of an ICU number field, or nullptr when the field
++/// stands for something the spec has no part for.
++const char16_t *partType(int32_t field, bool negative) {
++  switch (field) {
++    case UNUM_INTEGER_FIELD:
++      return u"integer";
++    case UNUM_FRACTION_FIELD:
++      return u"fraction";
++    case UNUM_DECIMAL_SEPARATOR_FIELD:
++      return u"decimal";
++    case UNUM_EXPONENT_SYMBOL_FIELD:
++      return u"exponentSeparator";
++    case UNUM_EXPONENT_SIGN_FIELD:
++      return u"exponentMinusSign";
++    case UNUM_EXPONENT_FIELD:
++      return u"exponentInteger";
++    case UNUM_GROUPING_SEPARATOR_FIELD:
++      return u"group";
++    case UNUM_CURRENCY_FIELD:
++      return u"currency";
++    case UNUM_PERCENT_FIELD:
++      return u"percentSign";
++    case UNUM_SIGN_FIELD:
++      return negative ? u"minusSign" : u"plusSign";
++    case UNUM_MEASURE_UNIT_FIELD:
++      return u"unit";
++    case UNUM_COMPACT_FIELD:
++      return u"compact";
++    default:
++      return nullptr;
++  }
++}
++
++/// A number as text without ICU: the shortest form that reads back the same.
++std::u16string plainNumber(double number) {
++  if (std::isnan(number))
++    return u"NaN";
++  if (std::isinf(number))
++    return number < 0 ? u"-\u221e" : u"\u221e";
++  char buffer[40];
++  for (int digits = 1; digits <= 17; ++digits) {
++    std::snprintf(buffer, sizeof(buffer), "%.*g", digits, number);
++    if (std::strtod(buffer, nullptr) == number) {
++      break;
++    }
++  }
++  std::string text(buffer);
++  return std::u16string(text.begin(), text.end());
++}
++
++struct FormatterDeleter {
++  void operator()(UFormattedNumber *result) const {
++    unumf_closeResult(result);
++  }
++};
++
++} // namespace
++
++NumberFormat::~NumberFormat() {
++  if (formatter_) {
++    unumf_close(formatter_);
++  }
++}
++
++vm::CallResult<std::vector<std::u16string>> NumberFormat::supportedLocalesOf(
++    vm::Runtime &runtime,
++    const std::vector<std::u16string> &locales,
++    const Options &options) noexcept {
++  return impl_icu::supportedLocales(runtime, locales, options);
++}
++
++vm::ExecutionStatus NumberFormat::setUnitOptions(
++    vm::Runtime &runtime,
++    const Options &options) noexcept {
++  // https://402.ecma-international.org/8.0/#sec-setnumberformatunitoptions
++  auto styleRes = getStringOption(
++      runtime,
++      options,
++      u"style",
++      {u"decimal", u"percent", u"currency", u"unit"},
++      u"decimal");
++  if (LLVM_UNLIKELY(styleRes == vm::ExecutionStatus::EXCEPTION))
++    return vm::ExecutionStatus::EXCEPTION;
++  style_ = **styleRes;
++
++  auto currencyRes = getStringOption(runtime, options, u"currency", {}, {});
++  if (LLVM_UNLIKELY(currencyRes == vm::ExecutionStatus::EXCEPTION))
++    return vm::ExecutionStatus::EXCEPTION;
++  if (!*currencyRes) {
++    if (style_ == u"currency")
++      return runtime.raiseTypeError("Currency is undefined");
++  } else if (!isWellFormedCurrencyCode(**currencyRes)) {
++    return runtime.raiseRangeError("Currency is invalid");
++  }
++
++  auto currencyDisplayRes = getStringOption(
++      runtime,
++      options,
++      u"currencyDisplay",
++      {u"code", u"symbol", u"narrowSymbol", u"name"},
++      u"symbol");
++  if (LLVM_UNLIKELY(currencyDisplayRes == vm::ExecutionStatus::EXCEPTION))
++    return vm::ExecutionStatus::EXCEPTION;
++  auto currencySignRes = getStringOption(
++      runtime,
++      options,
++      u"currencySign",
++      {u"standard", u"accounting"},
++      u"standard");
++  if (LLVM_UNLIKELY(currencySignRes == vm::ExecutionStatus::EXCEPTION))
++    return vm::ExecutionStatus::EXCEPTION;
++
++  auto unitRes = getStringOption(runtime, options, u"unit", {}, {});
++  if (LLVM_UNLIKELY(unitRes == vm::ExecutionStatus::EXCEPTION))
++    return vm::ExecutionStatus::EXCEPTION;
++  if (!*unitRes) {
++    if (style_ == u"unit")
++      return runtime.raiseTypeError("Unit is undefined");
++  } else {
++    std::u16string_view numerator, denominator;
++    if (!splitUnit(**unitRes, numerator, denominator))
++      return runtime.raiseRangeError("Unit is invalid");
++  }
++
++  auto unitDisplayRes = getStringOption(
++      runtime,
++      options,
++      u"unitDisplay",
++      {u"short", u"narrow", u"long"},
++      u"short");
++  if (LLVM_UNLIKELY(unitDisplayRes == vm::ExecutionStatus::EXCEPTION))
++    return vm::ExecutionStatus::EXCEPTION;
++
++  if (style_ == u"currency") {
++    currency_ = toASCIIUppercase(**currencyRes);
++    currencyDisplay_ = **currencyDisplayRes;
++    currencySign_ = **currencySignRes;
++  }
++  if (style_ == u"unit") {
++    unit_ = **unitRes;
++    unitDisplay_ = **unitDisplayRes;
++  }
++  return vm::ExecutionStatus::RETURNED;
++}
++
++vm::ExecutionStatus NumberFormat::setDigitOptions(
++    vm::Runtime &runtime,
++    const Options &options,
++    int mnfdDefault,
++    int mxfdDefault) noexcept {
++  // https://402.ecma-international.org/8.0/#sec-setnfdigitoptions
++  auto mnidRes =
++      getNumberOption(runtime, options, u"minimumIntegerDigits", 1, 21, 1);
++  if (LLVM_UNLIKELY(mnidRes == vm::ExecutionStatus::EXCEPTION))
++    return vm::ExecutionStatus::EXCEPTION;
++  minimumIntegerDigits_ = static_cast<int>(**mnidRes);
++
++  const bool hasMnfd = options.count(u"minimumFractionDigits") > 0;
++  const bool hasMxfd = options.count(u"maximumFractionDigits") > 0;
++  const bool hasMnsd = options.count(u"minimumSignificantDigits") > 0;
++  const bool hasMxsd = options.count(u"maximumSignificantDigits") > 0;
++
++  if (hasMnsd || hasMxsd) {
++    roundingType_ = u"significantDigits";
++    auto mnsdRes =
++        getNumberOption(runtime, options, u"minimumSignificantDigits", 1, 21, 1);
++    if (LLVM_UNLIKELY(mnsdRes == vm::ExecutionStatus::EXCEPTION))
++      return vm::ExecutionStatus::EXCEPTION;
++    const int mnsd = static_cast<int>(**mnsdRes);
++    auto mxsdRes = getNumberOption(
++        runtime, options, u"maximumSignificantDigits", mnsd, 21, 21);
++    if (LLVM_UNLIKELY(mxsdRes == vm::ExecutionStatus::EXCEPTION))
++      return vm::ExecutionStatus::EXCEPTION;
++    significantDigits_ = std::make_pair(mnsd, static_cast<int>(**mxsdRes));
++  } else if (hasMnfd || hasMxfd) {
++    roundingType_ = u"fractionDigits";
++    auto mnfdRes =
++        getNumberOption(runtime, options, u"minimumFractionDigits", 0, 20, {});
++    if (LLVM_UNLIKELY(mnfdRes == vm::ExecutionStatus::EXCEPTION))
++      return vm::ExecutionStatus::EXCEPTION;
++    auto mxfdRes =
++        getNumberOption(runtime, options, u"maximumFractionDigits", 0, 20, {});
++    if (LLVM_UNLIKELY(mxfdRes == vm::ExecutionStatus::EXCEPTION))
++      return vm::ExecutionStatus::EXCEPTION;
++    int mnfd, mxfd;
++    if (!*mnfdRes) {
++      mxfd = static_cast<int>(**mxfdRes);
++      mnfd = std::min(mnfdDefault, mxfd);
++    } else if (!*mxfdRes) {
++      mnfd = static_cast<int>(**mnfdRes);
++      mxfd = std::max(mxfdDefault, mnfd);
++    } else {
++      mnfd = static_cast<int>(**mnfdRes);
++      mxfd = static_cast<int>(**mxfdRes);
++      if (mnfd > mxfd) {
++        return runtime.raiseRangeError(
++            "minimumFractionDigits is greater than maximumFractionDigits");
++      }
++    }
++    fractionDigits_ = std::make_pair(mnfd, mxfd);
++  } else if (notation_ == u"compact") {
++    roundingType_ = u"compactRounding";
++  } else {
++    roundingType_ = u"fractionDigits";
++    fractionDigits_ = std::make_pair(mnfdDefault, mxfdDefault);
++  }
++  return vm::ExecutionStatus::RETURNED;
++}
++
++vm::ExecutionStatus NumberFormat::initialize(
++    vm::Runtime &runtime,
++    const std::vector<std::u16string> &locales,
++    const Options &options) noexcept {
++  if (!platform_unicode::icuFunctions()) {
++    // No ICU: numbers print as JavaScript's own number-to-string would.
++    locale_ = u"en-US";
++    style_ = u"decimal";
++    notation_ = u"standard";
++    signDisplay_ = u"auto";
++    useGrouping_ = u"false";
++    return vm::ExecutionStatus::RETURNED;
++  }
++  // 1. Let requestedLocales be ? CanonicalizeLocaleList(locales).
++  auto requestedLocalesRes =
++      LocaleBCP47Object::canonicalizeLocaleList(runtime, locales);
++  if (LLVM_UNLIKELY(requestedLocalesRes == vm::ExecutionStatus::EXCEPTION))
++    return vm::ExecutionStatus::EXCEPTION;
++
++  // 4. Let matcher be ? GetOption(options, "localeMatcher", ...).
++  Options opt;
++  auto matcherRes = getStringOption(
++      runtime,
++      options,
++      u"localeMatcher",
++      {u"lookup", u"best fit"},
++      u"best fit");
++  if (LLVM_UNLIKELY(matcherRes == vm::ExecutionStatus::EXCEPTION))
++    return vm::ExecutionStatus::EXCEPTION;
++  opt.emplace(u"localeMatcher", **matcherRes);
++
++  // 6. Let numberingSystem be ? GetOption(options, "numberingSystem", ...).
++  auto numberingSystemRes =
++      getStringOption(runtime, options, u"numberingSystem", {}, {});
++  if (LLVM_UNLIKELY(numberingSystemRes == vm::ExecutionStatus::EXCEPTION))
++    return vm::ExecutionStatus::EXCEPTION;
++  if (*numberingSystemRes) {
++    if (!isUnicodeExtensionType(**numberingSystemRes)) {
++      return runtime.raiseRangeError(
++          vm::TwineChar16("Invalid numbering system: ") +
++          vm::TwineChar16((*numberingSystemRes)->c_str()));
++    }
++    opt.emplace(u"nu", **numberingSystemRes);
++  }
++
++  // 10. Let r be ResolveLocale(...).
++  static constexpr std::u16string_view relevantExtensionKeys[] = {u"nu"};
++  auto r = resolveLocale(
++      *requestedLocalesRes,
++      opt,
++      relevantExtensionKeys,
++      [](auto key, auto type, auto locale) { return true; });
++  locale_ = r.localeBcp47Object.getCanonicalizedLocaleId();
++  locale8_ = toUTF8ASCII(locale_);
++  auto nuIt = r.resolvedOpts.find(u"nu");
++  if (nuIt != r.resolvedOpts.end()) {
++    numberingSystem_ = nuIt->second.getString();
++  }
++
++  // 14. Perform ? SetNumberFormatUnitOptions(numberFormat, options).
++  if (LLVM_UNLIKELY(
++          setUnitOptions(runtime, options) == vm::ExecutionStatus::EXCEPTION))
++    return vm::ExecutionStatus::EXCEPTION;
++
++  int mnfdDefault = 0;
++  int mxfdDefault = 3;
++  if (style_ == u"currency") {
++    // CurrencyDigits(currency): ISO 4217's minor unit.
++    UErrorCode status = U_ZERO_ERROR;
++    int32_t digits = ucurr_getDefaultFractionDigits(
++        reinterpret_cast<const UChar *>(currency_->c_str()), &status);
++    if (U_FAILURE(status)) {
++      digits = 2;
++    }
++    mnfdDefault = mxfdDefault = digits;
++  } else if (style_ == u"percent") {
++    mxfdDefault = 0;
++  }
++
++  auto notationRes = getStringOption(
++      runtime,
++      options,
++      u"notation",
++      {u"standard", u"scientific", u"engineering", u"compact"},
++      u"standard");
++  if (LLVM_UNLIKELY(notationRes == vm::ExecutionStatus::EXCEPTION))
++    return vm::ExecutionStatus::EXCEPTION;
++  notation_ = **notationRes;
++
++  if (LLVM_UNLIKELY(
++          setDigitOptions(runtime, options, mnfdDefault, mxfdDefault) ==
++          vm::ExecutionStatus::EXCEPTION))
++    return vm::ExecutionStatus::EXCEPTION;
++
++  auto compactDisplayRes = getStringOption(
++      runtime, options, u"compactDisplay", {u"short", u"long"}, u"short");
++  if (LLVM_UNLIKELY(compactDisplayRes == vm::ExecutionStatus::EXCEPTION))
++    return vm::ExecutionStatus::EXCEPTION;
++  if (notation_ == u"compact") {
++    compactDisplay_ = **compactDisplayRes;
++  }
++
++  // useGrouping: false turns it off; compact notation groups from 5 digits
++  // (min2); otherwise ICU's locale default.
++  auto useGrouping = getBoolOption(options, u"useGrouping", true);
++  useGrouping_ = !*useGrouping ? u"false"
++      : notation_ == u"compact" ? u"min2"
++                                : u"auto";
++
++  auto signDisplayRes = getStringOption(
++      runtime,
++      options,
++      u"signDisplay",
++      {u"auto", u"never", u"always", u"exceptZero", u"negative"},
++      u"auto");
++  if (LLVM_UNLIKELY(signDisplayRes == vm::ExecutionStatus::EXCEPTION))
++    return vm::ExecutionStatus::EXCEPTION;
++  signDisplay_ = **signDisplayRes;
++
++  auto roundingModeRes = getStringOption(
++      runtime,
++      options,
++      u"roundingMode",
++      {u"ceil",
++       u"floor",
++       u"expand",
++       u"trunc",
++       u"halfCeil",
++       u"halfFloor",
++       u"halfExpand",
++       u"halfTrunc",
++       u"halfEven"},
++      u"halfExpand");
++  if (LLVM_UNLIKELY(roundingModeRes == vm::ExecutionStatus::EXCEPTION))
++    return vm::ExecutionStatus::EXCEPTION;
++  roundingMode_ = **roundingModeRes;
++
++  auto trailingZeroRes = getStringOption(
++      runtime,
++      options,
++      u"trailingZeroDisplay",
++      {u"auto", u"stripIfInteger"},
++      u"auto");
++  if (LLVM_UNLIKELY(trailingZeroRes == vm::ExecutionStatus::EXCEPTION))
++    return vm::ExecutionStatus::EXCEPTION;
++  trailingZeroDisplay_ = **trailingZeroRes;
++
++  // Units are named "unit/kilometer-per-hour" from ICU 67; before that only
++  // the "measure-unit/length-kilometer per-measure-unit/duration-hour" form
++  // exists, and newer ICU drops some of its names. So try the modern form
++  // first and fall back to the old one.
++  // The minimum integer digits are "integer-width/*000" from ICU 67 and
++  // "integer-width/+000" before, which newer ICU still reads.
++  UErrorCode status = U_ZERO_ERROR;
++  for (bool legacyUnits : {false, true}) {
++    if (legacyUnits && style_ != u"unit") {
++      break;
++    }
++    for (bool starWidth : {true, false}) {
++      if (!starWidth && minimumIntegerDigits_ <= 1) {
++        break;
++      }
++      const std::u16string skeletonText = skeleton(legacyUnits, starWidth);
++      status = U_ZERO_ERROR;
++      formatter_ = unumf_openForSkeletonAndLocale(
++          reinterpret_cast<const UChar *>(skeletonText.c_str()),
++          static_cast<int32_t>(skeletonText.size()),
++          locale8_.c_str(),
++          &status);
++      if (U_SUCCESS(status) && formatter_) {
++        break;
++      }
++      formatter_ = nullptr;
++    }
++    if (formatter_) {
++      break;
++    }
++  }
++  if (!formatter_) {
++    return runtime.raiseRangeError("Unsupported number format options");
++  }
++  return vm::ExecutionStatus::RETURNED;
++}
++
++std::u16string NumberFormat::skeleton(bool legacyUnits, bool starWidth) const {
++  std::u16string s;
++  auto token = [&s](const std::u16string &text) {
++    if (!s.empty()) {
++      s.push_back(u' ');
++    }
++    s += text;
++  };
++  auto tokenAscii = [&s](const char *text) {
++    if (!s.empty()) {
++      s.push_back(u' ');
++    }
++    append(s, text);
++  };
++
++  if (style_ == u"percent") {
++    tokenAscii("percent scale/100");
++  } else if (style_ == u"currency") {
++    token(u"currency/" + *currency_);
++    if (*currencyDisplay_ == u"code")
++      tokenAscii("unit-width-iso-code");
++    else if (*currencyDisplay_ == u"narrowSymbol")
++      tokenAscii("unit-width-narrow");
++    else if (*currencyDisplay_ == u"name")
++      tokenAscii("unit-width-full-name");
++  } else if (style_ == u"unit") {
++    if (legacyUnits) {
++      std::u16string_view numerator, denominator;
++      splitUnit(*unit_, numerator, denominator);
++      token(u"measure-unit/" + std::u16string(icuUnit(numerator)));
++      if (!denominator.empty()) {
++        token(u"per-measure-unit/" + std::u16string(icuUnit(denominator)));
++      }
++    } else {
++      token(u"unit/" + *unit_);
++    }
++    if (*unitDisplay_ == u"narrow")
++      tokenAscii("unit-width-narrow");
++    else if (*unitDisplay_ == u"long")
++      tokenAscii("unit-width-full-name");
++    else
++      tokenAscii("unit-width-short");
++  }
++
++  if (notation_ == u"scientific")
++    tokenAscii("scientific");
++  else if (notation_ == u"engineering")
++    tokenAscii("engineering");
++  else if (notation_ == u"compact")
++    tokenAscii(*compactDisplay_ == u"long" ? "compact-long" : "compact-short");
++
++  if (roundingType_ == u"significantDigits") {
++    std::u16string precision(significantDigits_->first, u'@');
++    precision.append(
++        significantDigits_->second - significantDigits_->first, u'#');
++    if (trailingZeroDisplay_ == u"stripIfInteger")
++      precision += u"/w";
++    token(precision);
++  } else if (roundingType_ == u"fractionDigits") {
++    const int mn = fractionDigits_->first;
++    const int mx = fractionDigits_->second;
++    if (mx == 0) {
++      tokenAscii("precision-integer");
++    } else {
++      std::u16string precision = u".";
++      precision.append(mn, u'0');
++      precision.append(mx - mn, u'#');
++      if (trailingZeroDisplay_ == u"stripIfInteger")
++        precision += u"/w";
++      token(precision);
++    }
++  }
++
++  tokenAscii(roundingModeToken(roundingMode_));
++
++  if (minimumIntegerDigits_ > 1) {
++    token(
++        std::u16string(u"integer-width/") + (starWidth ? u"*" : u"+") +
++        std::u16string(minimumIntegerDigits_, u'0'));
++  }
++
++  if (useGrouping_ == u"false")
++    tokenAscii("group-off");
++  else if (useGrouping_ == u"min2")
++    tokenAscii("group-min2");
++
++  const bool accounting = style_ == u"currency" && currencySign_ &&
++      *currencySign_ == u"accounting";
++  if (signDisplay_ == u"never") {
++    tokenAscii("sign-never");
++  } else if (signDisplay_ == u"always") {
++    tokenAscii(accounting ? "sign-accounting-always" : "sign-always");
++  } else if (signDisplay_ == u"exceptZero") {
++    tokenAscii(
++        accounting ? "sign-accounting-except-zero" : "sign-except-zero");
++  } else if (signDisplay_ == u"negative") {
++    tokenAscii(accounting ? "sign-accounting-negative" : "sign-negative");
++  } else if (accounting) {
++    tokenAscii("sign-accounting");
++  }
++
++  return s;
++}
++
++std::u16string NumberFormat::formatInto(
++    double number,
++    UFormattedNumber *result) noexcept {
++  UErrorCode status = U_ZERO_ERROR;
++  // A NaN carries a sign bit that ICU would print as "-NaN".
++  if (std::isnan(number)) {
++    number = std::numeric_limits<double>::quiet_NaN();
++  }
++  unumf_formatDouble(formatter_, number, result, &status);
++  std::u16string text;
++  if (U_FAILURE(status)) {
++    return text;
++  }
++  int32_t length = unumf_resultToString(result, nullptr, 0, &status);
++  if (status == U_BUFFER_OVERFLOW_ERROR) {
++    status = U_ZERO_ERROR;
++    text.resize(length);
++    unumf_resultToString(
++        result, reinterpret_cast<UChar *>(&text[0]), length, &status);
++  }
++  return U_FAILURE(status) ? std::u16string() : text;
++}
++
++std::u16string NumberFormat::format(double number) noexcept {
++  if (!formatter_) {
++    return plainNumber(number);
++  }
++  UErrorCode status = U_ZERO_ERROR;
++  std::unique_ptr<UFormattedNumber, FormatterDeleter> result(
++      unumf_openResult(&status));
++  if (U_FAILURE(status)) {
++    return std::u16string();
++  }
++  return formatInto(number, result.get());
++}
++
++std::vector<Part> NumberFormat::formatToParts(double number) noexcept {
++  if (!formatter_) {
++    Part part;
++    part[u"type"] = std::isnan(number) ? u"nan" : u"integer";
++    part[u"value"] = plainNumber(number);
++    return {part};
++  }
++  UErrorCode status = U_ZERO_ERROR;
++  std::unique_ptr<UFormattedNumber, FormatterDeleter> result(
++      unumf_openResult(&status));
++  if (U_FAILURE(status)) {
++    return {};
++  }
++  const std::u16string text = formatInto(number, result.get());
++  if (text.empty()) {
++    return {};
++  }
++
++  // Each character belongs to the narrowest field that contains it: the
++  // grouping separators lie inside the integer field, for example.
++  std::vector<int32_t> fieldOf(text.size(), -1);
++  std::vector<int32_t> spanOf(text.size(), INT32_MAX);
++  UFieldPositionIterator *positions = ufieldpositer_open(&status);
++  if (U_SUCCESS(status)) {
++    unumf_resultGetAllFieldPositions(result.get(), positions, &status);
++    if (U_SUCCESS(status)) {
++      int32_t begin = 0, end = 0;
++      for (;;) {
++        int32_t field = ufieldpositer_next(positions, &begin, &end);
++        if (field < 0) {
++          break;
++        }
++        for (int32_t i = begin; i < end && i < (int32_t)text.size(); ++i) {
++          if (end - begin < spanOf[i]) {
++            spanOf[i] = end - begin;
++            fieldOf[i] = field;
++          }
++        }
++      }
++    }
++    ufieldpositer_close(positions);
++  }
++
++  const bool negative = text.find(u'-') != std::u16string::npos ||
++      text.find(u'\u2212') != std::u16string::npos || std::signbit(number);
++  const bool notANumber = std::isnan(number);
++  const bool infinite = std::isinf(number);
++
++  std::vector<Part> parts;
++  size_t start = 0;
++  while (start < text.size()) {
++    size_t end = start + 1;
++    while (end < text.size() && fieldOf[end] == fieldOf[start]) {
++      ++end;
++    }
++    const char16_t *type = fieldOf[start] < 0
++        ? nullptr
++        : partType(fieldOf[start], negative);
++    if (type && std::u16string_view(type) == u"integer") {
++      if (notANumber)
++        type = u"nan";
++      else if (infinite)
++        type = u"infinity";
++    }
++    Part part;
++    part[u"type"] = type ? type : u"literal";
++    part[u"value"] = text.substr(start, end - start);
++    parts.push_back(std::move(part));
++    start = end;
++  }
++  return parts;
++}
++
++Options NumberFormat::resolvedOptions() noexcept {
++  Options options;
++  options.emplace(u"locale", locale_);
++  options.emplace(u"numberingSystem", numberingSystem_.value_or(u"latn"));
++  options.emplace(u"style", style_);
++  if (currency_) {
++    options.emplace(u"currency", *currency_);
++    options.emplace(u"currencyDisplay", *currencyDisplay_);
++    options.emplace(u"currencySign", *currencySign_);
++  }
++  if (unit_) {
++    options.emplace(u"unit", *unit_);
++    options.emplace(u"unitDisplay", *unitDisplay_);
++  }
++  options.emplace(
++      u"minimumIntegerDigits", static_cast<double>(minimumIntegerDigits_));
++  if (fractionDigits_) {
++    options.emplace(
++        u"minimumFractionDigits", static_cast<double>(fractionDigits_->first));
++    options.emplace(
++        u"maximumFractionDigits", static_cast<double>(fractionDigits_->second));
++  }
++  if (significantDigits_) {
++    options.emplace(
++        u"minimumSignificantDigits",
++        static_cast<double>(significantDigits_->first));
++    options.emplace(
++        u"maximumSignificantDigits",
++        static_cast<double>(significantDigits_->second));
++  }
++  options.emplace(u"useGrouping", Option(useGrouping_ != u"false"));
++  options.emplace(u"notation", notation_);
++  if (compactDisplay_) {
++    options.emplace(u"compactDisplay", *compactDisplay_);
++  }
++  options.emplace(u"signDisplay", signDisplay_);
++  options.emplace(u"roundingMode", roundingMode_);
++  options.emplace(u"trailingZeroDisplay", trailingZeroDisplay_);
++  return options;
++}
++
++} // namespace impl_icu
++} // namespace platform_intl
++} // namespace hermes
+diff --git a/lib/Platform/Intl/impl_icu/NumberFormat.h b/lib/Platform/Intl/impl_icu/NumberFormat.h
+new file mode 100644
+index 0000000..3836e39
+--- /dev/null
++++ b/lib/Platform/Intl/impl_icu/NumberFormat.h
+@@ -0,0 +1,92 @@
++/*
++ * Copyright (c) Meta Platforms, Inc. and affiliates.
++ *
++ * This source code is licensed under the MIT license found in the
++ * LICENSE file in the root directory of this source tree.
++ */
++
++#ifndef HERMES_PLATFORMINTL_IMPLICU_NUMBERFORMAT_H
++#define HERMES_PLATFORMINTL_IMPLICU_NUMBERFORMAT_H
++
++#include "hermes/Platform/Intl/PlatformIntl.h"
++#include "hermes/Platform/Unicode/icu.h"
++
++#include <memory>
++#include <optional>
++#include <string>
++#include <vector>
++
++namespace hermes {
++namespace platform_intl {
++namespace impl_icu {
++
++/// https://402.ecma-international.org/8.0/#numberformat-objects on ICU's
++/// number skeletons (unumf_*). Every option becomes a part of one skeleton
++/// string, which ICU turns into the formatter.
++class NumberFormat : public platform_intl::NumberFormat {
++ public:
++  NumberFormat() = default;
++  ~NumberFormat() override;
++
++  static vm::CallResult<std::vector<std::u16string>> supportedLocalesOf(
++      vm::Runtime &runtime,
++      const std::vector<std::u16string> &locales,
++      const Options &options) noexcept;
++
++  /// https://402.ecma-international.org/8.0/#sec-initializenumberformat
++  vm::ExecutionStatus initialize(
++      vm::Runtime &runtime,
++      const std::vector<std::u16string> &locales,
++      const Options &options) noexcept;
++
++  Options resolvedOptions() noexcept;
++  std::u16string format(double number) noexcept;
++  std::vector<Part> formatToParts(double number) noexcept;
++
++ private:
++  vm::ExecutionStatus setUnitOptions(
++      vm::Runtime &runtime,
++      const Options &options) noexcept;
++  vm::ExecutionStatus setDigitOptions(
++      vm::Runtime &runtime,
++      const Options &options,
++      int mnfdDefault,
++      int mxfdDefault) noexcept;
++
++  /// The ICU number skeleton that stands for the resolved options.
++  std::u16string skeleton(bool legacyUnits, bool starWidth) const;
++
++  /// Formats \p number into \p result and returns its text.
++  std::u16string formatInto(double number, UFormattedNumber *result) noexcept;
++
++  std::u16string locale_;
++  std::string locale8_;
++  std::optional<std::u16string> numberingSystem_;
++  std::u16string style_;
++  std::optional<std::u16string> currency_;
++  std::optional<std::u16string> currencyDisplay_;
++  std::optional<std::u16string> currencySign_;
++  std::optional<std::u16string> unit_;
++  std::optional<std::u16string> unitDisplay_;
++  int minimumIntegerDigits_ = 1;
++  std::optional<std::pair<int, int>> fractionDigits_;
++  std::optional<std::pair<int, int>> significantDigits_;
++  /// "fractionDigits", "significantDigits" or "compactRounding".
++  std::u16string roundingType_;
++  /// "auto" or "stripIfInteger".
++  std::u16string trailingZeroDisplay_ = u"auto";
++  std::u16string roundingMode_ = u"halfExpand";
++  /// "always", "auto", "min2" or "false".
++  std::u16string useGrouping_;
++  std::u16string notation_;
++  std::optional<std::u16string> compactDisplay_;
++  std::u16string signDisplay_;
++
++  UNumberFormatter *formatter_ = nullptr;
++};
++
++} // namespace impl_icu
++} // namespace platform_intl
++} // namespace hermes
++
++#endif // HERMES_PLATFORMINTL_IMPLICU_NUMBERFORMAT_H
+diff --git a/lib/Platform/Unicode/ICULoader.cpp b/lib/Platform/Unicode/ICULoader.cpp
+index 699f41a..ef3bcfd 100644
+--- a/lib/Platform/Unicode/ICULoader.cpp
++++ b/lib/Platform/Unicode/ICULoader.cpp
+@@ -14,7 +14,12 @@
+ #define HERMES_ICU_LOADER_NO_MACROS 1
+ #include "hermes/Platform/Unicode/icu.h"
+ 
++#ifdef _WIN32
++#define WIN32_LEAN_AND_MEAN
++#include <windows.h>
++#else
+ #include <dlfcn.h>
++#endif
+ 
+ #include <cstdio>
+ #include <cstdlib>
+@@ -25,51 +30,82 @@ namespace platform_unicode {
+ 
+ namespace {
+ 
++/// The oldest ICU the table is filled from.
++constexpr int kMinimumICUVersion = 64;
++
+ ICUFunctions gFunctions;
+ 
+-/// Resolves one entry point, preferring the versioned symbol ("ucol_open_78")
+-/// and falling back to the plain name (ICU built without renaming).
+-template <typename Fn>
+-bool resolveSymbol(void *handle, const char *name, int version, Fn *out) {
+-  std::string suffixed = std::string(name) + "_" + std::to_string(version);
+-  if (void *symbol = dlsym(handle, suffixed.c_str())) {
+-    *out = reinterpret_cast<Fn>(symbol);
+-    return true;
+-  }
+-  if (void *symbol = dlsym(handle, name)) {
+-    *out = reinterpret_cast<Fn>(symbol);
+-    return true;
++#ifdef _WIN32
++using LibraryHandle = HMODULE;
++
++void *findSymbol(LibraryHandle library, const std::string &name) {
++  return reinterpret_cast<void *>(GetProcAddress(library, name.c_str()));
++}
++
++void closeLibrary(LibraryHandle library) {
++  FreeLibrary(library);
++}
++#else
++using LibraryHandle = void *;
++
++void *findSymbol(LibraryHandle library, const std::string &name) {
++  return dlsym(library, name.c_str());
++}
++
++void closeLibrary(LibraryHandle library) {
++  dlclose(library);
++}
++#endif
++
++/// Resolves one entry point. \p version is the suffix of a renamed library
++/// ("ucol_open_74" in libicui18n.so.74), or -1 for a library that exports the
++/// plain names (icu.dll, libicucore, and ICU built without renaming). The
++/// suffixed name is tried first, then the plain one.
++void *resolveSymbol(LibraryHandle library, const char *name, int version) {
++  if (version >= 0) {
++    if (void *symbol =
++            findSymbol(library, std::string(name) + "_" + std::to_string(version))) {
++      return symbol;
++    }
+   }
+-  return false;
++  return findSymbol(library, name);
+ }
+ 
+-bool resolveAll(void *handle, int version) {
+-#define HERMES_ICU_SYMBOL(name)                                    \
+-  if (!resolveSymbol(handle, #name, version, &gFunctions.name)) {  \
+-    return false;                                                  \
+-  }
+-  HERMES_ICU_SYMBOL(u_strToLower);
+-  HERMES_ICU_SYMBOL(u_strToUpper);
+-  HERMES_ICU_SYMBOL(ucol_open);
+-  HERMES_ICU_SYMBOL(ucol_close);
+-  HERMES_ICU_SYMBOL(ucol_setAttribute);
+-  HERMES_ICU_SYMBOL(ucol_strcoll);
+-  HERMES_ICU_SYMBOL(udat_open);
+-  HERMES_ICU_SYMBOL(udat_close);
+-  HERMES_ICU_SYMBOL(udat_format);
+-  HERMES_ICU_SYMBOL(uloc_getDefault);
+-  HERMES_ICU_SYMBOL(unorm2_getNFCInstance);
+-  HERMES_ICU_SYMBOL(unorm2_getNFDInstance);
+-  HERMES_ICU_SYMBOL(unorm2_getNFKCInstance);
+-  HERMES_ICU_SYMBOL(unorm2_getNFKDInstance);
+-  HERMES_ICU_SYMBOL(unorm2_normalize);
+-#undef HERMES_ICU_SYMBOL
++/// Fills the table from \p library. The required entries must all resolve and
++/// the library must be ICU 64 or later; the optional ones may stay null.
++bool fillTable(LibraryHandle library, int version) {
++  ICUFunctions table{};
++  bool complete = true;
++#define HERMES_ICU_REQUIRED(name)                                       \
++  table.name = reinterpret_cast<decltype(table.name)>(                  \
++      resolveSymbol(library, #name, version));                          \
++  complete = complete && table.name != nullptr;
++#define HERMES_ICU_OPTIONAL(name)                                       \
++  table.name = reinterpret_cast<decltype(table.name)>(                  \
++      resolveSymbol(library, #name, version));
++  HERMES_ICU_REQUIRED_FUNCTIONS(HERMES_ICU_REQUIRED)
++  HERMES_ICU_OPTIONAL_FUNCTIONS(HERMES_ICU_OPTIONAL)
++#undef HERMES_ICU_REQUIRED
++#undef HERMES_ICU_OPTIONAL
++  if (!complete) {
++    return false;
++  }
++  UVersionInfo icuVersion;
++  table.u_getVersion(icuVersion);
++  if (icuVersion[0] < kMinimumICUVersion) {
++    return false;
++  }
++  gFunctions = table;
+   return true;
+ }
+ 
+-/// Returns the version to try, or -1 to search. 0 means "do not load".
++/// The version to try from the environment, -1 to search, or 0 for "do not
++/// load" (so tests can exercise the fallbacks).
+ int requestedVersion() {
+-  const char *value = std::getenv("HERMES_ICU_VERSION");
++  const char *value = std::getenv("RN_GPUI_ICU_VERSION");
++  if (value == nullptr || *value == '\0') {
++    value = std::getenv("HERMES_ICU_VERSION");
++  }
+   if (value == nullptr || *value == '\0') {
+     return -1;
+   }
+@@ -84,18 +120,64 @@ int requestedVersion() {
+ void warnNoICU() {
+   std::fprintf(
+       stderr,
+-      "hermes: no system ICU found (libicui18n.so.N); non-ASCII case "
+-      "mapping, collation and normalization are disabled\n");
++      "hermes: no usable system ICU (version %d or later) was found; Intl is "
++      "limited and non-ASCII case mapping, collation and normalization are "
++      "disabled\n",
++      kMinimumICUVersion);
+ }
+ 
++#if defined(_WIN32)
++
++const ICUFunctions *load() {
++  if (requestedVersion() == 0) {
++    warnNoICU();
++    return nullptr;
++  }
++  // icu.dll is in the system directory since Windows 10 1903. It is never
++  // linked, so an older Windows still starts.
++  LibraryHandle library =
++      LoadLibraryExW(L"icu.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
++  if (library != nullptr && fillTable(library, -1)) {
++    return &gFunctions;
++  }
++  if (library != nullptr) {
++    closeLibrary(library);
++  }
++  warnNoICU();
++  return nullptr;
++}
++
++#elif defined(__APPLE__)
++
++const ICUFunctions *load() {
++  if (requestedVersion() == 0) {
++    warnNoICU();
++    return nullptr;
++  }
++  LibraryHandle library =
++      dlopen("/usr/lib/libicucore.A.dylib", RTLD_NOW | RTLD_LOCAL);
++  if (library != nullptr && fillTable(library, -1)) {
++    return &gFunctions;
++  }
++  if (library != nullptr) {
++    closeLibrary(library);
++  }
++  warnNoICU();
++  return nullptr;
++}
++
++#else
++
+ const ICUFunctions *loadVersion(int version) {
+   std::string soname = "libicui18n.so." + std::to_string(version);
+-  void *handle = dlopen(soname.c_str(), RTLD_NOW | RTLD_LOCAL);
+-  if (handle == nullptr) {
++  LibraryHandle library = dlopen(soname.c_str(), RTLD_NOW | RTLD_LOCAL);
++  if (library == nullptr) {
+     return nullptr;
+   }
+-  if (!resolveAll(handle, version)) {
+-    dlclose(handle);
++  // libicui18n depends on libicuuc, and dlsym searches a library's
++  // dependencies, so one handle reaches the u_* and uloc_* entries too.
++  if (!fillTable(library, version)) {
++    closeLibrary(library);
+     return nullptr;
+   }
+   return &gFunctions;
+@@ -114,7 +196,7 @@ const ICUFunctions *load() {
+     }
+     return functions;
+   }
+-  for (int version = 100; version >= 50; --version) {
++  for (int version = 100; version >= kMinimumICUVersion; --version) {
+     if (const ICUFunctions *functions = loadVersion(version)) {
+       return functions;
+     }
+@@ -123,6 +205,8 @@ const ICUFunctions *load() {
+   return nullptr;
+ }
+ 
++#endif
++
+ } // namespace
+ 
+ const ICUFunctions *icuFunctions() {
+diff --git a/lib/VM/JSLib/Intl.cpp b/lib/VM/JSLib/Intl.cpp
+index d936f56..6258fbf 100644
+--- a/lib/VM/JSLib/Intl.cpp
++++ b/lib/VM/JSLib/Intl.cpp
+@@ -347,6 +347,8 @@ constexpr OptionData kNumberFormatOptions[] = {
+     {u"compactDisplay", platform_intl::Option::Kind::String, 0},
+     {u"useGrouping", platform_intl::Option::Kind::Bool, 0},
+     {u"signDisplay", platform_intl::Option::Kind::String, 0},
++    {u"roundingMode", platform_intl::Option::Kind::String, 0},
++    {u"trailingZeroDisplay", platform_intl::Option::Kind::String, 0},
+ };
+ 
+ CallResult<platform_intl::Options> normalizeOptions(
+@@ -1292,7 +1294,7 @@ void defineIntlNumberFormat(Runtime &runtime, Handle<JSObject> intl) {
+       false,
+       true);
+ 
+-#ifndef __APPLE__
++#if !defined(__APPLE__) || defined(HERMES_ICU_RUNTIME_LOAD)
+   defineMethod(
+       runtime,
+       prototype,

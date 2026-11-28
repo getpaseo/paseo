@@ -9,4 +9,8 @@ void rn_gpui_on_image_load_result(
     double width,
     double height,
     rust::String error);
-}
+void rn_gpui_on_image_progress(
+    std::uint64_t request_id,
+    std::int64_t loaded,
+    std::int64_t total);
+} // namespace rngpui

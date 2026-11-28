@@ -45,10 +45,10 @@ opt-level = 0
 # revision is never written down by hand — commit whatever the run rewrites.
 [patch.crates-io]
 # Managed by @react-native-gpui/cli autolink; do not edit between these markers.
-react-native-gpui = { path = "../../../packages/core/ReactGpui/rn-gpui" }
-rn-gpui-sys = { path = "../../../packages/core/ReactGpui/rn-gpui-sys" }
-rn-gpui-module = { path = "../../../packages/core/ReactGpui/rn-gpui-module" }
-rn-gpui-module-build = { path = "../../../packages/core/ReactGpui/rn-gpui-module-build" }
-gpui = { git = "https://github.com/streetwriters/gpui-fast", rev = "8da7d89" }
-gpui_platform = { git = "https://github.com/streetwriters/gpui-fast", rev = "8da7d89" }
+react-native-gpui = { path = "../../../node_modules/@react-native-gpui/core/ReactGpui/rn-gpui" }
+rn-gpui-sys = { path = "../../../node_modules/@react-native-gpui/core/ReactGpui/rn-gpui-sys" }
+rn-gpui-module = { path = "../../../node_modules/@react-native-gpui/core/ReactGpui/rn-gpui-module" }
+rn-gpui-module-build = { path = "../../../node_modules/@react-native-gpui/core/ReactGpui/rn-gpui-module-build" }
+gpui = { git = "https://github.com/streetwriters/gpui-fast", rev = "1ad3cc3" }
+gpui_platform = { git = "https://github.com/streetwriters/gpui-fast", rev = "1ad3cc3" }
 # End managed by autolink.

@@ -9,6 +9,7 @@ import {
   recordUsage,
   targetGcEnabled,
   targetGcMaxAgeDays,
+  targetGcSupersededDays,
   unitKey,
 } from './target-gc.js';
 
@@ -199,6 +200,55 @@ describe('pruning', () => {
     expect(fs.existsSync(path.join(incremental, 'app-new'))).toBe(true);
   });
 
+  test('a superseded unit goes after a day while the newest keeps the week', () => {
+    const target = targetDir();
+    unit(target, { name: 'gpui', hash: HASH_A, daysOld: 3 });
+    unit(target, { name: 'gpui', hash: HASH_B, daysOld: 2 });
+    unit(target, { name: 'gpui', hash: HASH_C, daysOld: 0.5 });
+    const stale = findStale(target, { now: NOW, maxAgeDays: 7 });
+    // A and B were replaced and are older than a day; C is the newest.
+    expect(stale.units.map(staleUnit => staleUnit.hash).sort()).toEqual(
+      [HASH_A, HASH_B].sort(),
+    );
+  });
+
+  test('a superseded unit used within the last day stays', () => {
+    const target = targetDir();
+    unit(target, { name: 'gpui', hash: HASH_A, daysOld: 0.5 });
+    unit(target, { name: 'gpui', hash: HASH_B, daysOld: 0.1 });
+    expect(findStale(target, { now: NOW, maxAgeDays: 7 }).units).toEqual([]);
+  });
+
+  test('the superseded period can be changed', () => {
+    const target = targetDir();
+    unit(target, { name: 'gpui', hash: HASH_A, daysOld: 2 });
+    unit(target, { name: 'gpui', hash: HASH_B, daysOld: 0.1 });
+    expect(
+      findStale(target, { now: NOW, maxAgeDays: 7, supersededDays: 3 }).units,
+    ).toEqual([]);
+  });
+
+  test('an older incremental cache of a crate goes after a day, the newest keeps the week', () => {
+    const target = targetDir();
+    unit(target, { name: 'app', hash: HASH_A, daysOld: 0.1 });
+    const incremental = path.join(target, 'debug', 'incremental');
+    for (const [name, daysOld] of [
+      [`app-${HASH_A}`, 2],
+      [`app-${HASH_B}`, 3],
+      [`other-${HASH_A}`, 3],
+    ]) {
+      write(path.join(incremental, name, 's-session', 'query-cache.bin'));
+      age(path.join(incremental, name, 's-session'), daysOld);
+      age(path.join(incremental, name), daysOld);
+    }
+    const stale = findStale(target, { now: NOW, maxAgeDays: 7 });
+    // The 3-day cache of `app` was replaced by the 2-day one; `other` has no
+    // newer cache, so its 3 days are within the week.
+    expect(stale.incremental.map(dir => path.basename(dir))).toEqual([
+      `app-${HASH_B}`,
+    ]);
+  });
+
   test('a missing target directory is a no-op', () => {
     const target = path.join(targetDir(), 'never-built');
     expect(pruneTarget(target, { now: NOW, log: () => {} })).toEqual({
@@ -210,6 +260,16 @@ describe('pruning', () => {
 });
 
 describe('configuration', () => {
+  test('keeps replaced units for a day unless told otherwise', () => {
+    expect(targetGcSupersededDays({})).toBe(1);
+    expect(
+      targetGcSupersededDays({ RN_GPUI_TARGET_GC_SUPERSEDED_DAYS: '2' }),
+    ).toBe(2);
+    expect(
+      targetGcSupersededDays({ RN_GPUI_TARGET_GC_SUPERSEDED_DAYS: 'x' }),
+    ).toBe(1);
+  });
+
   test('never runs in CI, and can be turned off', () => {
     expect(targetGcEnabled({})).toBe(true);
     expect(targetGcEnabled({ CI: 'true' })).toBe(false);

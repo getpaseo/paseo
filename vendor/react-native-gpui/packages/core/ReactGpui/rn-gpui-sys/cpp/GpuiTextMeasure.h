@@ -3,6 +3,9 @@
 // function-pointer table.
 #pragma once
 
+#include <string>
+#include <vector>
+
 #include <react/renderer/attributedstring/AttributedString.h>
 #include <react/renderer/attributedstring/ParagraphAttributes.h>
 
@@ -12,7 +15,23 @@ struct GpuiTextSize {
   float height;
 };
 
+struct GpuiTextLine {
+  std::string text;
+  float x;
+  float y;
+  float width;
+  float height;
+  float ascender;
+  float descender;
+  float capHeight;
+  float xHeight;
+};
+
 struct GpuiTextMeasureTable {
+  std::vector<GpuiTextLine> (*measureLines)(
+      const facebook::react::AttributedString& text,
+      const facebook::react::ParagraphAttributes& attributes,
+      float maxWidth);
   GpuiTextSize (*measureParagraph)(
       const facebook::react::AttributedString& text,
       const facebook::react::ParagraphAttributes& attributes,

@@ -31,9 +31,20 @@ std::string imagePropsJson(
     case facebook::react::ImageResizeMode::Center:
       object["resizeMode"] = "center";
       break;
+    case facebook::react::ImageResizeMode::Repeat:
+      object["resizeMode"] = "repeat";
+      break;
+    case facebook::react::ImageResizeMode::None:
+      object["resizeMode"] = "none";
+      break;
     default:
       object["resizeMode"] = "stretch";
       break;
+  }
+  object["tintColor"] = static_cast<double>(argb(props.tintColor));
+  object["blurRadius"] = props.blurRadius;
+  if (!props.defaultSource.uri.empty()) {
+    object["defaultSource"] = props.defaultSource.uri;
   }
   return folly::toJson(object);
 }

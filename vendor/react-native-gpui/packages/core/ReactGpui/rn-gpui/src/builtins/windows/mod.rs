@@ -1,6 +1,6 @@
 use rn_gpui_module::{FromValue, ModuleError, ModuleThread, Path, Value};
 
-use crate::bootstrap::WindowTitleBar;
+use crate::bootstrap::{WindowBackground, WindowTitleBar};
 use crate::builtins::main_thread::on_main;
 use crate::builtins::rn_gpui_specs::{
     NativeGpuiWindowsEvents, NativeGpuiWindowsSpec, WindowHandle, WindowList, WindowOpenOptions,
@@ -85,6 +85,7 @@ impl NativeGpuiWindowsSpec for WindowsModule {
     async fn window_open(&self, options: WindowOpenOptions) -> Result<WindowHandle, ModuleError> {
         let result = on_main(move |cx| -> DesktopResult {
             let always_on_top = options.always_on_top.unwrap_or(false);
+            let on_all_workspaces = options.visible_on_all_workspaces.unwrap_or(false);
             let open = windows::OpenWindowOptions {
                 component: options.component,
                 props: options
@@ -104,15 +105,33 @@ impl NativeGpuiWindowsSpec for WindowsModule {
                     .as_deref()
                     .map(WindowTitleBar::from_name)
                     .unwrap_or_default(),
+                background: options
+                    .background
+                    .as_deref()
+                    .map(WindowBackground::from_name)
+                    .unwrap_or_default(),
+                window_buttons: options.window_buttons,
+                shadow: options.shadow,
                 traffic_light_position: options
                     .traffic_light_position
                     .map(|position| (position.x as f32, position.y as f32)),
                 role: windows::WindowRoleOverride::Secondary,
                 popup: false,
+                ..Default::default()
             };
             let key = windows::open_window(cx, open)?;
+            // Both are requests the platform may not grant (Wayland has no
+            // raise-above, and only macOS has Spaces). A window that was asked
+            // for them opens anyway; `capabilities()` says what is honoured.
             if always_on_top {
-                windows::set_always_on_top(cx, key, true)?;
+                if let Err(error) = windows::set_always_on_top(cx, key, true) {
+                    log::warn!("[desktop] alwaysOnTop was not applied: {error}");
+                }
+            }
+            if on_all_workspaces {
+                if let Err(error) = windows::set_visible_on_all_workspaces(cx, key, true) {
+                    log::warn!("[desktop] visibleOnAllWorkspaces was not applied: {error}");
+                }
             }
             Ok(serde_json::json!({ "windowId": key }))
         })
@@ -123,6 +142,12 @@ impl NativeGpuiWindowsSpec for WindowsModule {
     async fn window_list(&self) -> Result<WindowList, ModuleError> {
         let result = on_main(|cx| windows::list_windows(cx)).await?;
         typed("windowList", result)
+    }
+
+    fn window_get_state_sync(&self, window_id: i32) -> Result<WindowState, ModuleError> {
+        let state = crate::desktop::window_mirror::get(window_key(window_id))
+            .ok_or_else(|| ModuleError::new(format!("window {window_id} is not open")))?;
+        typed("windowGetStateSync", Ok(state))
     }
 
     async fn window_get_state(&self, window_id: i32) -> Result<WindowState, ModuleError> {
@@ -229,8 +254,28 @@ impl NativeGpuiWindowsSpec for WindowsModule {
             .map_err(module_error)
     }
 
+    async fn window_set_visible_on_all_workspaces(
+        &self,
+        window_id: i32,
+        visible: bool,
+    ) -> Result<(), ModuleError> {
+        on_main(move |cx| {
+            windows::set_visible_on_all_workspaces(cx, window_key(window_id), visible)
+        })
+        .await?
+        .map(|_| ())
+        .map_err(module_error)
+    }
+
     async fn window_minimize(&self, window_id: i32) -> Result<(), ModuleError> {
         on_main(move |cx| windows::minimize(cx, window_key(window_id)))
+            .await?
+            .map(|_| ())
+            .map_err(module_error)
+    }
+
+    async fn window_move_focus(&self, window_id: i32, backwards: bool) -> Result<(), ModuleError> {
+        on_main(move |cx| windows::move_focus(cx, window_key(window_id), backwards))
             .await?
             .map(|_| ())
             .map_err(module_error)
@@ -252,6 +297,40 @@ impl NativeGpuiWindowsSpec for WindowsModule {
 
     async fn window_toggle_maximize(&self, window_id: i32) -> Result<(), ModuleError> {
         on_main(move |cx| windows::toggle_maximize(cx, window_key(window_id)))
+            .await?
+            .map(|_| ())
+            .map_err(module_error)
+    }
+
+    async fn window_set_zoom_factor(&self, window_id: i32, factor: f64) -> Result<(), ModuleError> {
+        on_main(move |cx| windows::set_zoom_factor(cx, window_key(window_id), factor as f32))
+            .await?
+            .map(|_| ())
+            .map_err(module_error)
+    }
+
+    async fn window_set_background_color(
+        &self,
+        window_id: i32,
+        color: f64,
+    ) -> Result<(), ModuleError> {
+        on_main(move |cx| windows::set_background_color(cx, window_key(window_id), color as u32))
+            .await?
+            .map(|_| ())
+            .map_err(module_error)
+    }
+
+    async fn window_set_chrome_appearance(
+        &self,
+        window_id: i32,
+        appearance: String,
+    ) -> Result<(), ModuleError> {
+        let dark = match appearance.as_str() {
+            "dark" => Some(true),
+            "light" => Some(false),
+            _ => None,
+        };
+        on_main(move |cx| windows::set_chrome_appearance(cx, window_key(window_id), dark))
             .await?
             .map(|_| ())
             .map_err(module_error)

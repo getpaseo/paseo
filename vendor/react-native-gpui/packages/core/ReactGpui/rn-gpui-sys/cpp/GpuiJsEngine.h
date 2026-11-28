@@ -6,6 +6,7 @@
 
 #include <jsi/jsi.h>
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -22,6 +23,12 @@ class TurboModule;
 } // namespace facebook::react
 
 namespace rngpui {
+// Set by core when the renderer provides a frame source for the backend.
+inline std::atomic<bool>& sharedAnimatedBackend() {
+  static std::atomic<bool> enabled{false};
+  return enabled;
+}
+
 class GpuiFeatureFlagsOverrides
     : public facebook::react::ReactNativeFeatureFlagsOverridesOSSStable {
  public:
@@ -32,9 +39,30 @@ class GpuiFeatureFlagsOverrides
     return true;
   }
 
-  // GPUI dispatches W3C pointer events, not browser mouseenter/mouseleave.
+  // Pressability's onHoverIn/onHoverOut ride on pointer enter and leave, which
+  // GPUI delivers. The mouse-event path it otherwise takes is for web.
   bool shouldPressibilityUseW3CPointerEventsForHover() override {
     return true;
+  }
+
+  // Events without a priority of their own, such as onLayout, render at
+  // default priority instead of synchronously. A live resize fires them every
+  // frame, and as sync work they keep React committing until it trips its
+  // nested update limit.
+  bool fixMappingOfEventPrioritiesBetweenFabricAndReact() override {
+    return true;
+  }
+
+  // `ref.focus()` and `ref.blur()` on a View send a command to the host
+  // instead of doing nothing, as `HTMLElement.focus()` moves focus.
+  bool enableImperativeFocus() override {
+    return true;
+  }
+
+  // The shared animation backend needs a platform frame source: only the Loom
+  // renderer provides one.
+  bool useSharedAnimatedBackend() override {
+    return sharedAnimatedBackend().load(std::memory_order_acquire);
   }
 };
 

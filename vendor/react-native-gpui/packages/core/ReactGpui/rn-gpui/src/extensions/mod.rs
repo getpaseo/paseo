@@ -42,6 +42,46 @@ impl ComponentNode {
     }
 }
 
+/// A handle on the node a renderer is drawing, for work that finishes later.
+///
+/// A renderer that rasterises or loads something in the background cannot call
+/// back into the node it was handed; this is how it asks for the node to be
+/// built and painted again once the work is done. It holds the node weakly, so a
+/// node that went away meanwhile is simply skipped.
+#[derive(Clone)]
+pub struct NodeHandle {
+    node: gpui::WeakEntity<crate::node_view::RNNodeView>,
+}
+
+impl NodeHandle {
+    pub(crate) fn new(node: gpui::WeakEntity<crate::node_view::RNNodeView>) -> Self {
+        Self { node }
+    }
+
+    /// Builds and paints the node again. Call it on the main thread.
+    pub fn notify(&self, cx: &mut App) {
+        let _ = self.node.update(cx, |_, cx| cx.notify());
+    }
+}
+
+thread_local! {
+    static RENDERING: std::cell::RefCell<Option<NodeHandle>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The node whose renderer is running on this thread, inside
+/// [`ComponentRenderer::render`]. `None` anywhere else.
+pub fn rendering_node() -> Option<NodeHandle> {
+    RENDERING.with(|current| current.borrow().clone())
+}
+
+pub(crate) fn render_with_node<R>(handle: NodeHandle, render: impl FnOnce() -> R) -> R {
+    let previous = RENDERING.with(|current| current.borrow_mut().replace(handle));
+    let result = render();
+    RENDERING.with(|current| *current.borrow_mut() = previous);
+    result
+}
+
 /// Where a node sits between two poses during a transition.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pose {
@@ -315,13 +355,14 @@ pub struct TreeView<'a> {
 /// node, and removes the aliasing entirely.
 #[derive(Clone, Debug)]
 pub(crate) struct NodeSnapshot {
-    pub(crate) component: String,
+    pub(crate) component: gpui::SharedString,
     pub(crate) tag: i32,
     pub(crate) frame: RectF,
     pub(crate) scale: (f32, f32),
     pub(crate) props: Arc<Value>,
     pub(crate) parent: Option<i32>,
     pub(crate) children: Vec<i32>,
+    pub(crate) mask_children: bool,
     pub(crate) surface_id: i32,
     pub(crate) transition: Option<TransitionState>,
 }
@@ -366,13 +407,14 @@ impl<'a> TreeView<'a> {
             map.insert(
                 node.tag,
                 NodeSnapshot {
-                    component: node.component,
+                    component: node.component.into(),
                     tag: node.tag,
                     frame: node.frame,
                     scale: node.scale,
                     props: Arc::new(node.props),
                     parent,
                     children,
+                    mask_children: false,
                     surface_id: 1,
                     transition: None,
                 },
@@ -392,7 +434,7 @@ impl<'a> TreeView<'a> {
 impl NodeSnapshot {
     fn to_component_node(&self) -> ComponentNode {
         ComponentNode {
-            component: self.component.clone(),
+            component: self.component.to_string(),
             tag: self.tag,
             frame: self.frame,
             scale: self.scale,
@@ -574,6 +616,12 @@ pub struct ScrollSpec {
     pub indicator: bool,
     pub offset: (f32, f32),
     pub event: Option<String>,
+    pub snap: Option<crate::scroll_snap::SnapSpec>,
+    /// The fraction of its speed a flick keeps each millisecond.
+    pub deceleration: f32,
+    /// The least time, in milliseconds, between two scroll events; zero or
+    /// one frame lets every change through.
+    pub event_throttle_ms: f32,
 }
 
 /// Paints one component name.
@@ -609,6 +657,14 @@ pub trait ComponentRenderer: Send + Sync + 'static {
     fn render(&self, node: &ComponentNode, window: &mut Window, cx: &mut App)
         -> Option<AnyElement>;
 
+    /// Whether the nodes this renderer is handed carry their whole subtree in
+    /// `children`. Copying it walks the subtree on every render, so only a
+    /// renderer that draws its descendants itself asks for it; the others read
+    /// the tree through `TreeView` when they need to.
+    fn reads_children(&self) -> bool {
+        false
+    }
+
     /// Which input this component wants.
     ///
     /// Read when the node is built, so core only installs listeners a component
@@ -616,6 +672,32 @@ pub trait ComponentRenderer: Send + Sync + 'static {
     /// before these hooks existed gets.
     fn input(&self, _node: &ComponentNode) -> input::InputSpec {
         input::InputSpec::default()
+    }
+
+    /// Space or Enter on the focused component, which has the role of a button,
+    /// checkbox, radio button, switch or link. Returning true means the component
+    /// acted, and the activation is not reported to JS as a `click`.
+    fn activate(
+        &self,
+        _node: &ComponentNode,
+        _handle: &StoreHandle,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> bool {
+        false
+    }
+
+    /// Whether the component takes keyboard focus without a `focusable` prop, as
+    /// a native control does.
+    fn focusable_by_default(&self) -> bool {
+        false
+    }
+
+    /// Whether this component owns a left press: its hooks run before the ones
+    /// that start a React Native touch, and a hook that returns `Stop` keeps the
+    /// press from becoming one.
+    fn claims_press(&self, _node: &ComponentNode) -> bool {
+        false
     }
 
     /// A button went down inside this component.
@@ -636,6 +718,19 @@ pub trait ComponentRenderer: Send + Sync + 'static {
         _cx: &mut input::InputContext<'_>,
     ) -> input::Propagation {
         input::Propagation::Continue
+    }
+
+    /// A Fabric command dispatched to this component. Returns whether it was
+    /// handled; `false` is logged.
+    fn command(
+        &self,
+        _node: &ComponentNode,
+        _name: &str,
+        _args: &Value,
+        _handle: &StoreHandle,
+        _cx: &mut App,
+    ) -> bool {
+        false
     }
 
     /// The pointer moved while over this component.
@@ -941,6 +1036,34 @@ pub fn component_renderer(component_name: &str) -> Option<Arc<dyn ComponentRende
         .cloned()
 }
 
+/// Routes a Fabric command to the renderer registered for `component`.
+pub(crate) fn run_builtin_command(
+    node: &gpui::Entity<crate::node_view::RNNodeView>,
+    component: &str,
+    name: &str,
+    args: &Value,
+    handle: &StoreHandle,
+    cx: &mut App,
+) {
+    if component == "ScrollView" {
+        let handled = node.update(cx, |node, cx| node.scroll_command(name, args, cx));
+        if !handled {
+            log::error!("[builtin-component] ScrollView has no command '{name}'");
+        }
+        return;
+    }
+    let Some(renderer) = component_renderer(component) else {
+        return;
+    };
+    let snapshot = node.read(cx).component_node_shallow();
+    if renderer.command(&snapshot, name, args, handle, cx) {
+        // The command changed what the component shows without a prop commit.
+        node.update(cx, |_, cx| cx.notify());
+    } else {
+        log::error!("[builtin-component] {component} has no command '{name}'");
+    }
+}
+
 /// The portal a component's renderer declares for these props.
 ///
 /// The store calls it to decide whether a component is spliced out of its
@@ -1077,6 +1200,62 @@ mod tests {
             })
             .unwrap();
         assert_eq!(*calls.lock().unwrap(), vec!["FixtureWidget".to_string()]);
+    }
+
+    struct CommandRenderer {
+        seen: Arc<Mutex<Vec<(String, Value)>>>,
+    }
+
+    impl ComponentRenderer for CommandRenderer {
+        fn render(&self, _: &ComponentNode, _: &mut Window, _: &mut App) -> Option<AnyElement> {
+            None
+        }
+
+        fn command(
+            &self,
+            _node: &ComponentNode,
+            name: &str,
+            args: &Value,
+            _handle: &StoreHandle,
+            _cx: &mut App,
+        ) -> bool {
+            self.seen
+                .lock()
+                .unwrap()
+                .push((name.to_string(), args.clone()));
+            name == "setValue"
+        }
+    }
+
+    #[gpui::test]
+    fn a_renderer_receives_commands_and_reports_whether_it_handled_them(cx: &mut TestAppContext) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        register_component_renderer(
+            "CommandWidget",
+            Arc::new(CommandRenderer { seen: seen.clone() }),
+        );
+        let renderer = component_renderer("CommandWidget").unwrap();
+        let handle = crate::store::test_store_handle(cx);
+        let (handled, unhandled) = cx.update(|cx| {
+            (
+                renderer.command(
+                    &node("CommandWidget", 3),
+                    "setValue",
+                    &json!([true]),
+                    &handle,
+                    cx,
+                ),
+                renderer.command(&node("CommandWidget", 3), "nope", &json!([]), &handle, cx),
+            )
+        });
+        assert!(handled && !unhandled);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![
+                ("setValue".to_string(), json!([true])),
+                ("nope".to_string(), json!([]))
+            ]
+        );
     }
 
     #[gpui::test]

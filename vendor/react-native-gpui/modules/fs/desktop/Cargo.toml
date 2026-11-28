@@ -20,6 +20,10 @@ tempfile = "3"
 libc = "0.2"
 # `realpath` without the `\\?\` prefix on Windows.
 dunce = "1"
+# Streams a download; rustls with the system certificate store, as the upload module does.
+ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier"] }
+# Hands a download's result back to the async method.
+futures = "0.3"
 
 [build-dependencies]
 rn-gpui-module-build = { version = "0.1" }

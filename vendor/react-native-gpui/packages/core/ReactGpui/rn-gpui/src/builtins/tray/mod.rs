@@ -123,6 +123,16 @@ impl NativeGpuiTraySpec for TrayModule {
                 if let Some(hide) = options.hide_window_on_close {
                     config.hide_window_on_close = hide;
                 }
+                if let Some(anchor) = options
+                    .popover_anchor
+                    .as_deref()
+                    .and_then(crate::desktop::popover_placement::Anchor::parse)
+                {
+                    config.popover_anchor = anchor;
+                }
+                if let Some(offset) = options.popover_offset {
+                    config = config.popover_offset(offset.x as f32, offset.y as f32);
+                }
                 tray::install(cx, config)
             },
         )
@@ -177,6 +187,36 @@ impl NativeGpuiTraySpec for TrayModule {
             crate::desktop::icon::preload_menu(items).await;
         }
         on_main(move |cx| tray::set_menu(cx, items.as_ref()))
+            .await
+            .and_then(void)
+    }
+
+    async fn tray_show_popover(&self) -> Result<(), ModuleError> {
+        on_main(tray::open_popover).await.and_then(void)
+    }
+
+    async fn tray_hide_popover(&self) -> Result<(), ModuleError> {
+        on_main(tray::close_popover).await.and_then(void)
+    }
+
+    async fn tray_toggle_popover(&self) -> Result<(), ModuleError> {
+        on_main(tray::flip_popover).await.and_then(void)
+    }
+
+    async fn tray_set_popover_position(
+        &self,
+        anchor: Option<String>,
+        offset: Option<crate::builtins::TrayOffset>,
+    ) -> Result<(), ModuleError> {
+        let anchor = match anchor.as_deref() {
+            Some(name) => Some(
+                crate::desktop::popover_placement::Anchor::parse(name)
+                    .ok_or_else(|| ModuleError::new(format!("unknown popover anchor {name:?}")))?,
+            ),
+            None => None,
+        };
+        let offset = offset.map(|offset| (offset.x as f32, offset.y as f32));
+        on_main(move |cx| tray::set_popover_position(cx, anchor, offset))
             .await
             .and_then(void)
     }

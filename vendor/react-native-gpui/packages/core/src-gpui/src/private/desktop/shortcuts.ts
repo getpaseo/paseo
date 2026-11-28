@@ -41,6 +41,12 @@ export interface ShortcutDefinition {
    * which leaves the text input's own editing keys alone.
    */
   allowInTextInput?: boolean;
+  /**
+   * Registers it with the operating system, so it fires with no window of the
+   * app focused. It cannot have `when` or `allowInTextInput`, and the system may
+   * refuse the keys: see `onFailure`.
+   */
+  global?: boolean;
   /** Shown in a menu or a settings list. */
   description?: string;
 }
@@ -52,6 +58,13 @@ export interface InstalledShortcut {
   scope?: string;
   enabled: boolean;
   allowInTextInput: boolean;
+  global: boolean;
+}
+
+/** A global shortcut the system would not register. */
+export interface ShortcutFailure {
+  id: string;
+  reason: string;
 }
 
 export type ShortcutHandler = (event: ShortcutEvent) => void;
@@ -140,6 +153,7 @@ export function list(): InstalledShortcut[] {
       scope: definition.when,
       enabled: definition.enabled !== false,
       allowInTextInput: definition.allowInTextInput === true,
+      global: definition.global === true,
     });
   }
   return out;
@@ -155,6 +169,7 @@ export function describe(): ShortcutDefinition[] {
       when: installed.scope,
       enabled: installed.enabled,
       allowInTextInput: installed.allowInTextInput,
+      global: installed.global,
     };
   });
 }
@@ -177,6 +192,14 @@ export function register(shortcuts: ShortcutDefinition[]): void {
     if (shortcut.keys.trim() === '' && !hasOwnBinding(shortcut.id)) {
       throw new Error(`shortcut ${shortcut.id} has no keys`);
     }
+    if (
+      shortcut.global === true &&
+      (shortcut.when !== undefined || shortcut.allowInTextInput === true)
+    ) {
+      throw new Error(
+        `shortcut ${shortcut.id} is global, so it cannot have \`when\` or \`allowInTextInput\``,
+      );
+    }
     const previous = definitions.get(shortcut.id);
     const next: ShortcutDefinition = {
       ...shortcut,
@@ -184,6 +207,7 @@ export function register(shortcuts: ShortcutDefinition[]): void {
       // only spelled the default differently is not a change.
       enabled: shortcut.enabled !== false,
       allowInTextInput: shortcut.allowInTextInput === true,
+      global: shortcut.global === true,
     };
     owners.set(shortcut.id, (owners.get(shortcut.id) ?? 0) + 1);
     if (
@@ -192,6 +216,7 @@ export function register(shortcuts: ShortcutDefinition[]): void {
       previous.when !== next.when ||
       previous.enabled !== next.enabled ||
       previous.allowInTextInput !== next.allowInTextInput ||
+      previous.global !== next.global ||
       previous.description !== next.description
     ) {
       definitions.set(shortcut.id, next);
@@ -404,10 +429,35 @@ function signatureOf(shortcuts: InstalledShortcut[]): string {
   return shortcuts
     .map(
       shortcut =>
-        `${shortcut.id}|${shortcut.keys}|${shortcut.scope ?? ''}|${shortcut.enabled}|${shortcut.allowInTextInput}`,
+        `${shortcut.id}|${shortcut.keys}|${shortcut.scope ?? ''}|${shortcut.enabled}|${shortcut.allowInTextInput}|${shortcut.global}`,
     )
     .sort()
     .join('\n');
+}
+
+const failureListeners = new Set<(failure: ShortcutFailure) => void>();
+
+/**
+ * Listens for global shortcuts the system would not register: another app owns
+ * the keys, or the platform cannot do global shortcuts. With no listener the
+ * failure is logged. Returns a function that removes the listener.
+ */
+export function onFailure(
+  listener: (failure: ShortcutFailure) => void,
+): () => void {
+  failureListeners.add(listener);
+  return () => {
+    failureListeners.delete(listener);
+  };
+}
+
+function reportFailures(failed: ShortcutFailure[]): void {
+  for (const failure of failed) {
+    if (failureListeners.size === 0) {
+      console.warn(`[shortcuts] ${failure.id}: ${failure.reason}`);
+    }
+    failureListeners.forEach(listener => listener(failure));
+  }
 }
 
 /** Installs the list now, bypassing the coalescing. Awaitable for tests. */
@@ -424,7 +474,8 @@ export async function install(): Promise<void> {
     return;
   }
   try {
-    await NativeGpuiShortcuts.shortcutInstall(shortcuts);
+    const result = await NativeGpuiShortcuts.shortcutInstall(shortcuts);
+    reportFailures(result?.failed ?? []);
   } catch (error) {
     // Roll the signature back so the next change retries, rather than leaving
     // the registry believing native has a list it rejected.
@@ -449,6 +500,16 @@ export function installBridge(): void {
   }
   nativeBridgeInstalled = true;
   const { DeviceEventEmitter } = require('react-native');
+  // A global shortcut the desktop refused after the install call returned, as
+  // the Wayland portal does when the user declines the binding.
+  DeviceEventEmitter.addListener(
+    'gpuiDesktop:shortcutFailure',
+    (event: { id?: string; reason?: string }) => {
+      if (typeof event?.id === 'string') {
+        reportFailures([{ id: event.id, reason: String(event.reason ?? '') }]);
+      }
+    },
+  );
   DeviceEventEmitter.addListener(
     'gpuiDesktop:shortcut',
     (event: { id?: string }) => {
@@ -468,6 +529,7 @@ export function __resetForTests(): void {
   installedSignature = '';
   installScheduled = false;
   nativeBridgeInstalled = false;
+  failureListeners.clear();
 }
 
 /**
@@ -493,6 +555,8 @@ export const Shortcut = {
     register([shortcut]);
   },
   unregister,
+  /** Listens for global shortcuts the system would not register. */
+  onFailure,
   /** The keys bound to `id` after any user remap. */
   keysFor,
   /** Whether `id` is installed. */
@@ -503,6 +567,7 @@ export const Shortcut = {
 export const Shortcuts = {
   register,
   unregister,
+  onFailure,
   clear,
   list,
   describe,

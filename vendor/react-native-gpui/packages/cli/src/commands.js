@@ -1,7 +1,8 @@
 import { Buffer } from 'node:buffer';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { LINUX_LIBRARIES, installCommands } from './doctor.cjs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { autolink, npxArgs, npxCommand, npxShell } from './autolink.js';
@@ -42,50 +43,7 @@ export function linuxBuildDependencyProblem(
   systemPkgConfigPath = () => null,
 ) {
   if (platform !== 'linux') return null;
-  // The libraries the app links on Linux (GPUI's keyboard handling over X11).
-  const modules = [
-    {
-      pc: 'xkbcommon',
-      packages: {
-        'Debian/Ubuntu': 'libxkbcommon-dev',
-        Fedora: 'libxkbcommon-devel',
-        Arch: 'libxkbcommon',
-      },
-    },
-    {
-      pc: 'xkbcommon-x11',
-      packages: {
-        'Debian/Ubuntu': 'libxkbcommon-x11-dev',
-        Fedora: 'libxkbcommon-x11-devel',
-        Arch: 'libxkbcommon-x11',
-      },
-    },
-    {
-      pc: 'xcb',
-      packages: {
-        'Debian/Ubuntu': 'libxcb1-dev',
-        Fedora: 'libxcb-devel',
-        Arch: 'libxcb',
-      },
-    },
-  ];
-  const installExamples = packages =>
-    Object.entries(packages)
-      .map(([distribution, name]) => {
-        const manager =
-          distribution === 'Fedora'
-            ? 'dnf'
-            : distribution === 'Arch'
-              ? 'pacman'
-              : 'apt';
-        const command =
-          manager === 'pacman'
-            ? `sudo pacman -S ${name}`
-            : `sudo ${manager} install ${name}`;
-        return `${distribution}: ${command}`;
-      })
-      .join(', ');
-  for (const { pc, packages } of modules) {
+  for (const { pc, packages } of LINUX_LIBRARIES) {
     const result = runPkgConfig(pc);
     if (result === 'missing-pkg-config') {
       return (
@@ -104,7 +62,7 @@ export function linuxBuildDependencyProblem(
       return (
         `Linux build dependency ${pc} was not found. ` +
         `Install your distribution's development package for it ` +
-        `(${installExamples(packages)}). ` +
+        `(${installCommands(packages)}). ` +
         `If pkg-config cannot see the system packages (Linuxbrew or Nix ` +
         `pkg-config first on PATH does this), ${hint}`
       );
@@ -143,6 +101,49 @@ const run = (bin, args, options = {}) =>
     shell: options.shell ?? false,
   });
 
+/**
+ * Downloads the prebuilt runtime before Cargo runs, so the progress reaches the
+ * terminal: Cargo hides a build script's output until the script finishes. A
+ * failure is left to the build script, which falls back to building from source.
+ */
+function hasMetalCompiler() {
+  return (
+    spawnSync('xcrun', ['-sdk', 'macosx', 'metal', '--version'], {
+      stdio: 'ignore',
+    }).status === 0
+  );
+}
+
+function fetchPrebuiltRuntime(projectRoot, autolinkManifest) {
+  if (
+    process.env.RN_GPUI_BUILD_FROM_SOURCE ||
+    process.env.RN_GPUI_PREBUILT_DIR
+  ) {
+    return;
+  }
+  try {
+    const manifest = JSON.parse(fs.readFileSync(autolinkManifest, 'utf8'));
+    if (manifest.prebuilt === 'never') {
+      return;
+    }
+    const appRequire = createRequire(path.join(projectRoot, 'package.json'));
+    const script = path.join(
+      path.dirname(appRequire.resolve('@react-native-gpui/core/package.json')),
+      'scripts/prebuilt-binaries.mjs',
+    );
+    spawnSync(
+      process.execPath,
+      [
+        script,
+        'ensure',
+        '--renderer',
+        manifest.renderer?.name === 'loom' ? 'loom' : 'fabric',
+      ],
+      { stdio: ['ignore', 'ignore', 'inherit'] },
+    );
+  } catch {}
+}
+
 function loadEngineBundle(projectRoot) {
   const appRequire = createRequire(path.join(projectRoot, 'package.json'));
   let platformPackageJson;
@@ -157,6 +158,23 @@ function loadEngineBundle(projectRoot) {
     path.join(path.dirname(platformPackageJson), 'js-engine.js'),
   );
   return activeJsEngineBundle(projectRoot);
+}
+
+function activeEngineName(projectRoot) {
+  const appRequire = createRequire(path.join(projectRoot, 'package.json'));
+  try {
+    const { activeJsEngine } = appRequire(
+      path.join(
+        path.dirname(
+          appRequire.resolve('@react-native-gpui/core/package.json'),
+        ),
+        'js-engine.js',
+      ),
+    );
+    return activeJsEngine(projectRoot)?.name ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function copyFontAssets(projectRoot, bundlePath, config) {
@@ -467,6 +485,7 @@ export async function runDesktop({
   features,
   noLaunch = false,
   packaging = false,
+  signIdentity,
 }) {
   projectRoot = path.resolve(projectRoot);
   const dependencyProblem = linuxBuildDependencyProblem(
@@ -504,8 +523,20 @@ export async function runDesktop({
   // What the runtime loads: the plain Metro bundle, or the engine's compiled
   // format (`.hbc` bytecode, for example).
   let runtimeBundlePath = bundlePath;
+  let extraResources = [];
+  // The addons a release bundle loads, collected next to it.
+  let nodeAddonsDir;
 
-  if (release) {
+  // A debug build normally loads its JavaScript from Metro. The test driver has
+  // no Metro, so a build made for it also writes the bundle it will load.
+  const emitDevBundle =
+    !release &&
+    noLaunch &&
+    (features ?? '')
+      .split(',')
+      .some(feature => feature.trim() === 'test-driver');
+
+  if (release || emitDevBundle) {
     fs.mkdirSync(path.dirname(bundlePath), { recursive: true });
     const bundleArgs = [
       'react-native',
@@ -519,12 +550,27 @@ export async function runDesktop({
       '--assets-dest',
       path.join(path.dirname(bundlePath), 'assets'),
       '--dev',
-      'false',
+      release ? 'false' : 'true',
     ];
     if (fs.existsSync(metroConfig)) bundleArgs.push('--config', metroConfig);
     run(npxCommand, npxArgs(bundleArgs), { cwd: projectRoot, shell: npxShell });
 
-    if (engineBundle && typeof engineBundle.compile === 'function') {
+    if (release) {
+      nodeAddonsDir = path.join(path.dirname(bundlePath), 'node-addons');
+      const collected = collectNodeAddons({
+        bundle: bundlePath,
+        out: nodeAddonsDir,
+      });
+      if (collected.copied.length === 0) nodeAddonsDir = undefined;
+      else {
+        signCollectedNodeAddons({
+          directory: nodeAddonsDir,
+          identity: process.env.APPLE_SIGNING_IDENTITY,
+        });
+      }
+    }
+
+    if (release && engineBundle && typeof engineBundle.compile === 'function') {
       const extension =
         typeof engineBundle.bundleExtension === 'string'
           ? engineBundle.bundleExtension
@@ -540,6 +586,14 @@ export async function runDesktop({
         compiled?.output ?? compiledPath,
       );
     }
+    extraResources = await runBundleHooks({
+      projectRoot,
+      desktopRoot,
+      bundleDir: path.dirname(bundlePath),
+      entryFile,
+      metroConfig: fs.existsSync(metroConfig) ? metroConfig : undefined,
+      engine: engineBundle,
+    });
   } else {
     const numericPort = Number(port);
     if (
@@ -566,7 +620,18 @@ export async function runDesktop({
   if (!fs.existsSync(appCargoManifest)) {
     throw new Error(`missing desktop Cargo manifest: ${appCargoManifest}`);
   }
-  const cargoArgs = [noLaunch ? 'build' : 'run'];
+  fetchPrebuiltRuntime(
+    projectRoot,
+    path.join(desktopRoot, 'autolink/autolink.json'),
+  );
+  // Each build of an ad-hoc signed binary is a new app to the keychain, which
+  // then asks again for every item the app stored. Signed with a certificate
+  // under the app's identifier, every build is the same app.
+  const signingIdentity =
+    process.platform === 'darwin' && !packaging
+      ? (signIdentity ?? process.env.APPLE_SIGNING_IDENTITY)
+      : undefined;
+  const cargoArgs = [noLaunch || signingIdentity ? 'build' : 'run'];
   if (release) cargoArgs.push('--release');
   const cargoFeatures = (features ?? '')
     .split(',')
@@ -576,6 +641,17 @@ export async function runDesktop({
     throw new Error(
       '--features must be a comma-separated list of Cargo features',
     );
+  }
+  if (
+    process.platform === 'darwin' &&
+    !cargoFeatures.includes('runtime-shaders') &&
+    /^runtime-shaders\s*=/mu.test(fs.readFileSync(appCargoManifest, 'utf8')) &&
+    !hasMetalCompiler()
+  ) {
+    console.log(
+      'No Metal shader compiler (it ships with Xcode): the shaders are compiled when the app starts.',
+    );
+    cargoFeatures.push('runtime-shaders');
   }
   if (cargoFeatures.length > 0)
     cargoArgs.push('--features', cargoFeatures.join(','));
@@ -618,7 +694,7 @@ export async function runDesktop({
       env: cargoEnv,
       targetDir,
     });
-    if (!noLaunch) {
+    if (!noLaunch && !signingIdentity) {
       run('cargo', cargoArgs, { cwd: projectRoot, env: cargoEnv });
     }
   } else {
@@ -627,10 +703,47 @@ export async function runDesktop({
       env: cargoEnv,
     });
   }
+  if (signingIdentity) {
+    const targetDir = cargoTargetDirectory(appCargoManifest, {
+      cwd: projectRoot,
+      env: cargoEnv,
+    });
+    if (!targetDir)
+      throw new Error('cargo did not report its target directory');
+    const binary = path.join(
+      targetDir,
+      release ? 'release' : 'debug',
+      desktopCrateName(desktopRoot),
+    );
+    const { identifier } = loadDesktopConfig(projectRoot, process.platform);
+    run('codesign', [
+      '--force',
+      '--sign',
+      signingIdentity,
+      '--identifier',
+      identifier,
+      binary,
+    ]);
+    if (!noLaunch) run(binary, [], { cwd: projectRoot, env: cargoEnv });
+  }
+
+  // A release run finds its addons next to the executable. A packaged app gets
+  // them from the packager as `Resources/node-addons`.
+  if (release && !packaging && nodeAddonsDir !== undefined) {
+    const targetDir = cargoTargetDirectory(appCargoManifest, {
+      cwd: projectRoot,
+      env: cargoEnv,
+    });
+    if (targetDir) {
+      const beside = path.join(targetDir, 'release', 'node-addons');
+      fs.rmSync(beside, { recursive: true, force: true });
+      fs.cpSync(nodeAddonsDir, beside, { recursive: true });
+    }
+  }
 
   // The file the runtime was told to load: the engine's compiled output in a
   // release build, the Metro bundle otherwise. `package-desktop` stages it.
-  return { runtimeBundlePath, bundlePath };
+  return { runtimeBundlePath, bundlePath, extraResources, nodeAddonsDir };
 }
 
 const appPackageName = (projectRoot, packageJson) =>
@@ -720,12 +833,43 @@ export function desktopLaunchConfig(config, configPath) {
     // and the `menuBarInWindow` capability says so.
     chain.push('    .menu_bar(false)');
   }
+  if (settings.cornerRadius !== undefined) {
+    chain.push(`    .corner_radius(${asFloat(settings.cornerRadius)})`);
+  }
+  if (settings.windowControlsPosition === 'left') {
+    // Right is the default, and only consulted on Linux where the desktop gives
+    // no layout of its own.
+    chain.push('    .window_controls_position("left")');
+  }
   if (settings.titleBar !== undefined && settings.titleBar !== 'default') {
     // The default is the platform's own bar, so only the two custom kinds are
     // emitted. The enum is spelled out in full because the generated file has no
     // `use` lines to import it with.
-    const variant = settings.titleBar === 'hidden' ? 'Hidden' : 'Transparent';
+    const variant =
+      { hidden: 'Hidden', none: 'Borderless' }[settings.titleBar] ??
+      'Transparent';
     chain.push(`    .title_bar(react_native_gpui::WindowTitleBar::${variant})`);
+  }
+  if (settings.background !== undefined && settings.background !== 'opaque') {
+    const variant = {
+      transparent: 'Transparent',
+      blurred: 'Blurred',
+      mica: 'Mica',
+    }[settings.background];
+    if (variant === undefined) {
+      throw new Error(
+        `desktop/desktop.json window.background must be opaque, transparent, blurred or mica: ${configPath}`,
+      );
+    }
+    chain.push(
+      `    .background(react_native_gpui::WindowBackground::${variant})`,
+    );
+  }
+  if (settings.windowButtons === false) {
+    chain.push('    .window_buttons(false)');
+  }
+  if (settings.shadow === false) {
+    chain.push('    .shadow(false)');
   }
   if (settings.trafficLightPosition !== undefined) {
     const { x, y } = settings.trafficLightPosition;
@@ -736,7 +880,15 @@ export function desktopLaunchConfig(config, configPath) {
     }
     chain.push(`    .traffic_light_position(${asFloat(x)}, ${asFloat(y)})`);
   }
+  if (config.accessory === true) {
+    chain.push('    .accessory(true)');
+  }
   chain.push(`    .dev_menu(${config.devMenu})`);
+  if ((config.urlSchemes ?? []).length > 0) {
+    const schemes = config.urlSchemes.map(scheme => JSON.stringify(scheme));
+    chain.push(`    .url_schemes(&[${schemes.join(', ')}])`);
+    chain.push(`    .single_instance(${config.singleInstance !== false})`);
+  }
   if (config.tray !== undefined) {
     const tray = config.tray;
     let trayChain = 'TrayConfig::default()';
@@ -751,6 +903,18 @@ export function desktopLaunchConfig(config, configPath) {
       const iconPath = JSON.stringify(`/${tray.icon.replaceAll('\\', '/')}`);
       trayChain += `.icon_bytes(include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), ${iconPath})))`;
       trayChain += `.icon_template(${tray.iconTemplate === true})`;
+    }
+    if (tray.popoverAnchor !== undefined && tray.popoverAnchor !== 'auto') {
+      trayChain += `.popover_anchor_name(${JSON.stringify(tray.popoverAnchor)})`;
+    }
+    if (tray.popoverOffset !== undefined) {
+      const { x, y } = tray.popoverOffset;
+      if (x === undefined || y === undefined) {
+        throw new Error(
+          `desktop/desktop.json tray.popoverOffset needs x and y: ${configPath}`,
+        );
+      }
+      trayChain += `.popover_offset(${asFloat(x)}, ${asFloat(y)})`;
     }
     if (tray.accessory === false) {
       trayChain += '.accessory(false)';
@@ -798,6 +962,84 @@ const ENV_TYPES_CONTENT = `/// <reference types="@react-native-gpui/core/types" 
 // Added by react-native-gpui. Do not edit: it is regenerated.
 `;
 
+/** The minor of a React Native version or range such as `0.87.1` or `^0.87.0`. */
+export function reactNativeMinor(spec) {
+  const match = /(?:^|[^\d.])0\.(\d+)\.\d+/u.exec(String(spec ?? ''));
+  return match === null ? undefined : Number(match[1]);
+}
+
+/**
+ * The range of our packages that supports the app's React Native minor.
+ *
+ * Our packages are versioned `0.<react-native minor>.<patch>`, so React Native
+ * 0.87 takes `0.87.x`. The prerelease floor lets the alphas satisfy it.
+ */
+export function gpuiVersionRange(projectRoot, packageJson) {
+  let minor = reactNativeMinor(
+    packageJson.dependencies?.['react-native'] ??
+      packageJson.devDependencies?.['react-native'],
+  );
+  if (minor === undefined) {
+    try {
+      const installed = JSON.parse(
+        fs.readFileSync(
+          path.join(projectRoot, 'node_modules/react-native/package.json'),
+          'utf8',
+        ),
+      );
+      minor = reactNativeMinor(installed.version);
+    } catch {
+      // Not installed yet.
+    }
+  }
+  if (minor === undefined) {
+    throw new Error(
+      'Cannot tell which React Native version this app uses. Pin react-native to an exact version such as 0.87.1 in package.json.',
+    );
+  }
+  return `~0.${minor}.0-alpha.0`;
+}
+
+/**
+ * Fails with a readable message when the registry has no release of the core
+ * package for the app's React Native minor. A registry that cannot be reached is
+ * not a failure here: the install that follows reports it.
+ */
+export function assertReleaseExists(range, { registryView = npmView } = {}) {
+  const result = registryView(`@react-native-gpui/core@${range}`);
+  if (result.status !== 0) {
+    if (/E404|404 Not Found/u.test(result.stderr ?? '')) {
+      throw new Error(
+        `@react-native-gpui/core is not published on the registry (looked for ${range}).`,
+      );
+    }
+    return;
+  }
+  if (String(result.stdout ?? '').trim() === '') {
+    const minor = /^~0\.(\d+)\./u.exec(range)?.[1];
+    throw new Error(
+      `No @react-native-gpui/core release supports React Native 0.${minor}. Use a React Native version that has one (the packages follow it: 0.${minor}.x).`,
+    );
+  }
+}
+
+function npmView(spec) {
+  return spawnSync(
+    process.platform === 'win32' ? 'npm.cmd' : 'npm',
+    ['view', spec, 'version', '--json'],
+    { encoding: 'utf8', shell: process.platform === 'win32' },
+  );
+}
+
+/// Libraries whose desktop side is a separate package, and the library
+/// `<major>.<minor>` that package supports.
+const desktopLibraryModules = {
+  'react-native-safe-area-context': {
+    module: '@react-native-gpui/safe-area-context',
+    version: '5.10',
+  },
+};
+
 export function scaffoldDesktop(
   projectRoot,
   packageJson,
@@ -844,8 +1086,7 @@ export function scaffoldDesktop(
   if (typeof appConfig.name !== 'string' || appConfig.name.length === 0) {
     throw new Error(`app.json must define a nonempty name: ${appConfigPath}`);
   }
-  // Every launch setting comes from `desktop/desktop.json`; `app.json`'s old
-  // `desktop` key is rejected by the loader with a pointer to the new file.
+  // Every launch setting comes from `desktop/desktop.json`.
   const launchConfig = desktopLaunchConfig(
     loadDesktopConfig(projectRoot, process.platform),
     path.join(projectRoot, 'desktop/desktop.json'),
@@ -858,14 +1099,15 @@ export function scaffoldDesktop(
     }
   }
 
+  const range = gpuiVersionRange(projectRoot, packageJson);
   const updatedPackageJson = {
     ...packageJson,
     dependencies: {
       ...packageJson.dependencies,
       '@react-native-gpui/core':
-        packageJson.dependencies?.['@react-native-gpui/core'] ?? '^0.1.0',
+        packageJson.dependencies?.['@react-native-gpui/core'] ?? range,
       '@react-native-gpui/hermes':
-        packageJson.dependencies?.['@react-native-gpui/hermes'] ?? '^0.1.0',
+        packageJson.dependencies?.['@react-native-gpui/hermes'] ?? range,
       // `rn-gpui-module-build` resolves its spec generator from the app
       // (`require.resolve('@react-native-gpui/codegen/generate-rust-spec')` with
       // the crate directory as the search path), so the app must depend on it
@@ -873,10 +1115,11 @@ export function scaffoldDesktop(
       // entry goes unnoticed; an app installed from the registry fails with
       // "Cannot find module '@react-native-gpui/codegen/generate-rust-spec'".
       '@react-native-gpui/codegen':
-        packageJson.dependencies?.['@react-native-gpui/codegen'] ?? '^0.1.0',
+        packageJson.dependencies?.['@react-native-gpui/codegen'] ?? range,
     },
     scripts: {
       ...packageJson.scripts,
+      desktop: packageJson.scripts?.desktop ?? 'react-native run-desktop',
       'test:e2e':
         packageJson.scripts?.['test:e2e'] ??
         'vitest run --config desktop/vitest.e2e.config.ts',
@@ -885,11 +1128,22 @@ export function scaffoldDesktop(
       ...packageJson.devDependencies,
       vitest: packageJson.devDependencies?.vitest ?? '^3.2.4',
       '@react-native-gpui/testing':
-        packageJson.devDependencies?.['@react-native-gpui/testing'] ?? '^0.1.0',
+        packageJson.devDependencies?.['@react-native-gpui/testing'] ?? range,
       '@react-native-gpui/cli':
-        packageJson.devDependencies?.['@react-native-gpui/cli'] ?? '^0.1.0',
+        packageJson.devDependencies?.['@react-native-gpui/cli'] ?? range,
     },
   };
+  for (const [library, { module, version }] of Object.entries(
+    desktopLibraryModules,
+  )) {
+    const declared = updatedPackageJson.dependencies[library];
+    if (declared === undefined) continue;
+    // The module's peer is the library's own `<major>.<minor>`.
+    if (!new RegExp(`^[~^]?${version.replace('.', '\\.')}\\b`).test(declared)) {
+      updatedPackageJson.dependencies[library] = `~${version}.0`;
+    }
+    updatedPackageJson.dependencies[module] ??= `~${version}.0-alpha.0`;
+  }
   return updatedPackageJson;
 }
 
@@ -939,6 +1193,7 @@ export function initDesktop({
     );
 
     if (!skipInstall) {
+      assertReleaseExists(gpuiVersionRange(projectRoot, packageJson));
       const manager = fs.existsSync(path.join(projectRoot, 'pnpm-lock.yaml'))
         ? 'pnpm'
         : fs.existsSync(path.join(projectRoot, 'yarn.lock'))
@@ -1008,7 +1263,7 @@ export function initDesktop({
       );
     }
     console.log(
-      `Added GPUI desktop support to ${projectRoot}. Run npx react-native run-desktop.`,
+      `Added desktop support to ${projectRoot}. Run npx react-native run-desktop.`,
     );
   } catch (error) {
     removeNewFiles(
@@ -1082,12 +1337,8 @@ export function initProject({ appName, destination, initArgs = [] }) {
       packagePath,
       `${JSON.stringify(scaffoldDesktop(destination, packageJson), null, 2)}\n`,
     );
-    fs.copyFileSync(
-      path.join(templatesDir, 'app/App.tsx'),
-      path.join(destination, 'App.tsx'),
-    );
     console.log(
-      `Created standard React Native project ${appName} (iOS, Android, and GPUI desktop) in ${destination}. Run npm install, then npx react-native run-desktop.`,
+      `Created standard React Native project ${appName} (iOS, Android and desktop) in ${destination}. Run npm install, then npx react-native run-desktop.`,
     );
   } catch (error) {
     fs.rmSync(destination, { recursive: true, force: true });
@@ -1270,7 +1521,7 @@ export function createLibrary({
       : 'implement methods defined by its generated spec.';
   fs.writeFileSync(
     path.join(destination, 'README.md'),
-    `# ${libraryName}\n\n${language} TurboModule library for React Native GPUI. The spec is in src/${specName}.ts and uses React Native's public TurboModuleRegistry API. The implementation is in ${implementation} and is discovered through package metadata. Import the default export from ${packageName} and ${description}\n`,
+    `# ${libraryName}\n\n${language} TurboModule library for React Native on desktop. The spec is in src/${specName}.ts and uses React Native's public TurboModuleRegistry API. The implementation is in ${implementation} and is discovered through package metadata. Import the default export from ${packageName} and ${description}\n`,
   );
   console.log(
     `Created ${type} TurboModule library ${packageName} in ${destination}. Install/link it in a React Native app, then run npx react-native run-desktop.`,
@@ -1402,12 +1653,37 @@ export function collectNodeAddons({
   return { copied, out: outDirectory };
 }
 
-/// The first four bytes of a Hermes bytecode file.
-///
-/// Hermes identifies its output by content, and React Native's loader does too:
-/// the file extension is not consulted, which is why a `.bundle` holding
-/// bytecode works. The magic is `c6 1f bc 03`, followed by the version.
-const HERMES_MAGIC = Buffer.from([0xc6, 0x1f, 0xbc, 0x03]);
+/**
+ * Signs the collected addons and the libraries beside them with the identity the
+ * CLI signs the app binary with, because the hardened runtime refuses to load an
+ * unsigned library. Nothing happens off macOS or without an identity: an
+ * unsigned release is still built, and an ad-hoc signed one needs no change.
+ */
+export function signCollectedNodeAddons({
+  directory,
+  identity,
+  platform = process.platform,
+  exec = execFileSync,
+}) {
+  if (platform !== 'darwin' || !identity || !fs.existsSync(directory)) {
+    return [];
+  }
+  const files = [];
+  const walk = current => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const file = path.join(current, entry.name);
+      if (entry.isDirectory()) walk(file);
+      else if (/\.(node|dylib)$/u.test(entry.name)) files.push(file);
+    }
+  };
+  walk(directory);
+  for (const file of files) {
+    exec('codesign', ['--force', '--sign', identity, file], {
+      stdio: 'inherit',
+    });
+  }
+  return files;
+}
 
 /**
  * Strip the symbol table from the release binary, once its debug info is safe.
@@ -1434,14 +1710,47 @@ function stripReleaseBinary({ crateDir, binaryName }) {
 }
 
 /**
+ * Runs the `bundleHook` of every autolinked package: a module that builds more
+ * of what the release ships, beside the app's bundle, for a library that needs
+ * its own script files (react-native-workers bundles each worker). A hook is
+ * called with `{ projectRoot, desktopRoot, bundleDir, entryFile, metroConfig,
+ * engine }` and returns the files or folders, as absolute paths, that go in the
+ * app's resource directory. Returns all of them.
+ */
+export async function runBundleHooks(context) {
+  const manifestPath = path.join(
+    context.desktopRoot,
+    'autolink',
+    'autolink.json',
+  );
+  if (!fs.existsSync(manifestPath)) return [];
+  const { bundleHooks = [] } = JSON.parse(
+    fs.readFileSync(manifestPath, 'utf8'),
+  );
+  const resources = [];
+  for (const hook of bundleHooks) {
+    const result = await createRequire(import.meta.url)(hook.module)(context);
+    for (const resource of result ?? []) {
+      resources.push(path.resolve(resource));
+    }
+  }
+  return resources;
+}
+
+/**
  * Copy the bundle a release should ship to `desktop/build/package/index.bundle`.
  *
  * One name, one file, and the content is whatever the engine produced. A
- * Hermes build ships bytecode; a JavaScript-only engine ships JavaScript under
- * the same name, with one line saying so. The name never varies, so the runtime
+ * compiling engine ships its bytecode; a JavaScript-only engine ships JavaScript
+ * under the same name, with one line saying so. The name never varies, so the runtime
  * has nothing to guess and `Resources/` holds exactly one bundle.
  */
-function stageBundle({ projectRoot, build }) {
+export function stageBundle({
+  projectRoot,
+  build,
+  engine = loadEngineBundle(projectRoot),
+  engineName = activeEngineName(projectRoot),
+}) {
   const packageDir = path.join(projectRoot, 'desktop', 'build', 'package');
   fs.mkdirSync(packageDir, { recursive: true });
   const staged = path.join(packageDir, 'index.bundle');
@@ -1452,29 +1761,38 @@ function stageBundle({ projectRoot, build }) {
     );
   }
   fs.copyFileSync(source, staged);
+  // What the packages' bundle hooks produced ships beside the bundle.
+  for (const resource of build?.extraResources ?? []) {
+    fs.cpSync(resource, path.join(packageDir, path.basename(resource)), {
+      recursive: true,
+    });
+  }
 
-  const head = Buffer.alloc(HERMES_MAGIC.length);
+  if (!engine || typeof engine.compile !== 'function') {
+    console.log(
+      'packaging a JavaScript bundle: the active engine has no compiler',
+    );
+    return staged;
+  }
+
+  // The engine declares how its output is recognised; without a declaration the
+  // output of `compile()` is trusted.
+  const magic = engine.bytecodeMagic;
+  if (!Buffer.isBuffer(magic) || magic.length === 0) return staged;
+
+  const head = Buffer.alloc(magic.length);
   const fd = fs.openSync(staged, 'r');
   try {
-    fs.readSync(fd, head, 0, HERMES_MAGIC.length, 0);
+    fs.readSync(fd, head, 0, magic.length, 0);
   } finally {
     fs.closeSync(fd);
   }
-  if (head.equals(HERMES_MAGIC)) return staged;
-
-  // Not bytecode. That is correct for a JavaScript-only engine and a packaging
-  // mistake with Hermes, so the two are told apart by whether the engine claims
-  // to compile at all.
-  const engine = loadEngineBundle(projectRoot);
-  if (engine && typeof engine.compile === 'function') {
+  if (!head.equals(magic)) {
     throw new Error(
-      `the Hermes engine did not produce bytecode: ${source} starts with ` +
-        `${JSON.stringify(head.toString('latin1'))}, not the Hermes magic`,
+      `the ${engineName ?? 'JS'} engine did not produce bytecode: ${source} starts with ` +
+        `${JSON.stringify(head.toString('latin1'))}, not the engine's bytecode magic`,
     );
   }
-  console.log(
-    'packaging a JavaScript bundle: the active engine compiles to bytecode only with Hermes',
-  );
   return staged;
 }
 
@@ -1528,9 +1846,9 @@ export async function packageDesktop({
     packaging: true,
   });
   // What the release ships: one bundle, always named `index.bundle`, holding
-  // whatever the engine compiled the JavaScript into. React Native's own release
-  // builds do the same — an iOS `main.jsbundle` is bytecode when Hermes is on.
+  // whatever the engine compiled the JavaScript into.
   const shippedBundle = stageBundle({ projectRoot, build });
+  const nodeAddonsDir = build.nodeAddonsDir;
 
   const crateDir = path.join(projectRoot, 'desktop');
   // The executable is the crate's name, which is what `scaffoldDesktop` writes
@@ -1573,6 +1891,10 @@ export async function packageDesktop({
     os: desktopOs(process.platform),
     bundleDir: path.dirname(shippedBundle),
     assetsDir: path.join(buildDir, 'assets'),
+    extraResources: (build.extraResources ?? []).map(resource =>
+      path.join(path.dirname(shippedBundle), path.basename(resource)),
+    ),
+    nodeAddonsDir,
     icons,
     libraries,
     formats,
@@ -1587,8 +1909,7 @@ export async function packageDesktop({
   fs.writeFileSync(configPath, `${JSON.stringify(packagerConfig, null, 2)}\n`);
 
   ensureCargoPackager();
-  run(
-    'cargo',
+  await runPackager(
     ['packager', '--config', 'packager.json', '--formats', formats.join(',')],
     { cwd: crateDir },
   );
@@ -1600,6 +1921,59 @@ export async function packageDesktop({
   copyDebugSymbols({ crateDir, binaryName, outDir: packagerConfig.outDir });
   for (const file of produced) console.log(file);
   return produced;
+}
+
+/**
+ * Failures of cargo-packager that a second try gets past: `hdiutil`, which it
+ * runs for a dmg, reports "Resource busy" while macOS still holds the volume it
+ * just wrote, and the installers it downloads (NSIS and its plugins, the
+ * AppImage tools) come from servers that answer 5xx or time out now and then.
+ */
+export function isTransientPackagerFailure(output) {
+  return (
+    /hdiutil: create failed - Resource busy/u.test(output) ||
+    /status code (5\d\d|429)\b/u.test(output) ||
+    /(timed out|connection (reset|refused|closed|failed))/iu.test(output)
+  );
+}
+
+/**
+ * Runs cargo-packager and runs it again, up to `attempts` times with a growing
+ * pause, when it failed in a way `isTransientPackagerFailure` names. Its error
+ * stream is shown as it arrives.
+ */
+export async function runPackager(
+  args,
+  { cwd, attempts = 4, wait = defaultWait } = {},
+) {
+  for (let attempt = 1; ; attempt += 1) {
+    const { status, stderr } = await new Promise((resolve, reject) => {
+      const child = spawn('cargo', args, {
+        cwd,
+        stdio: ['inherit', 'inherit', 'pipe'],
+      });
+      let text = '';
+      child.stderr.on('data', chunk => {
+        process.stderr.write(chunk);
+        text += chunk.toString();
+      });
+      child.on('error', reject);
+      child.on('close', code => resolve({ status: code, stderr: text }));
+    });
+    if (status === 0) return;
+    if (attempt < attempts && isTransientPackagerFailure(stderr)) {
+      console.log(
+        `cargo packager hit a passing failure; trying again in ${attempt * 5} s`,
+      );
+      await wait(attempt * 5000);
+      continue;
+    }
+    throw new Error(`Command failed: cargo ${args.join(' ')}`);
+  }
+}
+
+function defaultWait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 /**

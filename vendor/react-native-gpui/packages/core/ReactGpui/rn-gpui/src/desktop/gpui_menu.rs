@@ -88,7 +88,13 @@ pub fn menu_bar_inset_for(_cx: &gpui::App, window_id: u32) -> f32 {
 /// `ViewStore::resize_window` is one: it is handed an `AnyWindowHandle` and the
 /// surface id, and the thread local holds the answer without needing `cx`.
 pub fn menu_bar_inset_for_window_id(window_id: u32) -> f32 {
-    if !should_use_gpui_menu_bar() || menu_bar_hidden(window_id) {
+    // A bar placed in a slot of the React tree takes its space from the tree,
+    // so nothing is reserved at the top of the window.
+    if !should_use_gpui_menu_bar()
+        || !has_menu_bar(window_id)
+        || menu_bar_hidden(window_id)
+        || menu_bar_slot(window_id).is_some()
+    {
         0.0
     } else {
         MENU_BAR_HEIGHT
@@ -109,12 +115,61 @@ pub fn menu_bar_hidden(window_id: u32) -> bool {
     HIDDEN_MENU_BARS.with(|hidden| hidden.borrow().contains(&window_id))
 }
 
+/// Where a window's React tree reserved room for the menu bar, in window
+/// coordinates, and the colours that suit what it sits on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MenuBarSlot {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    /// `0xAARRGGBB`, as `processColor` gives it.
+    pub foreground: u32,
+    pub hover: u32,
+}
+
+pub fn set_menu_bar_slot(window_id: u32, slot: Option<MenuBarSlot>) {
+    MENU_BAR_SLOTS.with(|slots| {
+        let mut slots = slots.borrow_mut();
+        match slot {
+            Some(slot) => {
+                slots.insert(window_id, slot);
+            }
+            None => {
+                slots.remove(&window_id);
+            }
+        }
+    });
+}
+
+pub fn menu_bar_slot(window_id: u32) -> Option<MenuBarSlot> {
+    MENU_BAR_SLOTS.with(|slots| slots.borrow().get(&window_id).copied())
+}
+
+fn argb(color: u32) -> gpui::Rgba {
+    gpui::rgba(((color & 0x00ff_ffff) << 8) | (color >> 24))
+}
+
 thread_local! {
+    static MENU_BAR_SLOTS: std::cell::RefCell<std::collections::HashMap<u32, MenuBarSlot>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+
     /// Windows whose bar was hidden, mirrored here so the answer is available
     /// without a `Context` — `menu_bar_inset` is called from window plumbing that
     /// has one, but the JS getter and the tests do not.
     static HIDDEN_MENU_BARS: std::cell::RefCell<std::collections::HashSet<u32>> =
         std::cell::RefCell::new(std::collections::HashSet::new());
+
+    /// Windows that carry a menu bar: the main window from the start, and any
+    /// other once its bar is prepared. A window without one reserves no room.
+    static BAR_WINDOWS: std::cell::RefCell<std::collections::HashSet<u32>> =
+        std::cell::RefCell::new(std::collections::HashSet::from([
+            crate::desktop::windows::MAIN_WINDOW_KEY,
+        ]));
+}
+
+fn has_menu_bar(window_id: u32) -> bool {
+    BAR_WINDOWS.with(|windows| windows.borrow().contains(&window_id))
 }
 
 /// Re-applies the surface size after the inset changed.
@@ -143,8 +198,15 @@ pub fn resize_surfaces_for_menu_bar(cx: &mut gpui::App, window_id: u32) {
     let scale = handle
         .update(cx, |_, window, _| window.scale_factor())
         .unwrap_or(1.0);
-    store.update(cx, |store, _| {
-        store.resize_window(handle, f32::from(size.width), f32::from(size.height), scale);
+    store.update(cx, |store, cx| {
+        store.resize_window(
+            handle,
+            f32::from(size.width),
+            f32::from(size.height),
+            scale,
+            cx,
+        );
+        store.notify_window_roots(handle, cx);
     });
 }
 
@@ -166,7 +228,6 @@ pub fn set_menu_bar_visible(window_id: u32, visible: bool) {
 }
 
 pub struct MenuBar {
-    #[allow(dead_code)]
     window_id: u32,
 }
 
@@ -194,6 +255,7 @@ pub fn prepare(window: &mut gpui::Window, cx: &mut App, window_id: u32) -> Optio
     if !should_use_gpui_menu_bar() {
         return None;
     }
+    BAR_WINDOWS.with(|windows| windows.borrow_mut().insert(window_id));
     let menu_bar = cx.new(|_| MenuBar::new(window_id));
     let subscription = menu_bar.update(cx, |_menu_bar, cx| {
         cx.observe_window_activation(window, |_menu_bar, window, cx| {
@@ -334,6 +396,7 @@ pub fn open_menu_bar_menu(cx: &mut App, title: &str) -> bool {
 impl Render for MenuBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let titles = menu_bar_entries(cx);
+        let slot = menu_bar_slot(self.window_id);
         let mut rows: Vec<gpui::AnyElement> = Vec::new();
         for (label, items) in titles {
             let id = label.clone();
@@ -346,10 +409,16 @@ impl Render for MenuBar {
                     .items_center()
                     .text_size(px(13.0))
                     .cursor_pointer()
-                    .hover(|style| style.bg(gpui::rgba(0x00000014)))
+                    .hover(|style| match slot {
+                        Some(slot) => style.bg(argb(slot.hover)),
+                        None => style.bg(gpui::rgba(0x00000014)),
+                    })
                     .on_mouse_down(
                         gpui::MouseButton::Left,
                         cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                            // The bar can sit over a title bar, whose drag region
+                            // would otherwise take this press and move the window.
+                            cx.stop_propagation();
                             let parent: gpui::AnyWindowHandle = window.window_handle();
                             let responder = menu_bar_responder();
                             let anchor = (f32::from(event.position.x), f32::from(event.position.y));
@@ -376,28 +445,61 @@ impl Render for MenuBar {
             );
         }
 
-        gpui::div()
-            .id(SharedString::from("gpui-menu-bar"))
-            .w_full()
-            .h(px(MENU_BAR_HEIGHT))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_0p5()
-            .px_1()
-            .bg(gpui::rgba(0xf4f5f7ff))
-            .border_b_1()
-            .border_color(gpui::rgba(0x00000022))
-            .text_color(gpui::rgb(0x18212f))
-            .child(
-                gpui::div()
-                    .text_size(px(11.0))
-                    .text_color(gpui::rgba(0x00000055))
-                    .px_1()
-                    .child("‹window›"),
-            )
-            .children(rows)
+        match slot {
+            Some(slot) => gpui::div()
+                .id(SharedString::from("gpui-menu-bar"))
+                .size_full()
+                .flex()
+                .flex_row()
+                .items_center()
+                .text_color(argb(slot.foreground))
+                .children(rows),
+            None => gpui::div()
+                .id(SharedString::from("gpui-menu-bar"))
+                .w_full()
+                .h(px(MENU_BAR_HEIGHT))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_0p5()
+                .px_1()
+                .bg(gpui::rgba(0xf4f5f7ff))
+                .border_b_1()
+                .border_color(gpui::rgba(0x00000022))
+                .text_color(gpui::rgb(0x18212f))
+                .child(
+                    gpui::div()
+                        .text_size(px(11.0))
+                        .text_color(gpui::rgba(0x00000055))
+                        .px_1()
+                        .child("‹window›"),
+                )
+                .children(rows),
+        }
     }
+}
+
+/// An accelerator as a menu shows it: `secondary-shift-z` is `Ctrl+Shift+Z` on
+/// the platforms that draw this menu.
+fn accelerator_label(accelerator: &str) -> String {
+    accelerator
+        .split('-')
+        .map(|part| match part {
+            "secondary" | "control" | "ctrl" => "Ctrl".to_owned(),
+            "shift" => "Shift".to_owned(),
+            "alt" => "Alt".to_owned(),
+            "platform" | "cmd" | "super" => "Super".to_owned(),
+            key if key.chars().count() == 1 => key.to_uppercase(),
+            key => {
+                let mut chars = key.chars();
+                chars
+                    .next()
+                    .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
+                    .unwrap_or_default()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("+")
 }
 
 pub fn present(
@@ -509,7 +611,7 @@ fn popup_size(model: &MenuModel) -> (f32, f32) {
                 MenuNode::Item(item) => {
                     let mut width = item.label.chars().count();
                     if let Some(accelerator) = &item.accelerator {
-                        width += accelerator.chars().count() + 4;
+                        width += accelerator_label(accelerator).chars().count() + 4;
                     }
                     *widest = (*widest).max(width);
                 }
@@ -686,9 +788,12 @@ impl Render for MenuPopup {
                                 .child(item.label.clone()),
                         )
                         .child(
-                            gpui::div()
-                                .text_color(gpui::rgba(0x00000088))
-                                .child(item.accelerator.clone().unwrap_or_default()),
+                            gpui::div().text_color(gpui::rgba(0x00000088)).child(
+                                item.accelerator
+                                    .as_deref()
+                                    .map(accelerator_label)
+                                    .unwrap_or_default(),
+                            ),
                         );
                     if !enabled {
                         row = row.text_color(gpui::rgba(0x00000066));
@@ -828,6 +933,17 @@ mod tests {
     use crate::desktop::menu_model;
     use serde_json::json;
 
+    /// The mode comes from the process's environment, which the tests run
+    /// in parallel in. A test that sets it, or reads the answer more than once,
+    /// holds this so that nothing changes it in between.
+    static ENVIRONMENT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn environment() -> std::sync::MutexGuard<'static, ()> {
+        ENVIRONMENT
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[test]
     fn hiding_one_windows_bar_leaves_the_others_alone() {
         // The inset is per window: a hidden bar in one window must not shrink
@@ -842,10 +958,12 @@ mod tests {
 
     #[test]
     fn the_inset_follows_the_windows_own_visibility() {
-        // Both ids are put into a known state first: the hidden set is process
-        // wide, so another test may have hidden either of them already.
+        let _environment = environment();
+        // Both ids are put into a known state first: another test may have
+        // hidden either of them already.
         set_menu_bar_visible(9, true);
         set_menu_bar_visible(10, true);
+        BAR_WINDOWS.with(|windows| windows.borrow_mut().extend([9, 10]));
 
         set_menu_bar_visible(9, false);
         assert_eq!(menu_bar_inset_for_window_id(9), 0.0);
@@ -859,6 +977,51 @@ mod tests {
             "hiding one window's bar must not shrink another window",
         );
         set_menu_bar_visible(9, true);
+    }
+
+    #[test]
+    fn a_window_without_a_menu_bar_reserves_no_room_for_one() {
+        let _environment = environment();
+        std::env::set_var("RN_GPUI_MENU_BAR", "gpui");
+        assert_eq!(menu_bar_inset_for_window_id(13), 0.0);
+        assert_eq!(
+            menu_bar_inset_for_window_id(crate::desktop::windows::MAIN_WINDOW_KEY),
+            MENU_BAR_HEIGHT
+        );
+        std::env::remove_var("RN_GPUI_MENU_BAR");
+    }
+
+    #[test]
+    fn an_accelerator_is_shown_the_way_a_menu_writes_it() {
+        assert_eq!(accelerator_label("secondary-shift-z"), "Ctrl+Shift+Z");
+        assert_eq!(accelerator_label("secondary-c"), "Ctrl+C");
+        assert_eq!(accelerator_label("alt-f4"), "Alt+F4");
+        assert_eq!(accelerator_label("secondary-enter"), "Ctrl+Enter");
+    }
+
+    #[test]
+    fn a_slot_takes_the_inset_from_its_own_window_only() {
+        let _environment = environment();
+        std::env::set_var("RN_GPUI_MENU_BAR", "gpui");
+        set_menu_bar_visible(11, true);
+        set_menu_bar_visible(12, true);
+        BAR_WINDOWS.with(|windows| windows.borrow_mut().extend([11, 12]));
+        set_menu_bar_slot(
+            11,
+            Some(MenuBarSlot {
+                x: 0.0,
+                y: 38.0,
+                width: 300.0,
+                height: MENU_BAR_HEIGHT,
+                foreground: 0xffff_ffff,
+                hover: 0x1fff_ffff,
+            }),
+        );
+        assert_eq!(menu_bar_inset_for_window_id(11), 0.0);
+        assert_eq!(menu_bar_inset_for_window_id(12), MENU_BAR_HEIGHT);
+        set_menu_bar_slot(11, None);
+        assert_eq!(menu_bar_inset_for_window_id(11), MENU_BAR_HEIGHT);
+        std::env::remove_var("RN_GPUI_MENU_BAR");
     }
 
     #[test]
@@ -951,6 +1114,7 @@ mod tests {
 
     #[test]
     fn the_menu_bar_inset_follows_the_mode() {
+        let _environment = environment();
         std::env::set_var("RN_GPUI_MENU_BAR", "gpui");
         assert_eq!(menu_bar_inset(), MENU_BAR_HEIGHT);
         std::env::set_var("RN_GPUI_MENU_BAR", "native");
@@ -960,6 +1124,7 @@ mod tests {
 
     #[test]
     fn the_mode_follows_the_environment() {
+        let _environment = environment();
         std::env::set_var("RN_GPUI_CONTEXT_MENU", "gpui");
         assert!(should_use_gpui());
         std::env::set_var("RN_GPUI_CONTEXT_MENU", "native");

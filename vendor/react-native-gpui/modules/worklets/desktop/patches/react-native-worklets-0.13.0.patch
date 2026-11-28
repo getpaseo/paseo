@@ -1,0 +1,107 @@
+--- a/worklets/RunLoop/AsyncQueueImpl.cpp
++++ b/worklets/RunLoop/AsyncQueueImpl.cpp
+@@ -4,6 +4,10 @@
+ #include <fbjni/fbjni.h>
+ #endif // ANDROID
+ 
++#if defined(__APPLE__) || defined(__linux__)
++#include <pthread.h>
++#endif
++
+ #include <memory>
+ #include <queue>
+ #include <string>
+@@ -69,7 +73,11 @@
+     pthread_setname_np(pthread_self(), name.c_str());
+     jni::ThreadScope::WithClassLoader([state]() { AsyncQueueImpl::runLoop(state); });
+ #else
++#if defined(__APPLE__)
+     pthread_setname_np(name.c_str());
++#elif defined(__linux__)
++    pthread_setname_np(pthread_self(), name.substr(0, 15).c_str());
++#endif
+     AsyncQueueImpl::runLoop(state);
+ #endif // ANDROID
+   });
+--- a/worklets/RunLoop/EventLoop.cpp
++++ b/worklets/RunLoop/EventLoop.cpp
+@@ -1,5 +1,6 @@
+ #include <worklets/RunLoop/EventLoop.h>
+ 
++#include <algorithm>
+ #include <memory>
+ #include <string>
+ #include <thread>
+--- a/worklets/Tools/JSISerializer.cpp
++++ b/worklets/Tools/JSISerializer.cpp
+@@ -1,7 +1,10 @@
+ #include <worklets/Tools/JSISerializer.h>
+ 
++#ifndef _MSC_VER
+ #include <cxxabi.h>
++#endif
+ 
++#include <algorithm>
+ #include <memory>
+ #include <sstream>
+ #include <string>
+@@ -116,15 +119,20 @@
+ }
+ 
+ std::string JSISerializer::stringifyHostObject(jsi::HostObject &hostObject) {
++#ifdef _MSC_VER
++  const char *hostObjClassName = typeid(hostObject).name();
++#else
+   int status = -1;
+-  std::unique_ptr<char, decltype(&std::free)> hostObjClassName(
++  std::unique_ptr<char, decltype(&std::free)> demangled(
+       abi::__cxa_demangle(typeid(hostObject).name(), nullptr, nullptr, &status), std::free);
+   if (status != 0) {
+     return "[jsi::HostObject]";
+   }
++  const char *hostObjClassName = demangled.get();
++#endif
+ 
+   std::stringstream ss;
+-  ss << "[jsi::HostObject(" << hostObjClassName.get() << ")";
++  ss << "[jsi::HostObject(" << hostObjClassName << ")";
+ 
+   auto props = hostObject.getPropertyNames(rt_);
+   auto propsCount = props.size();
+--- a/worklets/Tools/SingleInstanceChecker.h
++++ b/worklets/Tools/SingleInstanceChecker.h
+@@ -4,7 +4,9 @@
+ 
+ #include <react/debug/react_native_assert.h>
+ 
++#ifndef _MSC_VER
+ #include <cxxabi.h>
++#endif
+ 
+ #include <atomic>
+ #include <cassert>
+@@ -50,10 +52,14 @@
+ 
+ template <class T>
+ SingleInstanceChecker<T>::SingleInstanceChecker() {
++#ifdef _MSC_VER
++  std::string className = typeid(T).name();
++#else
+   int status = 0;
+   char *demangled = __cxxabiv1::__cxa_demangle(typeid(T).name(), nullptr, nullptr, &status);
+   std::string className = (status == 0 && demangled != nullptr) ? demangled : typeid(T).name();
+   std::free(demangled);
++#endif
+ 
+   // React Native can spawn up to two instances of a Native Module at the same
+   // time. This happens during a reload when a new instance of React Native is
+--- a/worklets/Tools/WorkletsJSIUtils.cpp
++++ b/worklets/Tools/WorkletsJSIUtils.cpp
+@@ -2,6 +2,7 @@
+ 
+ #include <react/debug/react_native_assert.h>
+ 
++#include <iterator>
+ #include <memory>
+ #include <sstream>
+ #include <string>

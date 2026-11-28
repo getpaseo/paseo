@@ -1,35 +1,30 @@
 Repository: https://github.com/streetwriters/react-native-gpui
-Revision: de11aa265e6fb36c80e8a30315bce6d34a9be7d6
+Revision: ad502d80d828fed59c468eb15a90b1fa03d21125
+Modules repository: https://github.com/streetwriters/react-native-gpui-modules
+Modules revision: 7435b7f4dfdaa001f10099214ccbb23fe81f9c51
 License: MIT; see LICENSE and the licenses retained within packages.
 
-Snapshot: packages/{cli,codegen,core,hermes} and
-modules/{fs,gesture-handler,reanimated,safe-area-context,screens,svg,worklets}.
-Examples, tester, testing package, website, and unused fonts/vector-icons ports
-are not included. Upstream tests and build sources within retained packages stay
-with the snapshot so contributors can inspect and modify the renderer.
+Snapshot: packages/{cli,codegen,core,hermes} from react-native-gpui, and
+modules/{fs,gesture-handler,reanimated,safe-area-context,screens,svg,worklets}
+from react-native-gpui-modules (where upstream moved modules/ in 897fe925).
+Examples, tester, testing package, website, unused modules, and unused
+fonts/vector-icons ports are not included. Upstream tests and build sources
+within retained packages stay with the snapshot so contributors can inspect
+and modify the renderer.
 
-Local patches (all other retained files match the revision above):
-- packages/core/ReactGpui/rn-gpui/src/node_view.rs: box-none views must not
-  install their own pointer area. Otherwise an empty portal overlay redirects
-  clicks to its parent, blocking Paseo's sidebar. native.test.ts exercises this
-  against the actual app.
-- packages/core/ReactGpui/rn-gpui/src/{node_view,style}.rs: paint uniform solid
-  borders with GPUI's rounded border primitive on a decoration child, keeping
-  Fabric child coordinates intact. Edge strips cannot draw the corner arcs.
-- packages/core/ReactGpui/rn-gpui-sys/cpp/GpuiJsEngine.h: route Pressability
-  hover through the pointer events GPUI emits. The desktop Pressable wrapper
-  in src-gpui/Libraries/Components/Pressable also supplies hovered to render
-  props; metro.config.js lets a wrapper import its upstream component without
-  resolving back to itself. native.test.ts covers callbacks, render props,
-  nested row hover and border pixels using appearance-regression.fixture.js.
-- packages/core/src-gpui/Libraries/Components/StatusBar/StatusBar.desktop.js:
-  desktop StatusBar implementation, because there is no mobile OS status bar.
+Local patches (all other retained files match the revisions above):
+- packages/core/src-gpui/Libraries/Components/Pressable/Pressable.desktop.js:
+  supply hovered to style and children render props; upstream now carries the
+  GpuiJsEngine.h W3C hover flag and metro.config.js self-import bypass.
+  native.test.ts covers callbacks, render props, and nested row hover using
+  appearance-regression.fixture.js.
 - packages/cli/src/package-desktop.js: ad-hoc sign macOS packages so their
   bundle resources are sealed, with templates/adhoc.entitlements.plist allowing
   bundled ad-hoc dylibs under hardened runtime; covered by package-desktop.test.js.
 - packages/cli/src/commands.js: preserve Cargo's generated dSYM symlink so
-  subsequent builds can replace it; copy symbol contents into the distribution
-  instead of linking back into the build tree. Covered by commands.test.js.
+  subsequent builds can replace it; dereference when copying symbols into the
+  distribution instead of linking back into the build tree. Covered by
+  commands.test.js.
 - packages/core/ReactCxxPlatform/react/io/WebSocketModule.{cpp,h}: release
   failed and closed connections on the JS thread. Keeping terminal clients
   exhausts file descriptors during daemon retries; deleting them on the IO
@@ -39,6 +34,10 @@ Local patches (all other retained files match the revision above):
 - packages/core/ReactGpui/rn-gpui-sys/build.rs: pass Cargo's
   MACOSX_DEPLOYMENT_TARGET to CMake. Otherwise source builds default to the
   installed SDK's version even when the app targets an older macOS release.
+
+(Upstream now includes box-none pointer pass-through, uniform rounded border
+decoration, GpuiJsEngine.h hover flag, metro.config.js self-import bypass, and
+StatusBar.desktop.js.)
 
 GPUI itself remains a pinned Cargo git dependency. Hermes/React Native prebuilt
 libraries are downloaded by upstream build tooling; this is not an offline or

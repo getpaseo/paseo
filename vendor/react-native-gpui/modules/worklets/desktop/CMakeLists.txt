@@ -18,6 +18,23 @@ if(NOT EXISTS "${_worklets_common}/worklets/NativeModules/WorkletsModuleProxy.h"
   message(FATAL_ERROR "react-native-worklets 0.13.x was not found in ${_gpui_app_root} or any ancestor node_modules directory")
 endif()
 
+# Upstream's C++ does not build with MSVC or on Linux as published; compile a
+# patched copy in the build tree and leave node_modules untouched.
+set(_worklets_patch "${CMAKE_CURRENT_LIST_DIR}/patches/react-native-worklets-0.13.0.patch")
+execute_process(
+  COMMAND "${_gpui_node}" "${CMAKE_CURRENT_LIST_DIR}/patch-sources.mjs"
+    "${_worklets_root}" "${_worklets_patch}"
+    "${CMAKE_BINARY_DIR}/rn-gpui-patched/react-native-worklets"
+  RESULT_VARIABLE _worklets_patch_result
+  OUTPUT_VARIABLE _worklets_common
+  ERROR_VARIABLE _worklets_patch_error
+  OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(NOT _worklets_patch_result EQUAL 0)
+  message(FATAL_ERROR "${_worklets_patch_error}")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${_worklets_patch}" "${_worklets_package_json}")
+
 file(GLOB_RECURSE _worklets_sources CONFIGURE_DEPENDS "${_worklets_common}/worklets/*.cpp")
 set_property(GLOBAL APPEND PROPERTY RN_GPUI_APP_CPP_SOURCES
   ${_worklets_sources}

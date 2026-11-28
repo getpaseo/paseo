@@ -6,6 +6,7 @@
 #include <folly/dynamic.h>
 #include <folly/json.h>
 #include <glog/logging.h>
+#include <jsi/JSIDynamic.h>
 
 #include <algorithm>
 #include <cmath>
@@ -13,6 +14,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -50,6 +52,21 @@ struct Handler {
 
 std::mutex handlersMutex;
 std::unordered_map<int32_t, Handler> handlers;
+
+// What one pointer event produced. A gesture whose callbacks run on the JS
+// thread is told through device events, as GestureDetector listens for them;
+// any other through events on its view.
+struct Recognized {
+  std::vector<RecognizedGesture> viewEvents;
+  std::vector<std::pair<std::string, folly::dynamic>> deviceEvents;
+};
+
+bool runsOnJS(const Handler& handler) {
+  constexpr int32_t kJSFunctionOldAPI = 3;
+  constexpr int32_t kJSFunctionNewAPI = 4;
+  return handler.actionType == kJSFunctionOldAPI ||
+      handler.actionType == kJSFunctionNewAPI;
+}
 
 folly::dynamic configObject(folly::dynamic config) {
   return config.isObject() ? std::move(config) : folly::dynamic::object();
@@ -111,15 +128,23 @@ folly::dynamic payloadFor(
 }
 
 void appendEvent(
-    std::vector<RecognizedGesture>& events,
-    int32_t viewTag,
+    Recognized& events,
+    const Handler& handler,
     const char* type,
     const folly::dynamic& payload) {
-  events.push_back({viewTag, type, folly::toJson(payload)});
+  if (runsOnJS(handler)) {
+    const bool stateChange =
+        std::string_view(type) == "topGestureHandlerStateChange";
+    events.deviceEvents.emplace_back(
+        stateChange ? "onGestureHandlerStateChange" : "onGestureHandlerEvent",
+        payload);
+    return;
+  }
+  events.viewEvents.push_back({handler.viewTag, type, folly::toJson(payload)});
 }
 
 void appendState(
-    std::vector<RecognizedGesture>& events,
+    Recognized& events,
     int32_t handlerTag,
     Handler& handler,
     int32_t nextState,
@@ -133,7 +158,7 @@ void appendState(
   }
   appendEvent(
       events,
-      handler.viewTag,
+      handler,
       "topGestureHandlerStateChange",
       payloadFor(handlerTag, handler, nextState, oldState, pointer, true));
 }
@@ -190,8 +215,8 @@ bool blockedByActiveHandler(int32_t handlerTag) {
   return false;
 }
 
-std::vector<RecognizedGesture> processPointer(const RawPointerEvent& pointer) {
-  std::vector<RecognizedGesture> events;
+Recognized processPointer(const RawPointerEvent& pointer) {
+  Recognized events;
   std::lock_guard<std::mutex> lock(handlersMutex);
   if (gestureTracingEnabled() && pointer.phase != 4) {
     LOG(INFO) << "[gesture-handler] pointer phase=" << pointer.phase << " at ("
@@ -303,7 +328,7 @@ std::vector<RecognizedGesture> processPointer(const RawPointerEvent& pointer) {
           (isPan(handler) || isLongPress(handler))) {
         appendEvent(
             events,
-            handler.viewTag,
+            handler,
             "topGestureHandlerEvent",
             payloadFor(
                 handlerTag,
@@ -341,7 +366,7 @@ std::vector<RecognizedGesture> processPointer(const RawPointerEvent& pointer) {
         if (isTap(handler) || isLongPress(handler)) {
           appendEvent(
               events,
-              handler.viewTag,
+              handler,
               "topGestureHandlerEvent",
               payloadFor(
                   handlerTag,
@@ -365,8 +390,11 @@ std::vector<RecognizedGesture> processPointer(const RawPointerEvent& pointer) {
           pointer);
     }
   }
-  if (gestureTracingEnabled() && (pointer.phase != 4 || !events.empty())) {
-    LOG(INFO) << "[gesture-handler] recognized events=" << events.size();
+  if (gestureTracingEnabled() &&
+      (pointer.phase != 4 || !events.viewEvents.empty() ||
+       !events.deviceEvents.empty())) {
+    LOG(INFO) << "[gesture-handler] recognized events="
+              << events.viewEvents.size() + events.deviceEvents.size();
   }
   return events;
 }
@@ -479,7 +507,18 @@ class GPUIGestureHandlerModule final
   bool installUIRuntimeBindings(Runtime&) {
     return true;
   }
+
+  void emit(const std::string& name, folly::dynamic payload) {
+    emitDeviceEvent(
+        name,
+        [payload = std::move(payload)](
+            Runtime& runtime, std::vector<facebook::jsi::Value>& args) {
+          args.emplace_back(facebook::jsi::valueFromDynamic(runtime, payload));
+        });
+  }
 };
+
+std::weak_ptr<GPUIGestureHandlerModule> currentModule;
 } // namespace
 
 std::shared_ptr<facebook::react::TurboModule>
@@ -491,10 +530,19 @@ create_gpui_gesture_handler_module(
   }
   rngpui::registerPointerObserver(
       [](const rngpui::extension::RawPointerEvent& pointer) {
-        return processPointer(pointer);
+        auto events = processPointer(pointer);
+        if (auto module = currentModule.lock()) {
+          for (auto& [name, payload] : events.deviceEvents) {
+            module->emit(name, std::move(payload));
+          }
+        }
+        return std::move(events.viewEvents);
       });
   if (gestureTracingEnabled()) {
     LOG(INFO) << "[gesture-handler] native pointer processor installed";
   }
-  return std::make_shared<GPUIGestureHandlerModule>(std::move(jsInvoker));
+  auto module =
+      std::make_shared<GPUIGestureHandlerModule>(std::move(jsInvoker));
+  currentModule = module;
+  return module;
 }

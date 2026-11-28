@@ -1,5 +1,7 @@
 #include "GpuiHttpClient.h"
 #include <react/io/BlobModule.h>
+#include "GpuiNetworkConfig.h"
+#include "GpuiNetworkRequest.h"
 
 #include <curl/curl.h>
 
@@ -370,6 +372,7 @@ void performRequest(
 
   curl_easy_setopt(curl.handle, CURLOPT_URL, url.c_str());
   curl_easy_setopt(curl.handle, CURLOPT_USERAGENT, "react-native-gpui/0.1");
+  applyNetworkConfig(curl.handle, url);
   curl_easy_setopt(curl.handle, CURLOPT_NOSIGNAL, 1L);
   curl_easy_setopt(curl.handle, CURLOPT_FOLLOWLOCATION, 1L);
   curl_easy_setopt(curl.handle, CURLOPT_ACCEPT_ENCODING, "");
@@ -440,7 +443,15 @@ void performRequest(
         static_cast<curl_off_t>(requestBody.string->size()));
   }
 
-  const CURLcode result = curl_easy_perform(curl.handle);
+  CURLcode result = curl_easy_perform(curl.handle);
+  // A name the DNS-over-HTTPS server could not give goes to the next server,
+  // then to the system resolver, as long as nothing has come back yet.
+  for (size_t resolverAttempt = 0; result == CURLE_COULDNT_RESOLVE_HOST &&
+       transfer.responseHeaders.empty() && transfer.body.empty() &&
+       !isCancelled(transfer) &&
+       fallBackResolver(curl.handle, resolverAttempt);) {
+    result = curl_easy_perform(curl.handle);
+  }
 
   long responseCode = 0;
   char* effectiveUrlValue = nullptr;

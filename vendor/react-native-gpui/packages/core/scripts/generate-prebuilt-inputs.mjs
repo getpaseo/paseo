@@ -16,7 +16,9 @@ import { findNodeModule, repoRoot as findRepoRoot } from './repo-root.mjs';
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const packageDir = path.resolve(scriptDir, '..');
 const repoRoot = findRepoRoot(scriptDir);
+// The Loom runtime generates from its own React Native tree.
 const reactNativeDir =
+  process.env.RN_GPUI_REACT_NATIVE_DIR ??
   findNodeModule(packageDir, 'react-native') ??
   path.join(repoRoot, 'node_modules', 'react-native');
 const rnGpuiSysDir = path.join(packageDir, 'ReactGpui', 'rn-gpui-sys');

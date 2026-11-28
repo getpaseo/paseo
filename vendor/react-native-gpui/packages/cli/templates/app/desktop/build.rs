@@ -114,7 +114,7 @@ fn emit_relocatable_rpaths(app_name: &str) {
         return;
     }
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    let mut emit = |rpath: String| println!("cargo:rustc-link-arg=-Wl,-rpath,{rpath}");
+    let emit = |rpath: String| println!("cargo:rustc-link-arg=-Wl,-rpath,{rpath}");
     match os.as_str() {
         // An app bundle puts the executable in Contents/MacOS and the shipped
         // libraries in Contents/Frameworks.

@@ -1,3 +1,4 @@
+const { Buffer } = require('node:buffer');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -39,6 +40,10 @@ module.exports = {
   }),
 
   bundleExtension: '.hbc',
+
+  // The first four bytes of a Hermes bytecode file, followed by the version.
+  // Hermes and React Native's loader identify bytecode by content, not extension.
+  bytecodeMagic: Buffer.from([0xc6, 0x1f, 0xbc, 0x03]),
 
   compile: ({ input, output, sourcemapInput, sourcemapOutput, dev }) => {
     // `-w` silences the undefined-variable warnings Hermes emits for a bundled

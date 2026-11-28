@@ -1,19 +1,30 @@
 #include "GpuiMountingManager.h"
 #include <react/runtime/GpuiDebug.h>
 
+#include <jsi/JSIDynamic.h>
 #include <react/renderer/components/desktopcontextmenuview/DesktopContextMenuView.h>
-#include <react/renderer/components/nativeviewhost/NativeViewHost.h>
+#include <react/renderer/components/desktopscrollbar/DesktopScrollBar.h>
+#include <react/renderer/components/desktopswitch/DesktopSwitch.h>
+#include <react/renderer/components/nativeroot/NativeRoot.h>
+#include <react/renderer/components/nativeslot/NativeSlot.h>
 #include <react/renderer/components/shortcutscope/ShortcutScope.h>
 #include <react/renderer/components/windowcontrol/WindowControl.h>
+#include <atomic>
 #include "GpuiHost.h" // KAllSurfacesStopped
 #include "GpuiHostComponentsCpp.h"
 #include "MountBatchBuilder.h"
+#if LOOM_RENDERER
+#include "GpuiLoomHost.h"
+#endif
 #include "react/coremodules/DeviceInfoModule.h"
 #include "rn-gpui-sys/src/lib.rs.h" // cxx bridge
 
 #include <react/renderer/componentregistry/ComponentDescriptorProviderRegistry.h>
+#include <react/renderer/components/FBReactNativeSpec/ComponentDescriptors.h>
 #include <react/renderer/components/FBReactNativeSpec/EventEmitters.h>
 #include <react/renderer/components/image/ImageComponentDescriptor.h>
+#include <react/renderer/components/image/ImageEventEmitter.h>
+#include <react/renderer/components/image/ImageState.h>
 #include <react/renderer/components/iostextinput/TextInputComponentDescriptor.h>
 #include <react/renderer/components/modal/ModalHostViewShadowNode.h>
 #include <react/renderer/components/modal/ModalHostViewState.h>
@@ -22,9 +33,12 @@
 #include <react/renderer/components/text/ParagraphComponentDescriptor.h>
 #include <react/renderer/components/text/RawTextComponentDescriptor.h>
 #include <react/renderer/components/text/TextComponentDescriptor.h>
+#include <react/renderer/components/view/LayoutConformanceComponentDescriptor.h>
 #include <react/renderer/components/view/ViewComponentDescriptor.h>
 #include <react/renderer/components/view/conversions.h>
+#include <react/renderer/components/virtualview/VirtualViewComponentDescriptor.h>
 #include <react/renderer/core/ConcreteComponentDescriptor.h>
+#include <react/renderer/imagemanager/ImageResponse.h>
 
 #include <folly/json.h>
 #include <glog/logging.h>
@@ -73,6 +87,37 @@ void GpuiImageLoader::loadImage(
   rn_gpui_load_image(uri, requestId);
 }
 
+void GpuiImageLoader::loadWithProgress(
+    const std::string& uri,
+    GpuiImageProgress&& progress,
+    GpuiImageDone&& done) {
+  const auto requestId = nextRequestId_.fetch_add(1);
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    callbacks_.emplace(requestId, std::move(done));
+    progressCallbacks_.emplace(requestId, std::move(progress));
+  }
+  rn_gpui_load_image(uri, requestId);
+}
+
+void GpuiImageLoader::reportProgress(
+    std::uint64_t requestId,
+    std::int64_t loaded,
+    std::int64_t total) {
+  GpuiImageProgress callback;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto found = progressCallbacks_.find(requestId);
+    if (found == progressCallbacks_.end())
+      return;
+    callback = found->second;
+  }
+  callback(
+      total > 0 ? static_cast<float>(loaded) / static_cast<float>(total) : 0.f,
+      loaded,
+      total);
+}
+
 IImageLoader::CacheStatus GpuiImageLoader::getCacheStatus(
     const std::string& uri) {
   return rn_gpui_image_is_cached(uri) ? CacheStatus::Memory : CacheStatus::None;
@@ -91,6 +136,7 @@ void GpuiImageLoader::completeRequest(
       return;
     callback = std::move(found->second);
     callbacks_.erase(found);
+    progressCallbacks_.erase(requestId);
   }
   callback(width, height, error.empty() ? nullptr : error.c_str());
 }
@@ -104,7 +150,62 @@ void rn_gpui_on_image_load_result(
       requestId, width, height, std::string(error.data(), error.size()));
 }
 
+void rn_gpui_on_image_progress(
+    std::uint64_t requestId,
+    std::int64_t loaded,
+    std::int64_t total) {
+  GpuiImageLoader::reportProgress(requestId, loaded, total);
+}
+
+void installGpuiImageLoadTable() {
+  setGpuiImageLoadTable(GpuiImageLoadTable{
+      .start = [](const std::string& uri,
+                  GpuiImageProgress progress,
+                  GpuiImageDone done) {
+        GpuiImageLoader::loadWithProgress(
+            uri, std::move(progress), std::move(done));
+      }});
+}
+
 namespace {
+// Turns what an image request reports into the Image component's events.
+class GpuiImageObserver final : public ImageResponseObserver {
+ public:
+  GpuiImageObserver(
+      std::shared_ptr<const ImageEventEmitter> emitter,
+      ImageSource source)
+      : emitter_(std::move(emitter)), source_(std::move(source)) {}
+
+  void didReceiveProgress(float progress, int64_t loaded, int64_t total)
+      const override {
+    emitter_->onProgress(progress, loaded, total);
+  }
+
+  void didReceiveImage(const ImageResponse& response) const override {
+    auto source = source_;
+    if (auto size = std::static_pointer_cast<Size>(response.getImage())) {
+      source.size = *size;
+      source.scale = 1;
+    }
+    emitter_->onLoad(source);
+    emitter_->onLoadEnd();
+  }
+
+  void didReceiveFailure(const ImageLoadError& error) const override {
+    ImageErrorInfo info;
+    if (auto message =
+            std::static_pointer_cast<std::string>(error.getError())) {
+      info.error = *message;
+    }
+    emitter_->onError(info);
+    emitter_->onLoadEnd();
+  }
+
+ private:
+  std::shared_ptr<const ImageEventEmitter> emitter_;
+  ImageSource source_;
+};
+
 std::atomic<uint64_t> mountBatchesInFlight{0};
 
 const char* kindName(MountKind kind) {
@@ -147,6 +248,55 @@ std::string describeOp(const MountOp& op) {
 void GpuiMountingManager::executeMount(
     SurfaceId surfaceId,
     MountingTransaction&& transaction) {
+  applyMutations(surfaceId, transaction.getMutations());
+}
+
+void GpuiMountingManager::setComponentState(
+    Tag tag,
+    std::string_view componentName,
+    ComponentHandle componentHandle,
+    const State::Shared& state) {
+  std::lock_guard<std::mutex> lock(emittersMutex_);
+  if (componentName == "ModalHostView") {
+    if (auto typed =
+            std::dynamic_pointer_cast<const ConcreteState<ModalHostViewState>>(
+                state)) {
+      modalStates_[tag] = std::move(typed);
+    }
+  } else if (
+      rngpui::anyHostComponents() &&
+      rngpui::hostComponentEntry(componentHandle) != nullptr) {
+    if (auto typed =
+            std::dynamic_pointer_cast<const ConcreteState<GpuiHostStateData>>(
+                state)) {
+      hostStates_[tag] = std::move(typed);
+    }
+  }
+}
+
+void GpuiMountingManager::clearComponentState(Tag tag) {
+  std::lock_guard<std::mutex> lock(emittersMutex_);
+  modalStates_.erase(tag);
+  hostStates_.erase(tag);
+}
+
+void GpuiMountingManager::notifyFrameChanged(
+    SurfaceId surfaceId,
+    const ShadowView& view) {
+  for (const auto& observer : gpuiExtensionHooks().mountObservers) {
+    if (observer.onFrameChanged)
+      observer.onFrameChanged(surfaceId, view);
+  }
+}
+
+void GpuiMountingManager::notifyDeleted(Tag tag) {
+  for (const auto& observer : gpuiExtensionHooks().mountObservers) {
+    if (observer.onDeleted)
+      observer.onDeleted(tag);
+  }
+}
+
+MountBatch GpuiMountingManager::beginBatch(SurfaceId surfaceId) {
   MountBatch batch;
   batch.surface_id = surfaceId;
   if (contentSize_) {
@@ -158,111 +308,170 @@ void GpuiMountingManager::executeMount(
       }
     }
   }
+  return batch;
+}
+
+void GpuiMountingManager::applyMutations(
+    SurfaceId surfaceId,
+    const ShadowViewMutationList& mutations) {
+  auto batch = beginBatch(surfaceId);
+  batch.ops.reserve(mutations.size());
+  for (const auto& mutation : mutations) {
+    batch.ops.push_back(buildMountOp(mutation));
+    observeMutation(surfaceId, mutation);
+  }
+  submitBatch(surfaceId, std::move(batch));
+}
+
+void GpuiMountingManager::observeMutation(
+    SurfaceId surfaceId,
+    const ShadowViewMutation& mutation) {
+  std::lock_guard<std::mutex> lock(emittersMutex_);
   {
-    std::lock_guard<std::mutex> lock(emittersMutex_);
-    for (const auto& mutation : transaction.getMutations()) {
-      batch.ops.push_back(buildMountOp(mutation));
-      if (mutation.type == ShadowViewMutation::Insert ||
-          (mutation.type == ShadowViewMutation::Update &&
-           mutation.oldChildShadowView.layoutMetrics.frame !=
-               mutation.newChildShadowView.layoutMetrics.frame)) {
-        for (const auto& observer : gpuiExtensionHooks().mountObservers) {
-          if (observer.onFrameChanged)
-            observer.onFrameChanged(surfaceId, mutation.newChildShadowView);
-        }
+    if (mutation.type == ShadowViewMutation::Insert ||
+        (mutation.type == ShadowViewMutation::Update &&
+         mutation.oldChildShadowView.layoutMetrics.frame !=
+             mutation.newChildShadowView.layoutMetrics.frame)) {
+      for (const auto& observer : gpuiExtensionHooks().mountObservers) {
+        if (observer.onFrameChanged)
+          observer.onFrameChanged(surfaceId, mutation.newChildShadowView);
       }
-      auto isVisible = [](const ShadowView& shadowView) {
-        auto props = std::dynamic_pointer_cast<const ModalHostViewProps>(
-            shadowView.props);
-        return props && props->visible;
-      };
-      if (mutation.type == ShadowViewMutation::Insert &&
-          std::string_view(mutation.newChildShadowView.componentName) ==
-              "ModalHostView" &&
-          isVisible(mutation.newChildShadowView)) {
-        auto emitter =
-            std::dynamic_pointer_cast<const ModalHostViewEventEmitter>(
-                mutation.newChildShadowView.eventEmitter);
-        if (emitter)
+    }
+    auto isVisible = [](const ShadowView& shadowView) {
+      auto props =
+          std::dynamic_pointer_cast<const ModalHostViewProps>(shadowView.props);
+      return props && props->visible;
+    };
+    if (mutation.type == ShadowViewMutation::Insert &&
+        std::string_view(mutation.newChildShadowView.componentName) ==
+            "ModalHostView" &&
+        isVisible(mutation.newChildShadowView)) {
+      auto emitter = std::dynamic_pointer_cast<const ModalHostViewEventEmitter>(
+          mutation.newChildShadowView.eventEmitter);
+      if (emitter)
+        emitter->onShow({});
+    } else if (
+        mutation.type == ShadowViewMutation::Update &&
+        std::string_view(mutation.oldChildShadowView.componentName) ==
+            "ModalHostView" &&
+        isVisible(mutation.oldChildShadowView) !=
+            isVisible(mutation.newChildShadowView)) {
+      auto emitter = std::dynamic_pointer_cast<const ModalHostViewEventEmitter>(
+          mutation.newChildShadowView.eventEmitter);
+      if (emitter) {
+        if (isVisible(mutation.newChildShadowView))
           emitter->onShow({});
-      } else if (
-          mutation.type == ShadowViewMutation::Update &&
-          std::string_view(mutation.oldChildShadowView.componentName) ==
-              "ModalHostView" &&
-          isVisible(mutation.oldChildShadowView) !=
-              isVisible(mutation.newChildShadowView)) {
-        auto emitter =
-            std::dynamic_pointer_cast<const ModalHostViewEventEmitter>(
-                mutation.newChildShadowView.eventEmitter);
-        if (emitter) {
-          if (isVisible(mutation.newChildShadowView))
-            emitter->onShow({});
-          else
-            emitter->onDismiss({});
-        }
-      } else if (
-          mutation.type == ShadowViewMutation::Delete &&
-          std::string_view(mutation.oldChildShadowView.componentName) ==
-              "ModalHostView" &&
-          isVisible(mutation.oldChildShadowView)) {
-        auto emitter =
-            std::dynamic_pointer_cast<const ModalHostViewEventEmitter>(
-                mutation.oldChildShadowView.eventEmitter);
-        if (emitter)
+        else
           emitter->onDismiss({});
       }
-      if (mutation.type == ShadowViewMutation::Create ||
-          mutation.type == ShadowViewMutation::Update) {
+    } else if (
+        mutation.type == ShadowViewMutation::Delete &&
+        std::string_view(mutation.oldChildShadowView.componentName) ==
+            "ModalHostView" &&
+        isVisible(mutation.oldChildShadowView)) {
+      auto emitter = std::dynamic_pointer_cast<const ModalHostViewEventEmitter>(
+          mutation.oldChildShadowView.eventEmitter);
+      if (emitter)
+        emitter->onDismiss({});
+    }
+    if (mutation.type == ShadowViewMutation::Create ||
+        mutation.type == ShadowViewMutation::Update) {
+      if (!routes_.event) {
         animatedViews_[mutation.newChildShadowView.tag] =
             mutation.newChildShadowView;
         emitters_[mutation.newChildShadowView.tag] =
             mutation.newChildShadowView.eventEmitter;
-        const auto componentName =
-            std::string(mutation.newChildShadowView.componentName);
-        if (componentName == "ScrollView") {
-          auto state =
-              std::dynamic_pointer_cast<const ConcreteState<ScrollViewState>>(
-                  mutation.newChildShadowView.state);
-          if (state)
-            scrollStates_[mutation.newChildShadowView.tag] = std::move(state);
-        } else if (
-            rngpui::anyHostComponents() &&
-            rngpui::hostComponentEntry(
-                mutation.newChildShadowView.componentHandle) != nullptr) {
-          auto state =
-              std::dynamic_pointer_cast<const ConcreteState<GpuiHostStateData>>(
-                  mutation.newChildShadowView.state);
-          if (state) {
-            hostStates_[mutation.newChildShadowView.tag] = std::move(state);
+      }
+      const auto componentName =
+          std::string(mutation.newChildShadowView.componentName);
+      if (componentName == "ScrollView") {
+        auto state =
+            std::dynamic_pointer_cast<const ConcreteState<ScrollViewState>>(
+                mutation.newChildShadowView.state);
+        if (state)
+          scrollStates_[mutation.newChildShadowView.tag] = std::move(state);
+      } else if (
+          rngpui::anyHostComponents() &&
+          rngpui::hostComponentEntry(
+              mutation.newChildShadowView.componentHandle) != nullptr) {
+        auto state =
+            std::dynamic_pointer_cast<const ConcreteState<GpuiHostStateData>>(
+                mutation.newChildShadowView.state);
+        if (state) {
+          hostStates_[mutation.newChildShadowView.tag] = std::move(state);
+        }
+      } else if (componentName == "DesktopNativeRoot") {
+        auto state =
+            std::dynamic_pointer_cast<const ConcreteState<NativeRootState>>(
+                mutation.newChildShadowView.state);
+        if (state)
+          nativeRootStates_[mutation.newChildShadowView.tag] = std::move(state);
+      } else if (componentName == "DesktopNativeSlot") {
+        auto state =
+            std::dynamic_pointer_cast<const ConcreteState<NativeSlotState>>(
+                mutation.newChildShadowView.state);
+        if (state)
+          nativeSlotStates_[mutation.newChildShadowView.tag] = std::move(state);
+      } else if (componentName == "ModalHostView") {
+        auto state =
+            std::dynamic_pointer_cast<const ConcreteState<ModalHostViewState>>(
+                mutation.newChildShadowView.state);
+        if (state)
+          modalStates_[mutation.newChildShadowView.tag] = std::move(state);
+      } else if (componentName == "Image") {
+        auto state = std::dynamic_pointer_cast<const ConcreteState<ImageState>>(
+            mutation.newChildShadowView.state);
+        auto emitter = std::dynamic_pointer_cast<const ImageEventEmitter>(
+            mutation.newChildShadowView.eventEmitter);
+        if (state && emitter) {
+          const auto& data = state->getData();
+          auto coordinator =
+              data.getImageRequest().getSharedObserverCoordinator();
+          auto& entry = imageObservations_[mutation.newChildShadowView.tag];
+          if (entry.coordinator != coordinator) {
+            if (entry.coordinator && entry.observer)
+              entry.coordinator->removeObserver(entry.observer);
+            entry.coordinator = coordinator;
+            entry.observer = std::make_shared<GpuiImageObserver>(
+                emitter, data.getImageSource());
+            if (data.getImageSource().type != ImageSource::Type::Invalid)
+              emitter->onLoadStart();
+            coordinator->addObserver(entry.observer);
           }
-        } else if (componentName == "ModalHostView") {
-          auto state = std::dynamic_pointer_cast<
-              const ConcreteState<ModalHostViewState>>(
-              mutation.newChildShadowView.state);
-          if (state)
-            modalStates_[mutation.newChildShadowView.tag] = std::move(state);
         }
-      } else if (mutation.type == ShadowViewMutation::Delete) {
-        for (const auto& observer : gpuiExtensionHooks().mountObservers) {
-          if (observer.onDeleted)
-            observer.onDeleted(mutation.oldChildShadowView.tag);
-        }
-        animatedViews_.erase(mutation.oldChildShadowView.tag);
-        const auto tag = mutation.oldChildShadowView.tag;
-        emitters_.erase(tag);
-        scrollStates_.erase(mutation.oldChildShadowView.tag);
-        modalStates_.erase(mutation.oldChildShadowView.tag);
-        hostStates_.erase(mutation.oldChildShadowView.tag);
+      }
+    } else if (mutation.type == ShadowViewMutation::Delete) {
+      for (const auto& observer : gpuiExtensionHooks().mountObservers) {
+        if (observer.onDeleted)
+          observer.onDeleted(mutation.oldChildShadowView.tag);
+      }
+      animatedViews_.erase(mutation.oldChildShadowView.tag);
+      const auto tag = mutation.oldChildShadowView.tag;
+      emitters_.erase(tag);
+      scrollStates_.erase(mutation.oldChildShadowView.tag);
+      modalStates_.erase(mutation.oldChildShadowView.tag);
+      hostStates_.erase(mutation.oldChildShadowView.tag);
+      nativeRootStates_.erase(mutation.oldChildShadowView.tag);
+      nativeSlotStates_.erase(mutation.oldChildShadowView.tag);
+      if (auto found = imageObservations_.find(tag);
+          found != imageObservations_.end()) {
+        if (found->second.coordinator && found->second.observer)
+          found->second.coordinator->removeObserver(found->second.observer);
+        imageObservations_.erase(found);
       }
     }
   }
+}
 
-  rn_gpui_log(
-      0,
-      "executeMount surface=" + std::to_string(surfaceId) +
-          " ops=" + std::to_string(batch.ops.size()));
-  for (const auto& op : batch.ops) {
-    rn_gpui_log(0, describeOp(op));
+void GpuiMountingManager::submitBatch(SurfaceId surfaceId, MountBatch&& batch) {
+  if (rn_gpui_log_enabled(0)) {
+    rn_gpui_log(
+        0,
+        "executeMount surface=" + std::to_string(surfaceId) +
+            " ops=" + std::to_string(batch.ops.size()));
+    for (const auto& op : batch.ops) {
+      rn_gpui_log(0, describeOp(op));
+    }
   }
 
   mountBatchesInFlight.fetch_add(1, std::memory_order_relaxed);
@@ -277,8 +486,18 @@ void GpuiMountingManager::executeMount(
   }
 }
 
+namespace {
+std::atomic<uint64_t (*)()> mountPendingProbe{nullptr};
+} // namespace
+
+void setMountPendingProbe(uint64_t (*probe)()) {
+  mountPendingProbe.store(probe, std::memory_order_release);
+}
+
 extern "C" uint64_t rn_gpui_mount_batches_in_flight() noexcept {
-  return mountBatchesInFlight.load(std::memory_order_relaxed);
+  const auto probe = mountPendingProbe.load(std::memory_order_acquire);
+  return mountBatchesInFlight.load(std::memory_order_relaxed) +
+      (probe != nullptr ? probe() : 0);
 }
 
 extern "C" void rn_gpui_mount_batch_applied() noexcept {
@@ -296,6 +515,13 @@ void GpuiMountingManager::synchronouslyUpdateViewOnUIThread(
                 << " props=" << folly::toJson(props);
     }
   }
+  // Animation libraries hand colors over as signed 32-bit integers, so a color
+  // with a high alpha byte is negative; converting the double straight to
+  // unsigned is undefined for those.
+  const auto argb = [](const folly::dynamic& value) {
+    return static_cast<uint32_t>(
+        value.isInt() ? value.asInt() : static_cast<int64_t>(value.asDouble()));
+  };
   AnimatedPropsFlat update{};
   update.tag = tag;
   if (props.isObject()) {
@@ -306,13 +532,12 @@ void GpuiMountingManager::synchronouslyUpdateViewOnUIThread(
     }
     const auto* backgroundColor = props.get_ptr("backgroundColor");
     if (backgroundColor != nullptr && backgroundColor->isNumber()) {
-      update.background_color =
-          static_cast<uint32_t>(backgroundColor->asDouble());
+      update.background_color = argb(*backgroundColor);
       update.has_background_color = true;
     }
     const auto* textColor = props.get_ptr("color");
     if (textColor != nullptr && textColor->isNumber()) {
-      update.text_color = static_cast<uint32_t>(textColor->asDouble());
+      update.text_color = argb(*textColor);
       update.has_text_color = true;
     }
     const auto* transform = props.get_ptr("transform");
@@ -321,26 +546,30 @@ void GpuiMountingManager::synchronouslyUpdateViewOnUIThread(
       // layout-dependent translations and transformOrigin. Extracting scalar
       // operations independently loses repeated operations and scale/translate
       // order.
-      ShadowView view;
-      {
+      std::optional<AnimatedGeometry> geometry;
+      if (routes_.geometry) {
+        geometry = routes_.geometry(tag);
+      } else {
         std::lock_guard<std::mutex> lock(emittersMutex_);
         auto it = animatedViews_.find(tag);
-        if (it == animatedViews_.end())
-          return;
-        view = it->second;
+        if (it != animatedViews_.end()) {
+          if (auto baseProps = std::dynamic_pointer_cast<const BaseViewProps>(
+                  it->second.props)) {
+            geometry = AnimatedGeometry{
+                it->second.layoutMetrics.frame.size,
+                baseProps->transformOrigin};
+          }
+        }
       }
-      auto baseProps =
-          std::dynamic_pointer_cast<const BaseViewProps>(view.props);
-      if (!baseProps)
+      if (!geometry)
         return;
       ContextContainer contextContainer;
-      PropsParserContext context(view.surfaceId, contextContainer);
+      PropsParserContext context(0, contextContainer);
       Transform parsed;
       fromRawValue(context, RawValue(*transform), parsed);
-      update.transform =
-          BaseViewProps::resolveTransform(
-              view.layoutMetrics.frame.size, parsed, baseProps->transformOrigin)
-              .matrix;
+      update.transform = BaseViewProps::resolveTransform(
+                             geometry->size, parsed, geometry->transformOrigin)
+                             .matrix;
       update.has_transform = true;
     } else if (props.empty()) {
       update.reset_transform = true;
@@ -384,6 +613,52 @@ void reportHostComponentSize(int32_t tag, float width, float height) {
   }
 }
 
+bool reportNativeRootSize(
+    int32_t tag,
+    float height,
+    bool hasWidth,
+    float width,
+    float minWidth) {
+#if LOOM_RENDERER
+  if (!hasWidth) {
+    return GpuiLoomHost::writeMeasuredSize(
+        tag, std::nullopt, height, std::nullopt, folly::dynamic::object());
+  }
+  return GpuiLoomHost::writeMeasuredSize(
+      tag,
+      width,
+      height,
+      minWidth,
+      folly::dynamic::object("maxWidth", "100%")("flexShrink", 1));
+#else
+  if (auto manager = hostComponentStateManager().lock()) {
+    return manager->setNativeRootSize(tag, height, hasWidth, width, minWidth);
+  }
+  return false;
+#endif
+}
+
+bool reportNativeSlotSize(
+    int32_t tag,
+    bool hasWidth,
+    float width,
+    bool hasHeight,
+    float height) {
+#if LOOM_RENDERER
+  return GpuiLoomHost::writeMeasuredSize(
+      tag,
+      hasWidth ? std::optional<float>(width) : std::nullopt,
+      hasHeight ? std::optional<float>(height) : std::nullopt,
+      std::nullopt,
+      folly::dynamic::object());
+#else
+  if (auto manager = hostComponentStateManager().lock()) {
+    return manager->setNativeSlotSize(tag, hasWidth, width, hasHeight, height);
+  }
+  return false;
+#endif
+}
+
 void reportHostComponentInsets(
     int32_t tag,
     float top,
@@ -417,6 +692,57 @@ void GpuiMountingManager::setHostComponentSize(
   next.height = height;
   next.measured = true;
   state->updateState(std::move(next));
+}
+
+bool GpuiMountingManager::setNativeRootSize(
+    Tag tag,
+    float height,
+    bool hasWidth,
+    float width,
+    float minWidth) {
+  std::shared_ptr<const ConcreteState<NativeRootState>> state;
+  {
+    std::lock_guard<std::mutex> lock(emittersMutex_);
+    auto it = nativeRootStates_.find(tag);
+    if (it == nativeRootStates_.end()) {
+      return false;
+    }
+    state = it->second;
+  }
+  NativeRootState next{height, true, width, minWidth, hasWidth};
+  const auto& data = state->getData();
+  if (data.hasHeight == next.hasHeight && data.height == next.height &&
+      data.hasWidth == next.hasWidth && data.width == next.width &&
+      data.minWidth == next.minWidth) {
+    return true;
+  }
+  state->updateState(std::move(next));
+  return true;
+}
+
+bool GpuiMountingManager::setNativeSlotSize(
+    Tag tag,
+    bool hasWidth,
+    float width,
+    bool hasHeight,
+    float height) {
+  std::shared_ptr<const ConcreteState<NativeSlotState>> state;
+  {
+    std::lock_guard<std::mutex> lock(emittersMutex_);
+    auto it = nativeSlotStates_.find(tag);
+    if (it == nativeSlotStates_.end()) {
+      return false;
+    }
+    state = it->second;
+  }
+  NativeSlotState next{width, hasWidth, height, hasHeight};
+  const auto& data = state->getData();
+  if (data.hasWidth == next.hasWidth && data.width == next.width &&
+      data.hasHeight == next.hasHeight && data.height == next.height) {
+    return true;
+  }
+  state->updateState(std::move(next));
+  return true;
 }
 
 void GpuiMountingManager::setHostComponentInsets(
@@ -475,7 +801,24 @@ void GpuiMountingManager::setWindowSize(float width, float height) {
   }
 }
 
+namespace {
+std::mutex windowInsetsMutex;
+std::array<float, 4> lastWindowInsets{};
+} // namespace
+
+void currentWindowInsets(float& top, float& right, float& bottom, float& left) {
+  std::lock_guard<std::mutex> lock(windowInsetsMutex);
+  top = lastWindowInsets[0];
+  right = lastWindowInsets[1];
+  bottom = lastWindowInsets[2];
+  left = lastWindowInsets[3];
+}
+
 void GpuiMountingManager::setWindowTopInset(float top) {
+  {
+    std::lock_guard<std::mutex> lock(windowInsetsMutex);
+    lastWindowInsets = {top, 0.0f, 0.0f, 0.0f};
+  }
   for (const auto& observer : gpuiExtensionHooks().windowInsetsObservers) {
     observer(top, 0.0f, 0.0f, 0.0f);
   }
@@ -485,6 +828,10 @@ void GpuiMountingManager::dispatchEvent(
     Tag tag,
     const std::string& type,
     folly::dynamic&& payload) {
+  if (routes_.event) {
+    routes_.event(tag, type, std::move(payload));
+    return;
+  }
   SharedEventEmitter emitter;
   {
     std::lock_guard<std::mutex> lock(emittersMutex_);
@@ -510,6 +857,72 @@ void GpuiMountingManager::dispatchEvent(
   emitter->dispatchEvent(type, std::move(payload));
 }
 
+void GpuiMountingManager::dispatchWheel(
+    Tag tag,
+    uint64_t id,
+    folly::dynamic&& payload) {
+  if (routes_.wheel) {
+    routes_.wheel(tag, id, std::move(payload));
+    return;
+  }
+  SharedEventEmitter emitter;
+  {
+    std::lock_guard<std::mutex> lock(emittersMutex_);
+    auto it = emitters_.find(tag);
+    if (it != emitters_.end()) {
+      emitter = it->second;
+    }
+  }
+  if (!emitter) {
+    rn_gpui_on_wheel_done(id, false);
+    return;
+  }
+  dispatchWheelTo(*emitter, id, std::move(payload));
+}
+
+void GpuiMountingManager::dispatchWheelTo(
+    const EventEmitter& emitter,
+    uint64_t id,
+    folly::dynamic&& payload) {
+  auto prevented = std::make_shared<std::atomic<bool>>(false);
+  auto shared = std::make_shared<folly::dynamic>(std::move(payload));
+  emitter.dispatchEvent(
+      "topWheel",
+      ValueFactory{
+          [shared,
+           prevented](facebook::jsi::Runtime& runtime) -> facebook::jsi::Value {
+            auto value = facebook::jsi::valueFromDynamic(runtime, *shared);
+            auto event = value.asObject(runtime);
+            auto stop = [prevented](
+                            facebook::jsi::Runtime&,
+                            const facebook::jsi::Value&,
+                            const facebook::jsi::Value*,
+                            size_t) -> facebook::jsi::Value {
+              prevented->store(true);
+              return facebook::jsi::Value::undefined();
+            };
+            for (const char* name : {"preventDefault", "stopPropagation"}) {
+              event.setProperty(
+                  runtime,
+                  name,
+                  facebook::jsi::Function::createFromHostFunction(
+                      runtime,
+                      facebook::jsi::PropNameID::forAscii(runtime, name),
+                      0,
+                      stop));
+            }
+            return value;
+          }});
+  emitter.dispatchEvent(
+      "topWheelEnd",
+      ValueFactory{
+          [id,
+           prevented](facebook::jsi::Runtime& runtime) -> facebook::jsi::Value {
+            rn_gpui_on_wheel_done(id, prevented->load());
+            return facebook::jsi::Object(runtime);
+          }});
+}
+
 void GpuiMountingManager::setAccessibilityFocusedView(Tag viewTag) {
   rn_gpui_request_accessibility_focus(viewTag);
 }
@@ -522,26 +935,42 @@ void GpuiMountingManager::dispatchCommand(
     const ShadowView& view,
     const std::string& name,
     const folly::dynamic& args) {
-  if (std::string_view(view.componentName) == "TextInput") {
+  dispatchCommand(
+      view.tag, view.componentName, view.componentHandle, name, args);
+}
+
+void GpuiMountingManager::dispatchCommand(
+    Tag tag,
+    std::string_view componentName,
+    ComponentHandle componentHandle,
+    const std::string& name,
+    const folly::dynamic& args) {
+  if (componentName == "TextInput") {
     if (name == "focus") {
-      rn_gpui_on_text_input_command(view.tag, true);
+      rn_gpui_on_text_input_command(tag, true);
     } else if (name == "blur") {
-      rn_gpui_on_text_input_command(view.tag, false);
+      rn_gpui_on_text_input_command(tag, false);
     } else if (name == "clear") {
-      rn_gpui_on_text_input_clear(view.tag);
+      rn_gpui_on_text_input_clear(tag);
     }
     return;
   }
+  if (componentName == "View" && (name == "focus" || name == "blur")) {
+    rn_gpui_on_text_input_command(tag, name == "focus");
+    return;
+  }
+  const folly::dynamic argsArray =
+      args.isArray() ? args : folly::dynamic::array(args);
+  rn_gpui_on_builtin_command(
+      tag, std::string(componentName), name, folly::toJson(argsArray).c_str());
   if (!rngpui::anyHostComponents()) {
     return;
   }
-  const auto* entry = rngpui::hostComponentEntry(view.componentHandle);
+  const auto* entry = rngpui::hostComponentEntry(componentHandle);
   if (entry == nullptr || entry->command == nullptr) {
     return;
   }
-  const folly::dynamic normalized =
-      args.isArray() ? args : folly::dynamic::array(args);
-  if (!entry->command(view.tag, name, normalized)) {
+  if (!entry->command(tag, name, argsArray)) {
     LOG(ERROR) << "[host-component] " << entry->name << " has no command '"
                << name << "'";
   }
@@ -560,9 +989,47 @@ void GpuiMountingManager::setSchedulerTaskExecutor(
       std::lock_guard<std::mutex> lock(emittersMutex_);
       animatedViews_.clear();
       modalStates_.clear();
+      nativeRootStates_.clear();
+      nativeSlotStates_.clear();
+    }
+    if (instanceHook_) {
+      instanceHook_(false);
     }
     rn_gpui_on_surface_stopped(kAllSurfacesStopped);
+  } else if (instanceHook_) {
+    instanceHook_(true);
   }
+}
+
+namespace {
+
+std::mutex& knownComponentsMutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
+std::unordered_set<std::string>& knownComponents() {
+  static std::unordered_set<std::string> names;
+  return names;
+}
+
+void addProvider(
+    ComponentDescriptorProviderRegistry& registry,
+    const ComponentDescriptorProvider& provider) {
+  {
+    std::lock_guard<std::mutex> lock(knownComponentsMutex());
+    knownComponents().insert(provider.name);
+  }
+  registry.add(provider);
+}
+
+} // namespace
+
+// What `UIManager.hasViewManagerConfig` asks: React Native picks the stable
+// `VirtualView` over its experimental twin when the component is registered.
+bool GpuiMountingManager::hasComponent(const std::string& name) {
+  std::lock_guard<std::mutex> lock(knownComponentsMutex());
+  return knownComponents().count(name) > 0;
 }
 
 ComponentRegistryFactory GpuiMountingManager::getComponentRegistryFactory() {
@@ -570,30 +1037,69 @@ ComponentRegistryFactory GpuiMountingManager::getComponentRegistryFactory() {
             const std::shared_ptr<const ContextContainer>& contextContainer) {
     static auto registry = [] {
       auto result = std::make_shared<ComponentDescriptorProviderRegistry>();
-      result->add(
+      addProvider(
+          *result,
           concreteComponentDescriptorProvider<ViewComponentDescriptor>());
-      result->add(
+      addProvider(
+          *result,
+          concreteComponentDescriptorProvider<
+              LayoutConformanceComponentDescriptor>());
+      addProvider(
+          *result,
           concreteComponentDescriptorProvider<ParagraphComponentDescriptor>());
-      result->add(
+      addProvider(
+          *result,
           concreteComponentDescriptorProvider<TextComponentDescriptor>());
-      result->add(
+      addProvider(
+          *result,
           concreteComponentDescriptorProvider<RawTextComponentDescriptor>());
-      result->add(
+      addProvider(
+          *result,
           concreteComponentDescriptorProvider<ImageComponentDescriptor>());
-      result->add(
+      addProvider(
+          *result,
           concreteComponentDescriptorProvider<ScrollViewComponentDescriptor>());
-      result->add(
+      addProvider(
+          *result,
           concreteComponentDescriptorProvider<TextInputComponentDescriptor>());
-      result->add(concreteComponentDescriptorProvider<
-                  GpuiModalHostViewComponentDescriptor>());
-      result->add(concreteComponentDescriptorProvider<
-                  NativeViewHostComponentDescriptor>());
-      result->add(concreteComponentDescriptorProvider<
-                  WindowControlComponentDescriptor>());
-      result->add(concreteComponentDescriptorProvider<
-                  DesktopContextMenuViewComponentDescriptor>());
-      result->add(concreteComponentDescriptorProvider<
-                  ShortcutScopeComponentDescriptor>());
+      addProvider(
+          *result,
+          concreteComponentDescriptorProvider<
+              GpuiModalHostViewComponentDescriptor>());
+      addProvider(
+          *result,
+          concreteComponentDescriptorProvider<
+              WindowControlComponentDescriptor>());
+      addProvider(
+          *result,
+          concreteComponentDescriptorProvider<
+              DesktopSwitchComponentDescriptor>());
+      addProvider(
+          *result,
+          concreteComponentDescriptorProvider<
+              ActivityIndicatorViewComponentDescriptor>());
+      addProvider(
+          *result,
+          concreteComponentDescriptorProvider<
+              DesktopContextMenuViewComponentDescriptor>());
+      addProvider(
+          *result,
+          concreteComponentDescriptorProvider<
+              ShortcutScopeComponentDescriptor>());
+      addProvider(
+          *result,
+          concreteComponentDescriptorProvider<NativeRootComponentDescriptor>());
+      addProvider(
+          *result,
+          concreteComponentDescriptorProvider<NativeSlotComponentDescriptor>());
+      addProvider(
+          *result,
+          concreteComponentDescriptorProvider<
+              DesktopScrollBarComponentDescriptor>());
+      addProvider(
+          *result,
+          concreteComponentDescriptorProvider<
+              VirtualViewComponentDescriptor>());
       result->setComponentDescriptorProviderRequest([](ComponentName name) {
         LOG(ERROR) << "Fabric component " << name
                    << " is not implemented on gpui";

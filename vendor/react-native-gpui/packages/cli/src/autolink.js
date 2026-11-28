@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { loadDesktopConfig } from './desktop-config.js';
 
 // npm ships npx as a .cmd shim on Windows, where child_process cannot resolve a
 // command without its extension, and Node refuses to spawn .cmd/.bat files
@@ -54,6 +55,20 @@ const MANAGED_CRATES = [
 
 /// The version each managed crate is patched to, when it is a path dependency.
 const CORE_CRATE_VERSION = '0.1';
+
+/// The crates GPUI Kit (published on crates.io against `gpui-pre`) names, which
+/// autolink redirects to the gpui-fast compat crates of core's pin, so the kit
+/// runs on the same GPUI as core. The first three are patched whenever a linked
+/// module crate depends on the kit; the others only when something names them,
+/// because Cargo warns about a patch the crate graph does not use.
+const GPUI_KIT_PATCHES = ['gpui-pre', 'gpui-pre-macros', 'gpui-pre-sum-tree'];
+const GPUI_KIT_OPTIONAL_PATCHES = [
+  'gpui-pre-platform',
+  'gpui-pre-web',
+  'gpui-pre-reqwest-client',
+];
+const GPUI_KIT_DEPENDENCY =
+  /^(?:gpui-base|gpui-component|gpui-kit(?:-[a-z0-9-]+)?|gpui-pre(?:-[a-z0-9-]+)?)$/u;
 
 const PATCH_BEGIN =
   '# Managed by @react-native-gpui/cli autolink; do not edit between these markers.';
@@ -125,6 +140,12 @@ function patchBlock(entries) {
  * JSON's string syntax is a subset of TOML's for the characters paths contain, so
  * quoting through it keeps a Windows path's backslashes escaped correctly.
  */
+function rustRawString(text) {
+  let hashes = '#';
+  while (text.includes(`"${hashes}`)) hashes += '#';
+  return `r${hashes}"${text}"${hashes}`;
+}
+
 function escapeToml(value) {
   return JSON.stringify(value);
 }
@@ -142,7 +163,88 @@ function escapeToml(value) {
  * authority; `base` is the directory the paths are written relative to, which
  * for an app manifest is its `desktop/` directory.
  */
-export function managedPatchEntries(platformRoot, base) {
+/**
+ * The spec files a package hands to one side. A package with both a C++
+ * provider and a Rust crate lists the C++ ones in `cppSpecs`: the provider
+ * serves those and the crate the rest. Without `cppSpecs` both get every spec.
+ */
+export function specFilesFor(files, cppSpecs, side) {
+  if (cppSpecs === undefined) return files;
+  if (
+    !Array.isArray(cppSpecs) ||
+    cppSpecs.some(name => typeof name !== 'string')
+  ) {
+    throw new Error(
+      'platforms.desktop.cppSpecs must be an array of file names',
+    );
+  }
+  const missing = cppSpecs.filter(name => !files.includes(name));
+  if (missing.length > 0) {
+    throw new Error(
+      `platforms.desktop.cppSpecs names ${missing.join(', ')}, which is not a specification of the package`,
+    );
+  }
+  return files.filter(file => cppSpecs.includes(file) === (side === 'cpp'));
+}
+
+/**
+ * The crate names a manifest depends on, in any dependency section (also the
+ * target-specific, dev and build ones), with a renamed dependency under the
+ * name of the package it points at.
+ */
+export function manifestDependencyNames(manifest) {
+  const names = [];
+  const lines = manifest.replace(/\r\n/gu, '\n').split('\n');
+  let section = '';
+  let tableName = null;
+  for (const line of lines) {
+    const table = /^\[([^\]]+)\]\s*$/u.exec(line);
+    if (table !== null) {
+      if (tableName !== null) names.push(tableName.name);
+      tableName = null;
+      section = table[1].trim();
+      const single =
+        /^(?:target\..+\.)?(?:dev-|build-)?dependencies\.([A-Za-z0-9_-]+)$/u.exec(
+          section,
+        );
+      if (single !== null) tableName = { name: single[1] };
+      continue;
+    }
+    if (tableName !== null) {
+      const renamed = /^package\s*=\s*"([^"]+)"/u.exec(line.trim());
+      if (renamed !== null) tableName.name = renamed[1];
+      continue;
+    }
+    if (!/^(?:target\..+\.)?(?:dev-|build-)?dependencies$/u.test(section)) {
+      continue;
+    }
+    const entry = /^([A-Za-z0-9_-]+)\s*=\s*(.+?)\s*(?:#.*)?$/u.exec(line);
+    if (entry === null) continue;
+    names.push(/package\s*=\s*"([^"]+)"/u.exec(entry[2])?.[1] ?? entry[1]);
+  }
+  if (tableName !== null) names.push(tableName.name);
+  return names;
+}
+
+/**
+ * The GPUI Kit crates to patch for the linked module crates' manifests, and
+ * the app's lockfile when it has one: none when no module depends on the kit.
+ */
+export function gpuiKitPatchNames(moduleManifests, appLockfile = '') {
+  const named = moduleManifests.flatMap(manifestDependencyNames);
+  if (!named.some(name => GPUI_KIT_DEPENDENCY.test(name))) return [];
+  const locked = [...appLockfile.matchAll(/^name = "([^"]+)"$/gmu)].map(
+    match => match[1],
+  );
+  return [
+    ...GPUI_KIT_PATCHES,
+    ...GPUI_KIT_OPTIONAL_PATCHES.filter(
+      name => named.includes(name) || locked.includes(name),
+    ),
+  ];
+}
+
+export function managedPatchEntries(platformRoot, base, kitCrates = []) {
   const runtimeCrate = path.join(platformRoot, 'ReactGpui/rn-gpui');
   const pin = gpuiPin(platformRoot);
   const relative = target =>
@@ -165,7 +267,61 @@ export function managedPatchEntries(platformRoot, base) {
       'gpui_platform',
       `{ git = "${pin.gpuiPlatform.git}", rev = "${pin.gpuiPlatform.rev}" }`,
     ],
+    ...kitCrates.map(crate => [
+      crate,
+      `{ git = "${pin.gpui.git}", rev = "${pin.gpui.rev}" }`,
+    ]),
   ];
+}
+
+/**
+ * Whether `section` of a manifest declares `name`, inline or as its own
+ * `[section.name]` table. The managed `[patch.crates-io]` block names the same
+ * crates, so a search of the whole file finds them there and wrongly concludes
+ * the dependency exists.
+ */
+function declaresDependency(manifest, section, name) {
+  const header = new RegExp(`^\\[${section}\\]\\s*$`, 'mu').exec(manifest);
+  if (header !== null) {
+    const start = header.index + header[0].length;
+    const next = manifest.indexOf('\n[', start);
+    const body = manifest.slice(start, next < 0 ? manifest.length : next);
+    if (new RegExp(`^${name}\\s*=`, 'mu').test(body)) return true;
+  }
+  return new RegExp(`^\\[${section}\\.${name}\\]\\s*$`, 'mu').test(manifest);
+}
+
+/**
+ * Points an app dependency on a core crate at its canonical path. A dependency
+ * written as a version is left alone, because the managed patch block already
+ * redirects it. A path that goes through a symlink (a `file:`-linked core) is
+ * replaced: Cargo treats the linked and the real path as two different crates
+ * and refuses the lockfile.
+ */
+function ensurePathDependency(manifest, section, name, tomlPath) {
+  const entry = `${name} = { path = ${tomlPath} }`;
+  if (!declaresDependency(manifest, section, name)) {
+    const header = new RegExp(`^\\[${section}\\]\\s*$`, 'mu');
+    return header.test(manifest)
+      ? manifest.replace(header, line => `${line}\n${entry}`)
+      : `${manifest}\n[${section}]\n${entry}\n`;
+  }
+  const header = new RegExp(`^\\[${section}\\]\\s*$`, 'mu').exec(manifest);
+  const start = header.index + header[0].length;
+  const next = manifest.indexOf('\n[', start);
+  const end = next < 0 ? manifest.length : next;
+  const inline = new RegExp(`^(${name}\\s*=\\s*)\\{([^\\n]*)\\}$`, 'mu');
+  const body = manifest
+    .slice(start, end)
+    .replace(inline, (line, prefix, properties) => {
+      if (!/(?:^|,)\s*path\s*=/u.test(properties)) return line;
+      const rest = properties
+        .replace(/(?:^|,)\s*path\s*=\s*"[^"]*"\s*/gu, '')
+        .trim()
+        .replace(/^,\s*|\s*,\s*$/gu, '');
+      return `${prefix}{ path = ${tomlPath}${rest ? `, ${rest}` : ''} }`;
+    });
+  return `${manifest.slice(0, start)}${body}${manifest.slice(end)}`;
 }
 
 /**
@@ -181,6 +337,19 @@ export function applyPatchBlock(manifest, manifestPath, entries) {
     'u',
   );
   if (managed.test(manifest)) {
+    const outside = manifest.replace(managed, '');
+    const table = /^\[patch\.crates-io\]\s*$/mu.exec(outside);
+    if (table !== null) {
+      const next = outside.indexOf('\n[', table.index + 1);
+      const body = outside.slice(table.index, next < 0 ? outside.length : next);
+      for (const [name] of entries) {
+        if (new RegExp(`^${name}\\s*=`, 'mu').test(body)) {
+          throw new Error(
+            `${manifestPath}: [patch.crates-io] already sets ${name}, which autolink owns; remove that line so it can be managed`,
+          );
+        }
+      }
+    }
     return manifest.replace(managed, block);
   }
 
@@ -385,39 +554,14 @@ const includePath = /^[A-Za-z0-9_./+-]+$/u;
 const jsEngineName = /^[a-z][a-z0-9-]*$/u;
 const prebuiltModes = ['auto', 'always', 'never'];
 
-/**
- * A dependency's `platforms.desktop` entry.
- *
- * The platform used to be called `gpui`. Nothing was ever published under that
- * name, so there is no compatibility path: a dependency that still says
- * `platforms.gpui` is told so, rather than being silently skipped.
- */
-function desktopPlatformFor(dependencyName, dependency) {
-  const platforms = dependency.platforms ?? {};
-  if (platforms.desktop) return platforms.desktop;
-  if (platforms.gpui) {
-    throw new Error(
-      `${dependencyName}: platforms.gpui was renamed to platforms.desktop`,
-    );
-  }
-  return undefined;
+/** A dependency's `platforms.desktop` entry. */
+function desktopPlatformFor(dependency) {
+  return dependency.platforms?.desktop;
 }
 
-/**
- * The app's `project.desktop` entry.
- *
- * The same rename applies to the app as to a dependency: `project.gpui` is
- * rejected rather than read, because an option left in the old key would be
- * ignored silently and the build would quietly use the default.
- */
+/** The app's `project.desktop` entry. */
 function desktopProjectFor(config) {
-  const project = config.project ?? {};
-  if (project.desktop === undefined && project.gpui !== undefined) {
-    throw new Error(
-      'project.gpui was renamed to project.desktop in react-native.config.js',
-    );
-  }
-  return project.desktop;
+  return config.project?.desktop;
 }
 
 /**
@@ -621,6 +765,35 @@ function hostComponentsFor(dependencyName, gpui) {
         `${dependencyName}: hostComponents "${entry.name}" has a non-boolean "container"`,
       );
     }
+    if (
+      entry.maskChildren !== undefined &&
+      typeof entry.maskChildren !== 'boolean'
+    ) {
+      throw new Error(
+        `${dependencyName}: hostComponents "${entry.name}" has a non-boolean "maskChildren"`,
+      );
+    }
+    if (entry.cpp !== undefined && typeof entry.cpp !== 'boolean') {
+      throw new Error(
+        `${dependencyName}: hostComponents "${entry.name}" has a non-boolean "cpp"`,
+      );
+    }
+    if (
+      entry.cpp === true &&
+      (entry.measured === true || entry.container === true)
+    ) {
+      throw new Error(
+        `${dependencyName}: hostComponents "${entry.name}" cannot be "cpp" and also "measured" or a "container"; a C++ host component implements neither`,
+      );
+    }
+    if (
+      entry.maskChildren === true &&
+      (entry.measured === true || entry.cpp === true)
+    ) {
+      throw new Error(
+        `${dependencyName}: hostComponents "${entry.name}" cannot be "maskChildren" and also "measured" or "cpp"; a masking component is a view that holds children`,
+      );
+    }
     if (entry.measured === true && entry.container === true) {
       throw new Error(
         `${dependencyName}: hostComponents "${entry.name}" cannot be both "measured" and a "container"; a measured component is a leaf, and a leaf cannot hold children`,
@@ -631,6 +804,8 @@ function hostComponentsFor(dependencyName, gpui) {
       measured: entry.measured === true,
       nativeSurface: entry.nativeSurface === true,
       container: entry.container === true,
+      cpp: entry.cpp === true,
+      maskChildren: entry.maskChildren === true,
     };
   });
 }
@@ -763,7 +938,10 @@ function generateComponentCodegen({
       ),
     );
     const components = Object.fromEntries(
-      hostComponents.map(component => [component.name, component]),
+      hostComponents.map(component => [
+        component.name,
+        component.maskChildren ? { ...component, container: true } : component,
+      ]),
     );
     const { generateHostComponentCpp } = appRequire(
       '@react-native-gpui/codegen/generate-host-component-cpp',
@@ -919,6 +1097,9 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
   // The spec generator ships with the platform package, so resolve it from
   // there rather than from the app.
   const platformRequire = createRequire(platformPackageJson);
+  // The renderer decides which React Native tree the C++ and the codegen read.
+  const rendererSelection =
+    platformRequire('./renderer.js').resolveRenderer(projectRoot);
   const { TypeScriptParser } = appRequire(
     '@react-native/codegen/lib/parsers/typescript/parser',
   );
@@ -959,6 +1140,7 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
   const hostComponents = [];
   const hostComponentLibraries = new Set();
   const jsEngines = [];
+  const bundleHooks = [];
   const codegenRoot = path.join(autolinkRoot, 'codegen');
   const generatedLibraries = new Map();
   for (const [dependencyName, dependency] of Object.entries(
@@ -973,10 +1155,22 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
     const packageJson = JSON.parse(
       fs.readFileSync(path.join(root, 'package.json'), 'utf8'),
     );
-    const gpui = desktopPlatformFor(dependencyName, dependency);
+    const gpui = desktopPlatformFor(dependency);
     if (!gpui) continue;
     if (gpui.jsEngine !== undefined) {
       jsEngines.push(jsEngineConfigFor(dependencyName, root, gpui.jsEngine));
+    }
+    if (gpui.bundleHook !== undefined) {
+      if (typeof gpui.bundleHook !== 'string') {
+        throw new Error(
+          `${dependencyName}: platforms.desktop.bundleHook must be a path to a module`,
+        );
+      }
+      const hookPath = path.resolve(root, gpui.bundleHook);
+      if (!fs.existsSync(hookPath)) {
+        throw new Error(`${dependencyName}: no bundleHook at ${hookPath}`);
+      }
+      bundleHooks.push({ dependencyName, module: hookPath });
     }
     const componentConfig = componentConfigFor(dependencyName, gpui);
     const componentSourceRoot = componentConfig.sourcePackage
@@ -1017,7 +1211,8 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
       gpui,
       generatedRoot: codegenRoot,
       hostComponents: hostComponents.filter(
-        component => component.dependencyName === dependencyName,
+        component =>
+          component.dependencyName === dependencyName && !component.cpp,
       ),
     });
     const declaresHostComponents =
@@ -1028,7 +1223,7 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
       !declaresHostComponents
     ) {
       throw new Error(
-        `${dependencyName}: GPUI component Codegen is enabled, but platforms.desktop.componentDescriptors is empty`,
+        `${dependencyName}: component Codegen is enabled, but platforms.desktop.componentDescriptors is empty`,
       );
     }
     if (generatedCodegen.hostComponentLibrary) {
@@ -1063,7 +1258,11 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
       }
       const specDir = path.join(root, specDirectory);
       const cppSpecPaths = [];
-      for (const file of findSpecFiles(specDir)) {
+      for (const file of specFilesFor(
+        findSpecFiles(specDir),
+        gpui.cppSpecs,
+        'cpp',
+      )) {
         const specPath = path.join(specDir, file);
         const moduleName = moduleNameForSpec(specPath);
         cppSpecPaths.push(specPath);
@@ -1114,15 +1313,6 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
         `${dependencyName}: platforms.desktop.crate must be a Cargo crate name`,
       );
     }
-    if (
-      !gpui.path &&
-      !fs.existsSync(path.join(root, 'desktop/Cargo.toml')) &&
-      fs.existsSync(path.join(root, 'gpui/Cargo.toml'))
-    ) {
-      throw new Error(
-        `${dependencyName}: the gpui/ folder was renamed to desktop/`,
-      );
-    }
     const defaultCargoPath = fs.existsSync(
       path.join(root, 'desktop/Cargo.toml'),
     )
@@ -1136,7 +1326,11 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
     const moduleTypes = [];
     const specDir = path.join(root, specDirectory);
     if (fs.existsSync(specDir)) {
-      for (const file of findSpecFiles(specDir)) {
+      for (const file of specFilesFor(
+        findSpecFiles(specDir),
+        gpui.cppSpecs,
+        'rust',
+      )) {
         const specPath = path.join(specDir, file);
         const moduleName = moduleNameForSpec(specPath);
         moduleTypes.push(moduleName);
@@ -1194,6 +1388,13 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
   fs.mkdirSync(generatedDir, { recursive: true });
   const manifest = {
     prebuilt,
+    renderer: {
+      name: rendererSelection.renderer,
+      ...(rendererSelection.jsThread === undefined
+        ? {}
+        : { jsThread: rendererSelection.jsThread }),
+      reactNativeDir: rendererSelection.reactNativeDir,
+    },
     rustCrates,
     turboModuleSpecs,
     cppTurboModules,
@@ -1204,6 +1405,7 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
     appComponentSources: [...new Set(appComponentSources)],
     appComponentIncludeDirs: [...new Set(appComponentIncludeDirs)],
     jsEngines,
+    bundleHooks,
   };
   writeIfChanged(
     path.join(generatedDir, 'autolink.json'),
@@ -1230,8 +1432,16 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
   const ensureLinked = rustCrates.map(
     ({ alias }) => `    ${alias}::rn_gpui_register();`,
   );
+  const desktopConfig = loadDesktopConfig(path.dirname(desktopRoot));
+  const desktopDefaults = JSON.stringify({
+    window: desktopConfig.window,
+    ...(desktopConfig.accessory === undefined
+      ? {}
+      : { accessory: desktopConfig.accessory }),
+  });
   const generatedEnsureLinked = [
     'pub fn ensure_linked() {',
+    '    react_native_gpui::set_desktop_defaults(DESKTOP_JSON);',
     '    unsafe {',
     '        rn_gpui_initialize_app_turbo_modules();',
     '    }',
@@ -1242,11 +1452,20 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
   ].join('\n');
   const hostComponentDeclarations = hostComponents
     .map(
-      ({ index, name, measured, nativeSurface, container }) =>
-        `    react_native_gpui::host_component::declare_host_component(${index}, ${JSON.stringify(name)}, react_native_gpui::host_component::HostComponentOptions { measured: ${measured}, native_surface: ${nativeSurface}, container: ${container} });`,
+      ({
+        index,
+        name,
+        measured,
+        nativeSurface,
+        container,
+        cpp,
+        maskChildren,
+      }) =>
+        `    react_native_gpui::host_component::declare_host_component(${index}, ${JSON.stringify(name)}, react_native_gpui::host_component::HostComponentOptions { measured: ${measured}, native_surface: ${nativeSurface}, container: ${container}, cpp: ${cpp}, mask_children: ${maskChildren} });`,
     )
     .join('\n');
   const hostComponentChecks = hostComponents
+    .filter(({ cpp, maskChildren }) => !cpp && !maskChildren)
     .map(
       ({ index, name }) =>
         `    expect_host_component(${index}, ${JSON.stringify(name)});`,
@@ -1270,7 +1489,7 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
   ].join('\n');
   writeIfChanged(
     path.join(autolinkCrate, 'src/lib.rs'),
-    `// Generated by @react-native-gpui/cli autolink; do not edit.\nextern "C" {\n    fn rn_gpui_initialize_app_turbo_modules();\n}\n${generatedEnsureLinked}\n\n${generatedEnsureHostComponents}\n`,
+    `// Generated by @react-native-gpui/cli autolink; do not edit.\n/// The window options and flags of \`desktop/desktop.json\` for this build.\npub const DESKTOP_JSON: &str = ${rustRawString(desktopDefaults)};\nextern "C" {\n    fn rn_gpui_initialize_app_turbo_modules();\n}\n${generatedEnsureLinked}\n\n${generatedEnsureHostComponents}\n`,
   );
 
   const appCargoManifest = path.join(desktopRoot, 'Cargo.toml');
@@ -1284,7 +1503,7 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
     .join('/');
   const runtimeCrateTomlPath = escapeToml(runtimeCrateRelativePath);
   const runtimeDependencyPattern = /^(react-native-gpui\s*=\s*)\{([^\n]*)\}$/mu;
-  if (runtimeDependencyPattern.test(appCargo)) {
+  if (declaresDependency(appCargo, 'dependencies', 'react-native-gpui')) {
     appCargo = appCargo.replace(
       runtimeDependencyPattern,
       (_line, prefix, properties) => {
@@ -1305,7 +1524,7 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
   if (!/^react-native-gpui\s*=/mu.test(appCargo)) {
     throw new Error(`could not add react-native-gpui to ${appCargoManifest}`);
   }
-  if (!/^rn-gpui-autolink\s*=/mu.test(appCargo)) {
+  if (!declaresDependency(appCargo, 'dependencies', 'rn-gpui-autolink')) {
     appCargo = appCargo.replace(
       /^\[dependencies\]\s*$/mu,
       section => `${section}\nrn-gpui-autolink = { path = "autolink" }`,
@@ -1330,28 +1549,22 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
     )
     .split(path.sep)
     .join('/');
-  const moduleDependency = `rn-gpui-module = { path = ${escapeToml(moduleCrate)} }`;
-  if (!/^rn-gpui-module\s*=/mu.test(appCargo)) {
-    appCargo = appCargo.replace(
-      /^\[dependencies\]\s*$/mu,
-      section => `${section}\n${moduleDependency}`,
-    );
-  }
-  const moduleBuildDependency = `rn-gpui-module-build = { path = ${escapeToml(moduleBuildCrate)} }`;
-  if (!/^rn-gpui-module-build\s*=/mu.test(appCargo)) {
-    if (/^\[build-dependencies\]\s*$/mu.test(appCargo)) {
-      appCargo = appCargo.replace(
-        /^\[build-dependencies\]\s*$/mu,
-        section => `${section}\n${moduleBuildDependency}`,
-      );
-    } else {
-      appCargo += `\n[build-dependencies]\n${moduleBuildDependency}\n`;
-    }
-  }
+  appCargo = ensurePathDependency(
+    appCargo,
+    'dependencies',
+    'rn-gpui-module',
+    escapeToml(moduleCrate),
+  );
+  appCargo = ensurePathDependency(
+    appCargo,
+    'build-dependencies',
+    'rn-gpui-module-build',
+    escapeToml(moduleBuildCrate),
+  );
   if (!/^\[features\]\s*$/mu.test(appCargo)) {
     appCargo = appCargo.replace(
       /^\[dependencies\]\s*$/mu,
-      '[features]\nvisual-capture = ["react-native-gpui/visual-capture"]\ntest-driver = ["react-native-gpui/test-driver"]\n\n[dependencies]',
+      '[features]\nruntime-shaders = ["react-native-gpui/runtime-shaders"]\nvisual-capture = ["react-native-gpui/visual-capture"]\ntest-driver = ["react-native-gpui/test-driver"]\n\n[dependencies]',
     );
   } else {
     const tableStart = appCargo.indexOf('[features]');
@@ -1360,22 +1573,42 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
       tableStart + '[features]'.length,
     );
     const tableEnd = suffixStart < 0 ? appCargo.length : suffixStart;
-    let featureLines = appCargo.slice(
-      tableStart + '[features]'.length,
-      tableEnd,
-    );
-    if (!/^visual-capture\s*=/mu.test(featureLines))
-      featureLines += '\nvisual-capture = ["react-native-gpui/visual-capture"]';
-    if (!/^test-driver\s*=/mu.test(featureLines))
-      featureLines += '\ntest-driver = ["react-native-gpui/test-driver"]';
-    appCargo = `${appCargo.slice(0, tableStart)}[features]${featureLines}${appCargo.slice(tableEnd)}`;
+    const featureLines = appCargo
+      .slice(tableStart + '[features]'.length, tableEnd)
+      .split('\n');
+    const declares = name =>
+      featureLines.some(line => new RegExp(`^${name}\\s*=`, 'u').test(line));
+    const added = [];
+    if (!declares('visual-capture'))
+      added.push('visual-capture = ["react-native-gpui/visual-capture"]');
+    if (!declares('test-driver'))
+      added.push('test-driver = ["react-native-gpui/test-driver"]');
+    if (!declares('runtime-shaders'))
+      added.push('runtime-shaders = ["react-native-gpui/runtime-shaders"]');
+    let lastEntry = 0;
+    featureLines.forEach((line, index) => {
+      if (/^[\w-]+\s*=/u.test(line)) lastEntry = index;
+    });
+    featureLines.splice(lastEntry + 1, 0, ...added);
+    appCargo = `${appCargo.slice(0, tableStart)}[features]${featureLines.join('\n')}${appCargo.slice(tableEnd)}`;
   }
   // `[patch]` is only honoured in the root manifest, so the redirection lives in
   // the app's rather than in each module crate.
+  const moduleManifests = rustCrates.map(({ cargoPath }) =>
+    fs.readFileSync(path.join(cargoPath, 'Cargo.toml'), 'utf8'),
+  );
+  const appLockfile = path.join(desktopRoot, 'Cargo.lock');
   appCargo = applyPatchBlock(
     appCargo,
     appCargoManifest,
-    managedPatchEntries(platformRoot, desktopRoot),
+    managedPatchEntries(
+      platformRoot,
+      desktopRoot,
+      gpuiKitPatchNames(
+        moduleManifests,
+        fs.existsSync(appLockfile) ? fs.readFileSync(appLockfile, 'utf8') : '',
+      ),
+    ),
   );
   writeIfChanged(appCargoManifest, appCargo);
   const appMain = path.join(desktopRoot, 'src/main.rs');
@@ -1384,7 +1617,7 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
     if (!source.includes('rn_gpui_autolink::ensure_linked()')) {
       if (!/fn main\s*\(\s*\)\s*\{/u.test(source)) {
         throw new Error(
-          `${appMain} must define fn main() for GPUI autolinking`,
+          `${appMain} must define fn main() for desktop autolinking`,
         );
       }
       source = source.replace(
@@ -1413,6 +1646,13 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
   const hostComponentRegistrationCalls = [...hostComponentLibraries]
     .map(library => `  rn_gpui_register_host_components_${library}();`)
     .join('\n');
+  const cppHostComponentDeclarations = hostComponents
+    .filter(({ cpp }) => cpp)
+    .map(
+      ({ index, name, nativeSurface }) =>
+        `  rngpui::extension::declareCppHostComponent(${index}, ${JSON.stringify(name)}, ${nativeSurface});`,
+    )
+    .join('\n');
   const componentHeaders = [...new Set(appComponentHeaders)]
     .map(header => `#include <${header}>`)
     .join('\n');
@@ -1424,7 +1664,7 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
     .join('\n');
   writeIfChanged(
     cppProviderPath,
-    `// Generated by @react-native-gpui/cli autolink; do not edit.\n#include <ReactCommon/TurboModule.h>\n#include <react/renderer/componentregistry/ComponentDescriptorProviderRegistry.h>\n#include <iostream>\n#include <memory>\n#include <string>\n#include <unordered_set>\n${componentHeaders}\n${hostComponentRegistrationDeclarations}\n${[...new Set(cppTurboModules.map(({ provider }) => `extern std::shared_ptr<facebook::react::TurboModule> ${provider}(const std::string&, std::shared_ptr<facebook::react::CallInvoker>);`))].join('\n')}\nextern "C" void rn_gpui_set_app_cpp_turbo_module_provider(std::shared_ptr<facebook::react::TurboModule> (*)(const std::string&, std::shared_ptr<facebook::react::CallInvoker>));\nextern "C" void rn_gpui_initialize_app_turbo_modules() {\n${hostComponentRegistrationCalls}\n  rn_gpui_set_app_cpp_turbo_module_provider(+[](const std::string& name, std::shared_ptr<facebook::react::CallInvoker> jsInvoker) -> std::shared_ptr<facebook::react::TurboModule> {\n${cppProviderCases}\n    return nullptr;\n  });\n}\nnamespace rngpui {\nvoid rn_gpui_register_app_components(facebook::react::ComponentDescriptorProviderRegistry& registry) {\n  static const std::unordered_set<std::string> builtins = {"View", "Paragraph", "Text", "RawText", "Image", "ScrollView", "TextInput", "ModalHostView", "NativeViewHost"};\n  std::unordered_set<std::string> registered;\n  auto addComponent = [&registry, &registered](const facebook::react::ComponentDescriptorProvider& provider) {\n    const std::string name(provider.name);\n    if (builtins.contains(name) || !registered.insert(name).second) {\n      std::cerr << "[rn-gpui] duplicate app Fabric component descriptor ignored: " << name << std::endl;\n      return;\n    }\n    registry.add(provider);\n  };\n${componentRegistration}\n}\n} // namespace rngpui\n`,
+    `// Generated by @react-native-gpui/cli autolink; do not edit.\n#include <ReactCommon/TurboModule.h>\n#include <react/renderer/componentregistry/ComponentDescriptorProviderRegistry.h>\n#include "GpuiCppHostComponent.h"\n#include <iostream>\n#include <memory>\n#include <string>\n#include <unordered_set>\n${componentHeaders}\n${hostComponentRegistrationDeclarations}\n${[...new Set(cppTurboModules.map(({ provider }) => `extern std::shared_ptr<facebook::react::TurboModule> ${provider}(const std::string&, std::shared_ptr<facebook::react::CallInvoker>);`))].join('\n')}\nextern "C" void rn_gpui_set_app_cpp_turbo_module_provider(std::shared_ptr<facebook::react::TurboModule> (*)(const std::string&, std::shared_ptr<facebook::react::CallInvoker>));\nextern "C" void rn_gpui_run_app_cpp_init_functions();\nextern "C" void rn_gpui_initialize_app_turbo_modules() {\n${hostComponentRegistrationCalls}\n${cppHostComponentDeclarations}\n  rn_gpui_run_app_cpp_init_functions();\n  rn_gpui_set_app_cpp_turbo_module_provider(+[](const std::string& name, std::shared_ptr<facebook::react::CallInvoker> jsInvoker) -> std::shared_ptr<facebook::react::TurboModule> {\n${cppProviderCases}\n    return nullptr;\n  });\n}\nnamespace rngpui {\nvoid rn_gpui_register_app_components(facebook::react::ComponentDescriptorProviderRegistry& registry) {\n  static const std::unordered_set<std::string> builtins = {"View", "Paragraph", "Text", "RawText", "Image", "ScrollView", "TextInput", "ModalHostView"};\n  std::unordered_set<std::string> registered;\n  auto addComponent = [&registry, &registered](const facebook::react::ComponentDescriptorProvider& provider) {\n    const std::string name(provider.name);\n    if (builtins.contains(name) || !registered.insert(name).second) {\n      std::cerr << "[rn-gpui] duplicate app Fabric component descriptor ignored: " << name << std::endl;\n      return;\n    }\n    registry.add(provider);\n  };\n${componentRegistration}\n}\n} // namespace rngpui\n`,
   );
   const cppSources = [
     ...new Set([
@@ -1456,7 +1696,7 @@ export function autolink({ projectRoot = process.cwd(), configFile } = {}) {
     `# Generated by @react-native-gpui/cli autolink.\n${cmake}\n`,
   );
   console.log(
-    `Autolinked ${rustCrates.length} GPUI Rust crate(s), ${cppTurboModules.length} C++ TurboModule(s), ${cmakeProjects.length} CMake project(s), and ${jsEngines.length} JS engine(s) [${jsEngines.map(({ name }) => name).join(', ')}].`,
+    `Autolinked ${rustCrates.length} Rust crate(s), ${cppTurboModules.length} C++ TurboModule(s), ${cmakeProjects.length} CMake project(s), and ${jsEngines.length} JS engine(s) [${jsEngines.map(({ name }) => name).join(', ')}].`,
   );
   return config;
 }

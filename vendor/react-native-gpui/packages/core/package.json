@@ -1,28 +1,42 @@
 {
   "name": "@react-native-gpui/core",
-  "version": "0.1.0",
+  "version": "0.87.0-alpha.5",
   "description": "React Native platform powered by GPUI. Desktop React Native for macOS, Windows and Linux with one GPU-accelerated renderer.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/streetwriters/react-native-gpui.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://streetwriters.github.io/react-native-gpui/",
+  "bugs": {
+    "url": "https://github.com/streetwriters/react-native-gpui/issues"
+  },
   "main": "index.desktop.js",
   "files": [
     "index.desktop.js",
     "js-engine.js",
+    "renderer.js",
     "navigation.ts",
     "desktop.ts",
+    "diagnostics.ts",
     "types.d.ts",
     "babel-plugin-node-addons.js",
     "polyfills",
-    "NativeViewHost.tsx",
-    "NativeViewHostNativeComponent.ts",
     "metro.config.js",
+    "metro-babel-transformer.js",
     "metro-transform-worker.js",
     "setup-env.js",
     "src-gpui",
     "bin",
     "ReactCommonOverrides",
+    "ReactCommonOverrides.loom",
     "ReactCxxPlatform",
     "ReactGpui/Cargo.lock",
     "ReactGpui/Cargo.toml",
     "ReactGpui/GPUI_PIN.md",
+    "ReactGpui/loom-pin.json",
+    "ReactGpui/LOOM_PIN.md",
     "ReactGpui/rn-gpui/Cargo.toml",
     "ReactGpui/rn-gpui/build.rs",
     "ReactGpui/rn-gpui/src",
@@ -41,22 +55,31 @@
     "scripts/generate-prebuilt-inputs.mjs",
     "scripts/check-standalone-cmake.mjs",
     "scripts/check-prebuilt-pin.mjs",
-    "prebuilt-binaries.json",
+    "scripts/prebuilt-renderers.mjs",
+    "scripts/check-loom-overrides.mjs",
     "ReactGpui/rn-gpui-module/Cargo.toml",
     "ReactGpui/rn-gpui-module/src",
     "ReactGpui/rn-gpui-module/tests",
     "ReactGpui/rn-gpui-module-build/Cargo.toml",
-    "ReactGpui/rn-gpui-module-build/src"
+    "ReactGpui/rn-gpui-module-build/src",
+    "CHANGELOG.md",
+    "!**/*.test.js",
+    "!**/*.test.mjs",
+    "!**/*.test.ts",
+    "!**/*.test.cjs"
   ],
   "scripts": {
-    "prepublishOnly": "node scripts/check-prebuilt-pin.mjs"
+    "prepublishOnly": "node scripts/check-prebuilt-pin.mjs",
+    "check:loom-overrides": "node scripts/check-loom-overrides.mjs"
   },
   "peerDependencies": {
     "react": "19.2.3",
-    "react-native": "0.87.1"
+    "react-native": "0.87.x"
   },
   "dependencies": {
-    "@react-native-gpui/codegen": "0.1.0"
+    "@react-native-gpui/codegen": "0.87.0-alpha.2",
+    "its-fine": "2.1.1",
+    "react-reconciler": "0.33.0"
   },
   "keywords": [
     "react-native",
@@ -66,9 +89,8 @@
     "windows",
     "linux"
   ],
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/streetwriters/react-native-gpui"
+  "publishConfig": {
+    "access": "public",
+    "tag": "latest"
   }
 }

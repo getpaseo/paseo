@@ -30,9 +30,9 @@ mod tests {
     use gpui::{
         div, point, prelude::*, px, size, AnyElement, App, AppContext, Bounds, Context, Element,
         ElementId, GlobalElementId, IntoElement, LayoutId, Pixels, PlatformInput, Render,
-        ScrollDelta, ScrollHandle, ScrollWheelEvent, Style, TestAppContext, Window, WindowHandle,
+        ScrollDelta, ScrollEvent, ScrollHandle, Style, TestAppContext, Window, WindowHandle,
     };
-    use std::cell::{Cell, RefCell};
+    use std::cell::RefCell;
     use std::rc::Rc;
 
     const VIEWPORT: (f32, f32) = (200.0, 100.0);
@@ -138,7 +138,7 @@ mod tests {
                     let _ = has_scroll;
                     let entity = cx.entity().downgrade();
                     scroller
-                        .on_scroll_wheel(move |event: &ScrollWheelEvent, _window, cx| {
+                        .on_scroll(move |event: &ScrollEvent, _window, cx| {
                             let dy = match &event.delta {
                                 ScrollDelta::Pixels(delta) => f32::from(delta.y),
                                 ScrollDelta::Lines(lines) => lines.y * 20.0,
@@ -207,11 +207,12 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| {
             window.dispatch_event(mouse_move(), cx);
             window.dispatch_event(
-                PlatformInput::ScrollWheel(ScrollWheelEvent {
+                PlatformInput::Scroll(ScrollEvent {
                     position: point(px(20.), px(20.)),
                     delta: ScrollDelta::Pixels(point(px(0.), px(dy))),
                     modifiers: Default::default(),
                     touch_phase: gpui::TouchPhase::Moved,
+                    source: gpui::ScrollSource::Pointer,
                 }),
                 cx,
             );

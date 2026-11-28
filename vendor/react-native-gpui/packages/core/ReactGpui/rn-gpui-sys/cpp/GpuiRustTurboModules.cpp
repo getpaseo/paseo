@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -189,6 +190,7 @@ struct RustPromiseResult {
 struct PendingCall {
   rngpui::Promise<RustPromiseResult> promise;
   bool returnsVoid{false};
+  std::chrono::steady_clock::time_point since;
 };
 
 std::mutex& pendingMutex() {
@@ -475,7 +477,11 @@ class RustTurboModule final
         {
           std::lock_guard<std::mutex> lock(pendingMutex());
           pendingCalls().emplace(
-              request, PendingCall{promise, method.returnsVoid});
+              request,
+              PendingCall{
+                  promise,
+                  method.returnsVoid,
+                  std::chrono::steady_clock::now()});
         }
         rn_gpui_rust_module_call_promise(
             handle_, static_cast<uint32_t>(index), scope, array, request);
@@ -627,6 +633,23 @@ void rn_gpui_rust_module_send_event(
   }
   module->sendDeviceEvent(std::string(name), nodeValueFromScope(scope, root));
   dynamic_scope_close(scope);
+}
+
+// Promise calls to Rust modules not settled yet and made less than
+// `younger_than_ms` ago. An older one is waiting on something outside the app,
+// such as the user picking from a context menu.
+extern "C" uint64_t rn_gpui_rust_promises_in_flight(
+    uint64_t younger_than_ms) noexcept {
+  const auto cutoff = std::chrono::steady_clock::now() -
+      std::chrono::milliseconds(younger_than_ms);
+  std::lock_guard<std::mutex> lock(pendingMutex());
+  uint64_t count = 0;
+  for (const auto& [request, call] : pendingCalls()) {
+    if (call.since > cutoff) {
+      ++count;
+    }
+  }
+  return count;
 }
 
 void rn_gpui_rust_module_clear_pending() {

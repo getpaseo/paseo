@@ -49,6 +49,28 @@ if(NOT EXISTS "${_worklets_common}/worklets/Compat/StableApi.h")
   message(FATAL_ERROR "react-native-worklets 0.13.x is required by GPUI Reanimated")
 endif()
 
+# Upstream's C++ does not build with MSVC or on Linux as published; compile
+# patched copies in the build tree and leave node_modules untouched. Worklets
+# is patched here too because Reanimated includes its headers.
+set(_reanimated_patch "${CMAKE_CURRENT_LIST_DIR}/patches/react-native-reanimated-4.7.1.patch")
+set(_worklets_patch "${_gpui_worklets_root}/desktop/patches/react-native-worklets-0.13.0.patch")
+foreach(_patched reanimated worklets)
+  execute_process(
+    COMMAND "${_gpui_node}" "${_gpui_worklets_root}/desktop/patch-sources.mjs"
+      "${_${_patched}_root}" "${_${_patched}_patch}"
+      "${CMAKE_BINARY_DIR}/rn-gpui-patched/react-native-${_patched}"
+    RESULT_VARIABLE _patch_result
+    OUTPUT_VARIABLE _${_patched}_common
+    ERROR_VARIABLE _patch_error
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _patch_result EQUAL 0)
+    message(FATAL_ERROR "${_patch_error}")
+  endif()
+endforeach()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${_reanimated_patch}" "${_worklets_patch}"
+  "${_reanimated_package_json}" "${_worklets_package_json}")
+
 # Match the static feature-flag definition normally supplied by Reanimated's
 # CocoaPods/Gradle builds. Without this, FeatureFlags.h silently treats every
 # flag as false, including defaults which change how animated props are

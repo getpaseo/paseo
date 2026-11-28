@@ -2,10 +2,13 @@
 #include <react/runtime/GpuiDebug.h>
 
 #include <jsi/instrumentation.h>
+#include <react/coremodules/AppStateModule.h>
 #include <react/coremodules/DeviceInfoModule.h>
 #include "GpuiHttpClient.h"
 #include "GpuiJsEngine.h"
 #include "GpuiLogBoxSurfaceDelegate.h"
+#include "GpuiLoomHost.h"
+#include "GpuiMainMessageQueue.h"
 #include "GpuiModules.h"
 #include "GpuiMountingManager.h"
 #include "GpuiNodeAddons.h"
@@ -27,6 +30,10 @@
 #include <react/renderer/scheduler/Scheduler.h>
 #include <react/runtime/PlatformTimerRegistryImpl.h>
 #include <react/runtime/ReactHost.h>
+#if LOOM_RENDERER
+#include <react/renderer/loom/binding/LoomBinding.h>
+#include <react/threading/MessageQueueThreadImpl.h>
+#endif
 #include <react/utils/ContextContainer.h>
 #include <react/utils/RunLoopObserverManager.h>
 
@@ -42,7 +49,37 @@
 #include <unordered_map>
 #include <utility>
 
+namespace rngpui {
+#if LOOM_RENDERER
+// Loom takes a surface's constraints and the text scale from the host, next to
+// the Fabric surface handler that still carries the surface's lifecycle.
+void setLoomSurfaceConstraints(
+    GpuiLoomHost& host,
+    int32_t surfaceId,
+    const facebook::react::LayoutConstraints& constraints,
+    float scale) {
+  host.setPointScaleFactor(scale);
+  facebook::react::LoomBinding::setSurfaceConstraints(
+      surfaceId,
+      constraints.minimumSize.width,
+      constraints.minimumSize.height,
+      constraints.maximumSize.width,
+      constraints.maximumSize.height,
+      constraints.layoutDirection ==
+          facebook::react::LayoutDirection::RightToLeft,
+      0.f,
+      0.f);
+}
+#endif
+} // namespace rngpui
+
 namespace {
+facebook::react::LayoutDirection surfaceLayoutDirection() {
+  return rngpui::rn_gpui_layout_direction_rtl()
+      ? facebook::react::LayoutDirection::RightToLeft
+      : facebook::react::LayoutDirection::LeftToRight;
+}
+
 std::atomic<bool> nativeAnimationActive{false};
 } // namespace
 
@@ -81,7 +118,11 @@ extern "C" bool rn_gpui_accessibility_active_default() {
     "/alternatename:rn_gpui_accessibility_active=rn_gpui_accessibility_active_default")
 #endif
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32) || defined(__linux__)
+#define RN_GPUI_ACCESSIBILITY_SETTINGS 1
+#endif
+
+#if defined(RN_GPUI_ACCESSIBILITY_SETTINGS)
 extern "C" bool rn_gpui_get_reduce_motion();
 extern "C" bool rn_gpui_get_reduce_transparency();
 extern "C" bool rn_gpui_get_increase_contrast();
@@ -128,11 +169,23 @@ class GpuiAppearanceModule final
   }
 
   void setColorScheme(facebook::jsi::Runtime&, std::string scheme) {
-    std::lock_guard<std::mutex> lock(appearanceMutex);
-    if (scheme == "light" || scheme == "dark") {
-      appearanceOverride = std::move(scheme);
-    } else {
-      appearanceOverride.reset();
+    std::string before;
+    std::string after;
+    {
+      std::lock_guard<std::mutex> lock(appearanceMutex);
+      before = appearanceOverride.value_or(systemAppearance);
+      if (scheme == "light" || scheme == "dark") {
+        appearanceOverride = std::move(scheme);
+      } else {
+        appearanceOverride.reset();
+      }
+      after = appearanceOverride.value_or(systemAppearance);
+    }
+    if (before != after) {
+      for (const auto& observer :
+           rngpui::gpuiExtensionHooks().colorSchemeObservers) {
+        observer(after);
+      }
     }
   }
 
@@ -163,7 +216,7 @@ class GpuiAccessibilityManagerModule final
       jsi::Runtime& /*runtime*/,
       AsyncCallback<bool> onSuccess,
       AsyncCallback<jsi::Value> /*onError*/) {
-#if defined(__APPLE__)
+#if defined(RN_GPUI_ACCESSIBILITY_SETTINGS)
     onSuccess(rn_gpui_get_invert_colors());
 #else
     onSuccess(false);
@@ -173,7 +226,7 @@ class GpuiAccessibilityManagerModule final
       jsi::Runtime& /*runtime*/,
       AsyncCallback<bool> onSuccess,
       AsyncCallback<jsi::Value> /*onError*/) {
-#if defined(__APPLE__)
+#if defined(RN_GPUI_ACCESSIBILITY_SETTINGS)
     onSuccess(rn_gpui_get_reduce_motion());
 #else
     onSuccess(false);
@@ -183,7 +236,7 @@ class GpuiAccessibilityManagerModule final
       jsi::Runtime& /*runtime*/,
       AsyncCallback<bool> onSuccess,
       AsyncCallback<jsi::Value> /*onError*/) {
-#if defined(__APPLE__)
+#if defined(RN_GPUI_ACCESSIBILITY_SETTINGS)
     onSuccess(rn_gpui_get_increase_contrast());
 #else
     onSuccess(false);
@@ -199,7 +252,7 @@ class GpuiAccessibilityManagerModule final
       jsi::Runtime& /*runtime*/,
       AsyncCallback<bool> onSuccess,
       AsyncCallback<jsi::Value> /*onError*/) {
-#if defined(__APPLE__)
+#if defined(RN_GPUI_ACCESSIBILITY_SETTINGS)
     onSuccess(rn_gpui_get_reduce_transparency());
 #else
     onSuccess(false);
@@ -211,6 +264,8 @@ class GpuiAccessibilityManagerModule final
       AsyncCallback<jsi::Value> /*onError*/) {
 #if defined(__APPLE__)
     onSuccess(rn_gpui_get_voice_over());
+#elif defined(RN_GPUI_ACCESSIBILITY_SETTINGS)
+    onSuccess(rn_gpui_get_voice_over() || rn_gpui_accessibility_active());
 #else
     onSuccess(rn_gpui_accessibility_active());
 #endif
@@ -224,7 +279,7 @@ class GpuiAccessibilityManagerModule final
   void announceForAccessibility(
       jsi::Runtime& runtime,
       jsi::String announcement) {
-#if defined(__APPLE__)
+#if defined(RN_GPUI_ACCESSIBILITY_SETTINGS)
     auto text = announcement.utf8(runtime);
     rn_gpui_announce_accessibility(text.c_str(), 1);
 #endif
@@ -233,7 +288,7 @@ class GpuiAccessibilityManagerModule final
       jsi::Runtime& runtime,
       jsi::String announcement,
       jsi::Object options) {
-#if defined(__APPLE__)
+#if defined(RN_GPUI_ACCESSIBILITY_SETTINGS)
     auto text = announcement.utf8(runtime);
     const auto queue = options.getProperty(runtime, "queue");
     int priorityLevel = queue.isBool() && queue.getBool() ? 0 : 1;
@@ -259,21 +314,21 @@ class GpuiAccessibilityInfoModule final
       : NativeAccessibilityInfoCxxSpec(std::move(jsInvoker)) {}
 
   void isReduceMotionEnabled(jsi::Runtime&, AsyncCallback<bool> callback) {
-#if defined(__APPLE__)
+#if defined(RN_GPUI_ACCESSIBILITY_SETTINGS)
     callback(rn_gpui_get_reduce_motion());
 #else
     callback(false);
 #endif
   }
   void isInvertColorsEnabled(jsi::Runtime&, AsyncCallback<bool> callback) {
-#if defined(__APPLE__)
+#if defined(RN_GPUI_ACCESSIBILITY_SETTINGS)
     callback(rn_gpui_get_invert_colors());
 #else
     callback(false);
 #endif
   }
   void isHighTextContrastEnabled(jsi::Runtime&, AsyncCallback<bool> callback) {
-#if defined(__APPLE__)
+#if defined(RN_GPUI_ACCESSIBILITY_SETTINGS)
     callback(rn_gpui_get_increase_contrast());
 #else
     callback(false);
@@ -293,7 +348,7 @@ class GpuiAccessibilityInfoModule final
     rn_gpui_request_accessibility_focus(static_cast<int32_t>(reactTag));
   }
   void announceForAccessibility(jsi::Runtime& runtime, jsi::String text) {
-#if defined(__APPLE__)
+#if defined(RN_GPUI_ACCESSIBILITY_SETTINGS)
     const auto announcement = text.utf8(runtime);
     rn_gpui_announce_accessibility(announcement.c_str(), 1);
 #endif
@@ -387,8 +442,10 @@ std::unique_ptr<GpuiHost> new_gpui_host(
     rust::Str devHost,
     uint32_t devPort,
     rust::Str jsEngine,
+    rust::Str jsThread,
     bool devMode) {
-  return std::make_unique<GpuiHost>(appId, devHost, devPort, jsEngine, devMode);
+  return std::make_unique<GpuiHost>(
+      appId, devHost, devPort, jsEngine, jsThread, devMode);
 }
 
 GpuiHost::GpuiHost(
@@ -396,6 +453,7 @@ GpuiHost::GpuiHost(
     rust::Str devHost,
     uint32_t devPort,
     rust::Str jsEngine,
+    rust::Str jsThread,
     bool devMode) {
   // Engine packages register themselves here (the generated
   // rn_gpui_install_modules()), so the registry is populated before the
@@ -405,8 +463,12 @@ GpuiHost::GpuiHost(
   rngpui::install_rust_turbo_modules();
   rngpui::rn_gpui_install_modules();
   rngpui::selectJsEngine(std::string(jsEngine));
+#if LOOM_RENDERER
+  rngpui::sharedAnimatedBackend().store(true, std::memory_order_release);
+#endif
   install_feature_flags();
   rngpui::installGpuiTextMeasureTable();
+  rngpui::installGpuiImageLoadTable();
 
   ReactInstanceConfig config;
   config.appId = std::string(appId);
@@ -429,6 +491,14 @@ GpuiHost::GpuiHost(
   };
   config.jsRuntimeFactory = rngpui::activeJsEngine().makeRuntimeFactory();
 
+#if LOOM_RENDERER
+  // Loom keeps the surface tree itself: nothing mounts through the shadow tree,
+  // so there is no mount to report and the root's size is Loom's to answer.
+  mountingManager_ = std::make_shared<GpuiMountingManager>(
+      nullptr, [this](SurfaceId surfaceId) {
+        return loomHost_->surfaceContentSize(surfaceId);
+      });
+#else
   mountingManager_ = std::make_shared<GpuiMountingManager>(
       [this](SurfaceId surfaceId) {
         reactHost_->runOnScheduler([surfaceId](Scheduler& scheduler) {
@@ -438,6 +508,7 @@ GpuiHost::GpuiHost(
       [this](SurfaceId surfaceId) {
         return reactHost_->surfaceContentSize(surfaceId);
       });
+#endif
 
   rngpui::setHostComponentStateManager(mountingManager_);
 
@@ -450,6 +521,44 @@ GpuiHost::GpuiHost(
   contextContainer->insert(
       "RCTImageLoader",
       std::static_pointer_cast<void>(mountingManager_->getImageLoader()));
+
+#if LOOM_RENDERER
+  // Fixed before the runtime scheduler or any binding reads it; unset, Loom
+  // runs JavaScript on the UI thread.
+  const bool jsOnMain = std::string(jsThread) == "main";
+  LoomHost::setJavaScriptOnUIThread(jsOnMain);
+  // Registered before the JS runtime installs its binding, which reads it.
+  loomHost_ = std::make_shared<GpuiLoomHost>(
+      mountingManager_,
+      contextContainer,
+      [this](std::function<void(Scheduler&)>&& task) {
+        if (reactHost_) {
+          reactHost_->runOnScheduler(std::move(task));
+        }
+      },
+      [this](std::function<void()>&& task) {
+        if (reactHost_) {
+          reactHost_->runOnRuntimeScheduler(
+              [task = std::move(task)](facebook::jsi::Runtime&) { task(); });
+        }
+      });
+  loomHost_->connect();
+  LoomHost::registerIn(*contextContainer, loomHost_);
+  loomHost_->installSizeHints();
+  mountingManager_->setInstanceHook([this](bool up) {
+    if (up) {
+      loomHost_->begin();
+    } else {
+      loomHost_->reset();
+    }
+  });
+  if (jsOnMain) {
+    contextContainer->insert(
+        MessageQueueThreadFactoryKey, MessageQueueThreadFactory([] {
+          return std::make_shared<GpuiMainMessageQueue>();
+        }));
+  }
+#endif
 
   runLoopObserverManager_ = std::make_shared<RunLoopObserverManager>();
 
@@ -484,6 +593,11 @@ GpuiHost::GpuiHost(
     std::lock_guard<std::recursive_mutex> lock(animatedFrameMutex_);
     animatedFrameCallback_ = nullptr;
     nativeAnimationActive.store(false);
+#if LOOM_RENDERER
+    if (loomHost_) {
+      loomHost_->animationFrameSource()->pause();
+    }
+#endif
     rngpui::updateFrameDemand();
   };
 
@@ -523,7 +637,37 @@ GpuiHost::GpuiHost(
       /* logBoxSurfaceDelegate */ logBoxDelegate_,
       /* animatedNodesManagerProvider */ animatedNodesManagerProvider_,
       /* bindingsInstallFunc */
-      [](facebook::jsi::Runtime& runtime) {
+      [this](facebook::jsi::Runtime& runtime) {
+#if LOOM_RENDERER
+        // A new instance has a new animation backend that has started nothing:
+        // an animation of the old one that resumed the frame source as it was
+        // torn down is not running any more.
+        if (loomHost_) {
+          loomHost_->animationFrameSource()->pause();
+        }
+#endif
+        runtime.global().setProperty(
+            runtime, "__gpuiScrollerLegacy", rn_gpui_scroller_legacy());
+        // A native tree's batch of operations, from the second reconciler.
+        runtime.global().setProperty(
+            runtime,
+            "__gpuiNativeRootApply",
+            facebook::jsi::Function::createFromHostFunction(
+                runtime,
+                facebook::jsi::PropNameID::forAscii(
+                    runtime, "__gpuiNativeRootApply"),
+                2,
+                [](facebook::jsi::Runtime& rt,
+                   const facebook::jsi::Value&,
+                   const facebook::jsi::Value* args,
+                   size_t count) -> facebook::jsi::Value {
+                  if (count >= 2 && args[0].isNumber() && args[1].isString()) {
+                    rn_gpui_native_root_ops(
+                        static_cast<uint32_t>(args[0].asNumber()),
+                        args[1].asString(rt).utf8(rt));
+                  }
+                  return facebook::jsi::Value::undefined();
+                }));
         // `_requireNodeLibrary` must exist before the app bundle runs, and a
         // reload creates a new runtime, so it is installed here rather than at
         // module-registration time. ReactInstance installs the
@@ -539,15 +683,21 @@ GpuiHost::GpuiHost(
             runtime,
             std::make_shared<facebook::react::RuntimeSchedulerCallInvoker>(
                 binding->getRuntimeScheduler()));
-      });
+      },
+#if LOOM_RENDERER
+      /* animationChoreographer */ loomHost_->animationFrameSource()
+#else
+      /* animationChoreographer */ nullptr
+#endif
+  );
   activeGpuiHost.store(this, std::memory_order_release);
-#if defined(__APPLE__)
+#if defined(RN_GPUI_ACCESSIBILITY_SETTINGS)
   rn_gpui_start_accessibility_observing();
 #endif
 }
 
 GpuiHost::~GpuiHost() {
-#if defined(__APPLE__)
+#if defined(RN_GPUI_ACCESSIBILITY_SETTINGS)
   rn_gpui_stop_accessibility_observing();
 #endif
   reactHost_->stopAllSurfaces();
@@ -623,7 +773,7 @@ facebook::react::LayoutConstraints constraintsFrom(
   const float maxH = std::max(minH, maxHeight);
   constraints.minimumSize = {minW, minH};
   constraints.maximumSize = {maxW, maxH};
-  constraints.layoutDirection = facebook::react::LayoutDirection::LeftToRight;
+  constraints.layoutDirection = surfaceLayoutDirection();
   return constraints;
 }
 } // namespace
@@ -647,11 +797,12 @@ void GpuiHost::start_surface_with_props(
   LayoutConstraints constraints;
   constraints.minimumSize = {w, h};
   constraints.maximumSize = {w, h};
-  // SurfaceHandler asserts on Undefined; GPUI surfaces are LTR for now (an RTL
-  // flag would come from the GPUI window's text direction).
-  constraints.layoutDirection = LayoutDirection::LeftToRight;
+  // SurfaceHandler asserts on Undefined.
+  constraints.layoutDirection = surfaceLayoutDirection();
   LayoutContext context;
   context.pointScaleFactor = scale;
+  context.fontSizeMultiplier = DeviceInfoModule::fontScale();
+  context.swapLeftAndRightInRTL = rngpui::rn_gpui_swap_left_and_right_in_rtl();
   if (id == kAppSurfaceId) {
     surfaceWidth_ = w;
     surfaceHeight_ = h;
@@ -673,6 +824,9 @@ void GpuiHost::start_surface_with_props(
         throw std::invalid_argument("Test initialProps must be an object");
     }
   }
+#if LOOM_RENDERER
+  setLoomSurfaceConstraints(*loomHost_, id, constraints, scale);
+#endif
   reactHost_->startSurface(
       id, std::string(module), initialProps, constraints, context);
 }
@@ -690,6 +844,8 @@ void GpuiHost::start_surface_with_constraints(
       constraintsFrom(minWidth, minHeight, maxWidth, maxHeight, scale);
   LayoutContext context;
   context.pointScaleFactor = scale;
+  context.fontSizeMultiplier = DeviceInfoModule::fontScale();
+  context.swapLeftAndRightInRTL = rngpui::rn_gpui_swap_left_and_right_in_rtl();
   if (id == kAppSurfaceId) {
     surfaceWidth_ = maxWidth;
     surfaceHeight_ = maxHeight;
@@ -704,6 +860,9 @@ void GpuiHost::start_surface_with_constraints(
       throw std::invalid_argument("Surface initialProps must be an object");
     initialProps = std::move(parsed);
   }
+#if LOOM_RENDERER
+  setLoomSurfaceConstraints(*loomHost_, id, constraints, scale);
+#endif
   reactHost_->startSurface(
       id, std::string(module), initialProps, constraints, context);
 }
@@ -719,12 +878,17 @@ void GpuiHost::set_surface_constraints(
       constraintsFrom(minWidth, minHeight, maxWidth, maxHeight, scale);
   LayoutContext context;
   context.pointScaleFactor = scale;
+  context.fontSizeMultiplier = DeviceInfoModule::fontScale();
+  context.swapLeftAndRightInRTL = rngpui::rn_gpui_swap_left_and_right_in_rtl();
   if (id == kAppSurfaceId) {
     surfaceWidth_ = maxWidth;
     surfaceHeight_ = maxHeight;
     surfaceScale_ = scale;
     mountingManager_->setWindowSize(maxWidth, maxHeight);
   }
+#if LOOM_RENDERER
+  setLoomSurfaceConstraints(*loomHost_, id, constraints, scale);
+#endif
   reactHost_->setSurfaceConstraints(id, constraints, context);
 }
 
@@ -732,17 +896,24 @@ void GpuiHost::set_surface_size(int32_t id, float w, float h, float scale) {
   LayoutConstraints constraints;
   constraints.minimumSize = {w, h};
   constraints.maximumSize = {w, h};
-  constraints.layoutDirection = LayoutDirection::LeftToRight;
+  constraints.layoutDirection = surfaceLayoutDirection();
   LayoutContext context;
   context.pointScaleFactor = scale;
+  context.fontSizeMultiplier = DeviceInfoModule::fontScale();
+  context.swapLeftAndRightInRTL = rngpui::rn_gpui_swap_left_and_right_in_rtl();
   if (id == kAppSurfaceId) {
     surfaceWidth_ = w;
     surfaceHeight_ = h;
     surfaceScale_ = scale;
     mountingManager_->setWindowSize(w, h);
   }
+#if LOOM_RENDERER
+  setLoomSurfaceConstraints(*loomHost_, id, constraints, scale);
+#endif
   reactHost_->setSurfaceConstraints(id, constraints, context);
-  set_window_metrics(w, h, scale);
+  if (id == kAppSurfaceId) {
+    set_window_metrics(w, h, scale);
+  }
 }
 
 void GpuiHost::set_window_top_inset(float top) {
@@ -750,15 +921,55 @@ void GpuiHost::set_window_top_inset(float top) {
 }
 
 void GpuiHost::set_window_metrics(float w, float h, float scale) {
-  if (!DeviceInfoModule::setWindowMetrics(w, h, scale) || !scriptLoaded_) {
+  if (!DeviceInfoModule::setWindowMetrics(w, h, scale)) {
     return;
   }
-  const folly::dynamic metrics = folly::dynamic::object("width", w)(
-      "height", h)("scale", scale)("fontScale", 1.0);
+  for (const auto& observer : gpuiExtensionHooks().windowMetricsObservers) {
+    observer();
+  }
+  if (!scriptLoaded_) {
+    return;
+  }
+  emitDimensions();
+}
+
+void GpuiHost::emitDimensions() const {
+  const auto windowSize = DeviceInfoModule::windowSize();
+  const auto screenSize = DeviceInfoModule::screenSize();
+  const double scale = surfaceScale_;
+  const double fontScale = DeviceInfoModule::fontScale();
+  const folly::dynamic window =
+      folly::dynamic::object("width", windowSize.width)(
+          "height", windowSize.height)("scale", scale)("fontScale", fontScale);
+  const folly::dynamic screen =
+      folly::dynamic::object("width", screenSize.width)(
+          "height", screenSize.height)("scale", scale)("fontScale", fontScale);
   folly::dynamic payload =
-      folly::dynamic::object("window", metrics)("screen", metrics);
+      folly::dynamic::object("window", window)("screen", screen);
   reactHost_->emitDeviceEvent(
       folly::dynamic::array("didUpdateDimensions", std::move(payload)));
+}
+
+void GpuiHost::set_display_metrics(
+    float screenWidth,
+    float screenHeight,
+    float fontScale) {
+  const bool fontScaleChanged = DeviceInfoModule::fontScale() != fontScale;
+  if (!DeviceInfoModule::setDisplayMetrics(
+          screenWidth, screenHeight, fontScale)) {
+    return;
+  }
+  for (const auto& observer : gpuiExtensionHooks().windowMetricsObservers) {
+    observer();
+  }
+  if (!scriptLoaded_) {
+    return;
+  }
+  if (fontScaleChanged && surfaceWidth_ > 0.f) {
+    set_surface_size(
+        kAppSurfaceId, surfaceWidth_, surfaceHeight_, surfaceScale_);
+  }
+  emitDimensions();
 }
 
 void GpuiHost::emit_device_event(rust::Str eventName) const {
@@ -798,6 +1009,30 @@ void GpuiHost::emit_device_event_json(
       folly::dynamic::array(std::string(eventName), std::move(payload)));
 }
 
+void GpuiHost::set_app_state(rust::Str state) {
+  const std::string next(state);
+  const std::string previous = AppStateModule::state();
+  if (next == previous) {
+    return;
+  }
+  AppStateModule::setState(next);
+  if (!scriptLoaded_) {
+    return;
+  }
+  reactHost_->emitDeviceEvent(folly::dynamic::array(
+      "appStateDidChange", folly::dynamic::object("app_state", next)));
+  if ((next == "active") != (previous == "active")) {
+    reactHost_->emitDeviceEvent(
+        folly::dynamic::array("appStateFocusChange", next == "active"));
+  }
+}
+
+void GpuiHost::emit_memory_warning() const {
+  if (scriptLoaded_) {
+    reactHost_->emitDeviceEvent(folly::dynamic::array("memoryWarning"));
+  }
+}
+
 void GpuiHost::emit_accessibility_setting_event(
     const std::string& eventName,
     bool enabled) const {
@@ -806,7 +1041,7 @@ void GpuiHost::emit_accessibility_setting_event(
   }
 }
 
-#if defined(__APPLE__)
+#if defined(RN_GPUI_ACCESSIBILITY_SETTINGS)
 extern "C" void rn_gpui_accessibility_setting_changed(
     const char* eventName,
     bool enabled) {
@@ -819,6 +1054,7 @@ extern "C" void rn_gpui_accessibility_setting_changed(
 
 void GpuiHost::set_system_appearance(rust::Str appearance) {
   bool shouldNotify = false;
+  bool effectiveChanged = false;
   std::string nextAppearance;
   {
     std::lock_guard<std::mutex> lock(appearanceMutex);
@@ -826,7 +1062,13 @@ void GpuiHost::set_system_appearance(rust::Str appearance) {
     if (systemAppearance == nextAppearance)
       return;
     systemAppearance = nextAppearance;
-    shouldNotify = !appearanceOverride.has_value() && scriptLoaded_;
+    effectiveChanged = !appearanceOverride.has_value();
+    shouldNotify = effectiveChanged && scriptLoaded_;
+  }
+  if (effectiveChanged) {
+    for (const auto& observer : gpuiExtensionHooks().colorSchemeObservers) {
+      observer(nextAppearance);
+    }
   }
   if (shouldNotify) {
     folly::dynamic preferences =
@@ -893,6 +1135,9 @@ uint64_t GpuiHost::js_heap_bytes() const {
 }
 
 void GpuiHost::stop_surface(int32_t id) {
+#if LOOM_RENDERER
+  LoomBinding::releaseSurface(id);
+#endif
   reactHost_->stopSurface(id);
   // Fabric emits no Delete mutations for a surface that is torn down, so the
   // store has to drop it explicitly.
@@ -933,9 +1178,15 @@ void GpuiHost::start_log_box_surface() {
   LayoutConstraints constraints;
   constraints.minimumSize = {surfaceWidth_, surfaceHeight_};
   constraints.maximumSize = {surfaceWidth_, surfaceHeight_};
-  constraints.layoutDirection = LayoutDirection::LeftToRight;
+  constraints.layoutDirection = surfaceLayoutDirection();
   LayoutContext context;
   context.pointScaleFactor = surfaceScale_;
+  context.fontSizeMultiplier = DeviceInfoModule::fontScale();
+  context.swapLeftAndRightInRTL = rngpui::rn_gpui_swap_left_and_right_in_rtl();
+#if LOOM_RENDERER
+  setLoomSurfaceConstraints(
+      *loomHost_, kLogBoxSurfaceId, constraints, surfaceScale_);
+#endif
   reactHost_->startSurface(
       kLogBoxSurfaceId,
       "LogBox",
@@ -947,6 +1198,9 @@ void GpuiHost::start_log_box_surface() {
 /// Stop the LogBox surface again: `hide()` is what keeps a closed
 /// LogBox from covering the app surface with an empty full-size overlay.
 void GpuiHost::stop_log_box_surface() {
+#if LOOM_RENDERER
+  LoomBinding::releaseSurface(kLogBoxSurfaceId);
+#endif
   reactHost_->stopSurface(kLogBoxSurfaceId);
   rn_gpui_on_surface_stopped(kLogBoxSurfaceId);
 }
@@ -994,6 +1248,11 @@ void GpuiHost::on_frame(double eventTimestampMs) const {
   if (reactHost_->isReloading())
     return;
   dispatchPointerTick(*mountingManager_, eventTimestampMs);
+#if LOOM_RENDERER
+  // Animation props collected since the last frame reach the screen with it.
+  loomHost_->animationFrameSource()->tick();
+  GpuiLoomHost::runOnUIThread([] { LoomBinding::flushAnimationFrames(); });
+#endif
   on_render();
   if (const auto& frame = rngpui::gpuiModuleHooks().frame) {
     const auto frameTimestampMs =
@@ -1036,6 +1295,12 @@ void GpuiHost::dispatch_event(
       tag, std::string(type), folly::parseJson(std::string(payloadJson)));
 }
 
+void GpuiHost::dispatch_wheel(int32_t tag, uint64_t id, rust::Str payloadJson)
+    const {
+  mountingManager_->dispatchWheel(
+      tag, id, folly::parseJson(std::string(payloadJson)));
+}
+
 void GpuiHost::dispatch_pointer_event(
     rust::Str targetChainJson,
     float x,
@@ -1076,6 +1341,39 @@ void GpuiHost::dispatch_pointer_event(
 }
 
 void GpuiHost::set_scroll_offset(int32_t tag, float x, float y) const {
+#if LOOM_RENDERER
+  loomHost_->setScrollOffset(tag, x, y);
+  return;
+#endif
   mountingManager_->setScrollOffset(tag, x, y);
 }
+} // namespace rngpui
+
+namespace rngpui {
+
+std::shared_ptr<facebook::react::TurboModule> createTurboModule(
+    const std::string& name,
+    const std::shared_ptr<facebook::react::CallInvoker>& jsInvoker) {
+  static const auto providers = gpui_turbo_module_providers();
+  for (const auto& provider : providers) {
+    if (auto module = provider(name, jsInvoker)) {
+      return module;
+    }
+  }
+  return nullptr;
+}
+
+} // namespace rngpui
+
+namespace rngpui {
+
+std::string currentColorScheme() {
+  std::lock_guard<std::mutex> lock(appearanceMutex);
+  return appearanceOverride.value_or(systemAppearance);
+}
+
+double windowScale() {
+  return DeviceInfoModule::scale();
+}
+
 } // namespace rngpui

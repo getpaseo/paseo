@@ -55,6 +55,10 @@ impl ComponentRenderer for WindowControlRenderer {
         claimed_area(&node.props)
     }
 
+    fn claims_press(&self, node: &ComponentNode) -> bool {
+        claimed_area(&node.props).is_some()
+    }
+
     fn input(&self, node: &ComponentNode) -> InputSpec {
         if claimed_area(&node.props).is_none() {
             return InputSpec::default();

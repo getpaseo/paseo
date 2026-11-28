@@ -1,14 +1,31 @@
 {
   "name": "@react-native-gpui/safe-area-context",
-  "version": "0.1.0",
-  "description": "GPUI platform implementation for react-native-safe-area-context",
+  "version": "5.10.0-alpha.0",
+  "description": "Adapter for react-native-safe-area-context (MIT): reports safe area insets for desktop windows, including windows with a custom title bar",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/streetwriters/react-native-gpui-modules.git",
+    "directory": "modules/safe-area-context"
+  },
+  "homepage": "https://github.com/streetwriters/react-native-gpui-modules/tree/main/modules/safe-area-context#readme",
+  "bugs": {
+    "url": "https://github.com/streetwriters/react-native-gpui-modules/issues"
+  },
   "files": [
     "desktop",
     "react-native.config.js",
-    "src"
+    "src",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "!**/*.test.js",
+    "!**/*.test.mjs",
+    "!**/*.test.ts",
+    "!**/*.test.cjs"
   ],
   "peerDependencies": {
-    "react-native": "0.87.1",
+    "react-native": "0.87.x",
     "react-native-safe-area-context": "5.10.x"
   },
   "codegenConfig": {
@@ -16,5 +33,8 @@
     "type": "modules",
     "jsSrcsDir": "src"
   },
-  "license": "MIT"
+  "publishConfig": {
+    "access": "public",
+    "tag": "latest"
+  }
 }

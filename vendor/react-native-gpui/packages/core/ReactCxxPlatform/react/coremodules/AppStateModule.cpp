@@ -7,17 +7,35 @@
 
 #include "AppStateModule.h"
 
+#include <mutex>
+
 namespace facebook::react {
 
+namespace {
+std::mutex stateMutex;
+std::string currentState = "active";
+} // namespace
+
+void AppStateModule::setState(const std::string& state) {
+  std::lock_guard<std::mutex> lock(stateMutex);
+  currentState = state;
+}
+
+std::string AppStateModule::state() {
+  std::lock_guard<std::mutex> lock(stateMutex);
+  return currentState;
+}
+
 AppStateConstants AppStateModule::getConstants(jsi::Runtime& /*rt*/) {
-  // TODO: T160890586 Wire up AppState implementation to use real data
-  return AppStateConstants{.initialAppState = ""};
+  return AppStateConstants{.initialAppState = state()};
 }
 
 void AppStateModule::getCurrentAppState(
     jsi::Runtime& /*rt*/,
-    const AsyncCallback<AppState>& /*success*/,
-    jsi::Function /*error*/) {}
+    const AsyncCallback<AppState>& success,
+    jsi::Function /*error*/) {
+  success(AppState{state()});
+}
 
 void AppStateModule::addListener(
     jsi::Runtime& /*rt*/,

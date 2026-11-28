@@ -49,7 +49,7 @@ if(WIN32)
   # boost::thread_specific_ptr, which lives in compiled Boost.Thread. Only
   # its Win32 TSS sources are needed; tss_pe.cpp runs the per-thread cleanup.
   set(_rn_gpui_boost_thread
-    "${RN_GPUI_NATIVE_DEPS_SOURCES}/boost/boost_1_83_0/libs/thread/src/win32")
+    "${RN_GPUI_BOOST_ARCHIVE_DIR}/boost_1_83_0/libs/thread/src/win32")
   target_sources(folly_runtime PRIVATE
     "${_rn_gpui_boost_thread}/thread.cpp"
     "${_rn_gpui_boost_thread}/thread_primitives.cpp"

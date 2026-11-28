@@ -146,13 +146,19 @@ void rn_gpui_http_request(
 
         // One client per request: `CurlHttpClient` is stateless, and the
         // cookies it shares live in a process-wide handle created on first use.
+        // An empty string body still sets CURLOPT_POSTFIELDS, which turns a
+        // GET into a POST.
+        http::Body requestBody;
+        if (!bodyText.empty()) {
+          requestBody.string = bodyText;
+        }
         auto client = gpui_http_client_factory()();
         client->sendRequest(
             std::move(callbacks),
             methodText,
             urlText,
             parseHeaders(headersText),
-            http::Body{.string = bodyText});
+            std::move(requestBody));
 
         // `sendRequest` returns as soon as the transfer has been started on its
         // own thread, so the response is awaited here rather than assumed.

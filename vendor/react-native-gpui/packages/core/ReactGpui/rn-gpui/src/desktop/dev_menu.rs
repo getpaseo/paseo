@@ -11,6 +11,8 @@ pub const OPEN_DEVTOOLS: &str = "dev:openDevTools";
 pub const ELEMENT_INSPECTOR: &str = "dev:elementInspector";
 pub const PERF_MONITOR: &str = "dev:perfMonitor";
 pub const FAST_REFRESH: &str = "dev:fastRefresh";
+/// The id of the custom item at an index of `custom_items` is this and the index.
+const CUSTOM_PREFIX: &str = "dev:item:";
 pub const ACCELERATOR: &str = "secondary-d";
 pub const ACCELERATOR_ID: &str = "dev:menu";
 
@@ -20,6 +22,8 @@ pub struct DevSettings {
     pub hot_loading: bool,
     pub profiling: bool,
     pub inspector: bool,
+    /// The titles `DevSettings.addMenuItem` added, in the order they came.
+    pub custom_items: Vec<String>,
 }
 
 pub struct DevSettingsGlobal(pub RefCell<DevSettings>);
@@ -39,13 +43,17 @@ pub fn install(cx: &mut App, enabled: bool) {
 }
 
 pub fn menu_model(cx: &App) -> MenuModel {
-    let (hot_loading, inspector) = cx
+    let (hot_loading, inspector, custom) = cx
         .try_global::<DevSettingsGlobal>()
         .map(|state| {
             let state = state.0.borrow();
-            (state.hot_loading, state.inspector)
+            (
+                state.hot_loading,
+                state.inspector,
+                state.custom_items.clone(),
+            )
         })
-        .unwrap_or((false, false));
+        .unwrap_or((false, false, Vec::new()));
     let profiling = perf_monitor::is_enabled(cx);
     let item = |id: &str, label: &str, checked: bool| {
         MenuNode::Item(MenuItemDef {
@@ -58,16 +66,24 @@ pub fn menu_model(cx: &App) -> MenuModel {
             icon: None,
         })
     };
-    MenuModel {
-        items: vec![
-            item(RELOAD, "Reload", false),
-            item(OPEN_DEVTOOLS, "Open DevTools", false),
-            MenuNode::Separator,
-            item(ELEMENT_INSPECTOR, "Toggle Element Inspector", inspector),
-            item(PERF_MONITOR, "Toggle Perf Monitor", profiling),
-            item(FAST_REFRESH, "Fast Refresh", hot_loading),
-        ],
+    let mut items = vec![
+        item(RELOAD, "Reload", false),
+        item(OPEN_DEVTOOLS, "Open DevTools", false),
+        MenuNode::Separator,
+        item(ELEMENT_INSPECTOR, "Toggle Element Inspector", inspector),
+        item(PERF_MONITOR, "Toggle Perf Monitor", profiling),
+        item(FAST_REFRESH, "Fast Refresh", hot_loading),
+    ];
+    if !custom.is_empty() {
+        items.push(MenuNode::Separator);
+        items.extend(
+            custom
+                .iter()
+                .enumerate()
+                .map(|(index, title)| item(&format!("{CUSTOM_PREFIX}{index}"), title, false)),
+        );
     }
+    MenuModel { items }
 }
 
 pub fn show(cx: &mut App) {
@@ -79,7 +95,9 @@ pub fn show(cx: &mut App) {
     // asked of the window rather than remembered.
     if let Some(handle) = open_panel(cx) {
         let _ = handle.update(cx, |_root: gpui::AnyView, window, _cx| {
-            window.activate_window();
+            if !crate::desktop::background::enabled() {
+                window.activate_window();
+            }
         });
         return;
     }
@@ -463,7 +481,7 @@ pub fn is_command(id: &str) -> bool {
     matches!(
         id,
         RELOAD | OPEN_DEVTOOLS | ELEMENT_INSPECTOR | PERF_MONITOR | FAST_REFRESH
-    )
+    ) || id.starts_with(CUSTOM_PREFIX)
 }
 
 pub fn perform(cx: &mut App, id: &str) {
@@ -498,11 +516,32 @@ pub fn perform(cx: &mut App, id: &str) {
             let enabled = toggle(cx, "hotLoading");
             emit(cx, "gpuiDesktop:fastRefresh", json!({"enabled": enabled}));
         }
-        _ => {}
+        custom => {
+            let title = custom
+                .strip_prefix(CUSTOM_PREFIX)
+                .and_then(|index| index.parse::<usize>().ok())
+                .and_then(|index| {
+                    cx.try_global::<DevSettingsGlobal>()
+                        .and_then(|state| state.0.borrow().custom_items.get(index).cloned())
+                });
+            // The event `DevSettings` listens for on every platform.
+            if let Some(title) = title {
+                emit(cx, "didPressMenuItem", json!({ "title": title }));
+            }
+        }
     }
 }
 
 pub fn apply_setting(cx: &mut App, name: &str, enabled: bool) {
+    if let Some(title) = name.strip_prefix("menuItem:") {
+        if let Some(state) = cx.try_global::<DevSettingsGlobal>() {
+            let mut state = state.0.borrow_mut();
+            if !state.custom_items.iter().any(|item| item == title) {
+                state.custom_items.push(title.to_string());
+            }
+        }
+        return;
+    }
     match name {
         "profiling" => {
             perf_monitor::set_enabled(cx, enabled);
@@ -606,5 +645,30 @@ mod tests {
         ];
         let unique: std::collections::HashSet<_> = ids.iter().collect();
         assert_eq!(unique.len(), ids.len());
+    }
+
+    #[gpui::test]
+    fn an_added_menu_item_is_listed_once_and_is_a_command(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            install(cx, true);
+            apply_setting(cx, "menuItem:Show Secret Screen", true);
+            apply_setting(cx, "menuItem:Show Secret Screen", true);
+            apply_setting(cx, "menuItem:Other", true);
+            let labels: Vec<String> = menu_model(cx)
+                .items
+                .iter()
+                .filter_map(|node| match node {
+                    MenuNode::Item(item) if item.id.starts_with("dev:item:") => {
+                        Some(format!("{} {}", item.id, item.label))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                labels,
+                ["dev:item:0 Show Secret Screen", "dev:item:1 Other"]
+            );
+            assert!(is_command("dev:item:1"));
+        });
     }
 }

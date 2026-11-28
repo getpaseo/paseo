@@ -29,6 +29,12 @@ pub struct TrayConfig {
     /// default: a closed window is gone and a reopened one starts fresh.
     pub hide_window_on_close: bool,
     pub accessory: bool,
+    /// Where the popover is drawn when the desktop will not place it at the icon
+    /// (Wayland): a corner of the screen's work area, `Auto` meaning the end of
+    /// the panel's edge.
+    pub popover_anchor: crate::desktop::popover_placement::Anchor,
+    /// Moves the popover from its corner, in points.
+    pub popover_offset: (f32, f32),
 }
 
 impl Default for TrayConfig {
@@ -47,6 +53,8 @@ impl Default for TrayConfig {
             quit_on_last_window_closed: false,
             hide_window_on_close: false,
             accessory: true,
+            popover_anchor: Default::default(),
+            popover_offset: (0.0, 0.0),
         }
     }
 }
@@ -55,6 +63,28 @@ impl TrayConfig {
     #[must_use]
     pub fn hide_window_on_close(mut self, hide: bool) -> Self {
         self.hide_window_on_close = hide;
+        self
+    }
+
+    #[must_use]
+    pub fn popover_anchor(mut self, anchor: crate::desktop::popover_placement::Anchor) -> Self {
+        self.popover_anchor = anchor;
+        self
+    }
+
+    /// The corner by name (`"top-right"`, `"center"`, …), for configuration that
+    /// is text. An unknown name leaves the anchor as it was.
+    #[must_use]
+    pub fn popover_anchor_name(mut self, name: &str) -> Self {
+        if let Some(anchor) = crate::desktop::popover_placement::Anchor::parse(name) {
+            self.popover_anchor = anchor;
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn popover_offset(mut self, x: f32, y: f32) -> Self {
+        self.popover_offset = (x, y);
         self
     }
 
@@ -127,6 +157,7 @@ pub struct TrayState {
     pub popover: Option<u32>,
     visible: bool,
     clicks: u32,
+    last_click: Option<(TrayButton, std::time::Instant)>,
     pub popover_dismissed_at: Option<std::time::Instant>,
     /// The app's own quit-on-last-window policy, put back when the tray goes.
     app_quits_on_last_window: Option<bool>,
@@ -158,6 +189,7 @@ pub fn install(cx: &mut App, config: TrayConfig) -> DesktopResult {
         popover: None,
         visible: true,
         clicks: 0,
+        last_click: None,
         popover_dismissed_at: None,
         app_quits_on_last_window,
     })));
@@ -222,6 +254,31 @@ pub fn destroy(cx: &mut App) -> DesktopResult {
     Ok(json!({"id": config, "destroyed": true}))
 }
 
+const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(500);
+
+fn is_double_click(
+    last: Option<(TrayButton, std::time::Instant)>,
+    button: TrayButton,
+    now: std::time::Instant,
+) -> bool {
+    last.is_some_and(|(previous, at)| previous == button && now.duration_since(at) <= DOUBLE_CLICK)
+}
+
+fn emit_click(cx: &App, button: TrayButton, double: bool) {
+    let Some(store) = crate::store::store_from(cx) else {
+        return;
+    };
+    let name = match button {
+        TrayButton::Left => "left",
+        TrayButton::Right => "right",
+        TrayButton::Middle => "middle",
+    };
+    store.read(cx).host.emit_device_event_json(
+        "gpuiDesktop:trayClick",
+        &json!({"button": name, "double": double}).to_string(),
+    );
+}
+
 pub fn handle_click(cx: &mut App, rect: TrayRect, button: TrayButton) {
     let (config, menu) = {
         let Some(tray) = cx.try_global::<TrayGlobal>() else {
@@ -229,6 +286,12 @@ pub fn handle_click(cx: &mut App, rect: TrayRect, button: TrayButton) {
         };
         let mut tray = tray.0.borrow_mut();
         tray.clicks += 1;
+        let now = std::time::Instant::now();
+        let double = is_double_click(tray.last_click, button, now);
+        tray.last_click = (!double).then_some((button, now));
+        drop(tray);
+        emit_click(cx, button, double);
+        let tray = cx.global::<TrayGlobal>().0.borrow();
         (tray.config.clone(), tray.config.menu.clone())
     };
     if wants_menu(menu.is_some(), config.menu_on_left_click, button) {
@@ -277,20 +340,41 @@ pub fn show_popover(cx: &mut App, rect: TrayRect) {
         rect.y + rect.height / 2.0,
     );
     let (x, y) = popover_origin(rect, config.width, config.height, work_area);
+    #[cfg(target_os = "linux")]
+    #[cfg(target_os = "linux")]
+    let overlay = {
+        let scale = display_scale(cx);
+        let logical = cx.primary_display().map(|display| {
+            let size = display.bounds().size;
+            (f32::from(size.width), f32::from(size.height))
+        });
+        wayland_overlay(&config, rect, scale, logical)
+    };
     let options = OpenWindowOptions {
         component,
         props: None,
         title: Some(config.tooltip.clone().unwrap_or_else(|| config.id.clone())),
         width: Some(config.width),
         height: Some(config.height),
+        #[cfg(target_os = "linux")]
+        x: if overlay.is_some() { None } else { Some(x) },
+        #[cfg(not(target_os = "linux"))]
         x: Some(x),
+        #[cfg(target_os = "linux")]
+        y: if overlay.is_some() { None } else { Some(y) },
+        #[cfg(not(target_os = "linux"))]
         y: Some(y),
         resizable: false,
         // A popover has no title bar at all; `popup` is what makes it frameless.
         title_bar: WindowTitleBar::Default,
+        background: Default::default(),
+        window_buttons: None,
+        shadow: None,
         traffic_light_position: None,
         role: WindowRoleOverride::TrayPopover,
         popup: true,
+        #[cfg(target_os = "linux")]
+        overlay,
     };
     match windows::open_window(cx, options) {
         Ok(key) => {
@@ -299,6 +383,68 @@ pub fn show_popover(cx: &mut App, rect: TrayRect) {
         }
         Err(error) => log::error!("[desktop][tray] could not open the popover: {error}"),
     }
+}
+
+/// The scale of the display the app's windows are on.
+#[cfg(target_os = "linux")]
+fn display_scale(cx: &mut App) -> f32 {
+    cx.windows()
+        .first()
+        .and_then(|handle| handle.update(cx, |_, window, _| window.scale_factor()).ok())
+        .unwrap_or(1.0)
+}
+
+/// Where the popover is drawn on Wayland, which neither says where the icon is nor
+/// lets an app place a window: in a corner of a window covering the work area. The
+/// corner is the app's choice or the user's, and otherwise the end of the edge a
+/// panel reserves, when the work area can be read. Without it, and with no choice
+/// made, the compositor places an ordinary window.
+#[cfg(target_os = "linux")]
+fn wayland_overlay(
+    config: &TrayConfig,
+    rect: TrayRect,
+    scale: f32,
+    logical_screen: Option<(f32, f32)>,
+) -> Option<crate::desktop::window_frame::Placement> {
+    use crate::desktop::popover_placement::{self, Anchor};
+    if !crate::desktop::capabilities::is_wayland() {
+        return None;
+    }
+    let (anchor, offset) =
+        popover_placement::with_environment(config.popover_anchor, config.popover_offset);
+    let work = crate::desktop::work_area::read().map(|work| {
+        let (screen, area) = match logical_screen {
+            Some(logical) => popover_placement::logical_work_area(work.screen, work.area, logical),
+            None => (work.screen, work.area),
+        };
+        crate::desktop::work_area::WorkArea { screen, area }
+    });
+    let reserved = work.map(|work| popover_placement::reserved(work.screen, work.area));
+    if reserved.is_none() && anchor == Anchor::Auto {
+        return None;
+    }
+    // Some panels send where the icon was clicked, in the screen's own
+    // coordinates, which is where the work area is read from as well. A click at
+    // the origin is a panel that sent nothing.
+    let click = (rect.x != 0.0 || rect.y != 0.0).then_some((rect.x, rect.y));
+    let click = match (click, work) {
+        (Some(click), Some(work)) => Some(popover_placement::logical_click(
+            click,
+            scale,
+            work.screen,
+            reserved.unwrap_or_default(),
+        )),
+        (click, _) => click,
+    };
+    Some(crate::desktop::window_frame::Placement {
+        anchor,
+        offset,
+        reserved: reserved.unwrap_or_default(),
+        size: (config.width, config.height),
+        click: click.filter(|_| work.is_some()),
+        work_origin: work.map_or((0.0, 0.0), |work| (work.area.0, work.area.1)),
+        bare: false,
+    })
 }
 
 /// Where a popover of `width` x `height` goes, in points: centred on the icon,
@@ -384,6 +530,74 @@ pub fn set_tooltip(cx: &mut App, tooltip: Option<&str>) -> DesktopResult {
     }
     tray.0.borrow_mut().config.tooltip = tooltip.map(str::to_string);
     Ok(json!({"tooltip": tooltip}))
+}
+
+/// Where the icon is, for a popover the app asks for rather than one a click
+/// opened: the platform's own answer where it has one (macOS and Windows), and
+/// otherwise what a click would have given.
+fn icon_rect(cx: &App) -> TrayRect {
+    let rect = cx
+        .try_global::<TrayGlobal>()
+        .and_then(|tray| tray.0.borrow().icon.as_ref().and_then(|icon| icon.rect()))
+        .unwrap_or(tray_icon::Rect {
+            position: tray_icon::dpi::PhysicalPosition::new(0.0, 0.0),
+            size: tray_icon::dpi::PhysicalSize::new(0, 0),
+        });
+    let scale = f64::from(crate::desktop::platform_window::primary_screen_scale());
+    tray_click_rect(rect, tray_icon::dpi::PhysicalPosition::new(0.0, 0.0), scale)
+}
+
+/// The tray's popover, or an error when the tray has none to show.
+fn popover_ready(cx: &App) -> DesktopResult {
+    let tray = installed(cx)?;
+    if tray.0.borrow().config.component.is_none() {
+        return Err(DesktopError::invalid_argument(
+            "the tray has no popover component",
+        ));
+    }
+    Ok(json!({}))
+}
+
+/// Opens the popover when the app asks, the same way a click on the icon does.
+pub fn open_popover(cx: &mut App) -> DesktopResult {
+    popover_ready(cx)?;
+    let open = installed(cx)?.0.borrow().popover.is_some();
+    if !open {
+        let rect = icon_rect(cx);
+        show_popover(cx, rect);
+    }
+    Ok(json!({"shown": true}))
+}
+
+pub fn close_popover(cx: &mut App) -> DesktopResult {
+    installed(cx)?;
+    hide_popover(cx);
+    Ok(json!({"shown": false}))
+}
+
+pub fn flip_popover(cx: &mut App) -> DesktopResult {
+    popover_ready(cx)?;
+    let rect = icon_rect(cx);
+    toggle_popover(cx, rect);
+    Ok(json!({}))
+}
+
+/// Changes where the popover is drawn the next time it opens, on desktops that
+/// leave that to the app (Wayland).
+pub fn set_popover_position(
+    cx: &mut App,
+    anchor: Option<crate::desktop::popover_placement::Anchor>,
+    offset: Option<(f32, f32)>,
+) -> DesktopResult {
+    let tray = installed(cx)?;
+    let mut tray = tray.0.borrow_mut();
+    if let Some(anchor) = anchor {
+        tray.config.popover_anchor = anchor;
+    }
+    if let Some(offset) = offset {
+        tray.config.popover_offset = offset;
+    }
+    Ok(json!({}))
 }
 
 pub fn set_visible(cx: &mut App, visible: bool) -> DesktopResult {
@@ -643,7 +857,13 @@ fn tray_click_rect(
     let (x, y) = if position.x != 0.0 || position.y != 0.0 {
         (position.x, position.y)
     } else {
-        pointer_position().unwrap_or((0.0, 0.0))
+        // XWayland only follows the pointer over X windows, so on Wayland the
+        // answer would be stale: no position is better than a wrong one.
+        if crate::desktop::capabilities::is_wayland() {
+            (0.0, 0.0)
+        } else {
+            pointer_position().unwrap_or((0.0, 0.0))
+        }
     };
     TrayRect {
         x: (x / scale) as f32,
@@ -877,12 +1097,8 @@ fn build_tray_menu(
 }
 
 /// The icon for a tray that was not given one: the app's own where the platform
-/// draws a tray icon as-is, and the built-in glyph where it does not.
-///
-/// The glyph is a macOS template — a black outline the menu bar tints for light
-/// and dark — so anywhere else it is an empty black rectangle, which on a dark
-/// taskbar is hardly there at all. The app's icon is what a user expects to see
-/// for the app.
+/// draws a tray icon as-is, and the built-in glyph where it does not or the app
+/// has none.
 fn fallback_icon() -> Result<tray_icon::Icon, String> {
     #[cfg(not(target_os = "macos"))]
     if let Some(icon) = crate::desktop::icon::app_icon() {
@@ -892,19 +1108,36 @@ fn fallback_icon() -> Result<tray_icon::Icon, String> {
     default_icon()
 }
 
+/// The glyph a tray shows when the app has no icon: an outline a macOS menu bar
+/// tints for light and dark, and elsewhere a filled disc that shows on a dark
+/// and on a light panel alike.
 fn default_icon() -> Result<tray_icon::Icon, String> {
     const SIZE: u32 = 22;
     let mut rgba = vec![0u8; (SIZE * SIZE * 4) as usize];
     for y in 0..SIZE {
         for x in 0..SIZE {
-            let outer = x >= 3 && x < SIZE - 3 && y >= 4 && y < SIZE - 4;
-            let inner = x >= 6 && x < SIZE - 6 && y >= 7 && y < SIZE - 7;
-            if outer && !inner {
-                let index = ((y * SIZE + x) * 4) as usize;
-                rgba[index] = 0;
-                rgba[index + 1] = 0;
-                rgba[index + 2] = 0;
-                rgba[index + 3] = 255;
+            let index = ((y * SIZE + x) * 4) as usize;
+            #[cfg(target_os = "macos")]
+            {
+                let outer = x >= 3 && x < SIZE - 3 && y >= 4 && y < SIZE - 4;
+                let inner = x >= 6 && x < SIZE - 6 && y >= 7 && y < SIZE - 7;
+                if outer && !inner {
+                    rgba[index..index + 4].copy_from_slice(&[0, 0, 0, 255]);
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let dx = x as f32 + 0.5 - SIZE as f32 / 2.0;
+                let dy = y as f32 + 0.5 - SIZE as f32 / 2.0;
+                let distance = (dx * dx + dy * dy).sqrt();
+                if distance <= 9.0 {
+                    let pixel: [u8; 4] = if distance <= 3.5 {
+                        [255, 255, 255, 255]
+                    } else {
+                        [124, 139, 161, 255]
+                    };
+                    rgba[index..index + 4].copy_from_slice(&pixel);
+                }
             }
         }
     }
@@ -913,6 +1146,11 @@ fn default_icon() -> Result<tray_icon::Icon, String> {
 
 fn wants_menu(has_menu: bool, menu_on_left_click: bool, button: TrayButton) -> bool {
     has_menu && (button == TrayButton::Right || menu_on_left_click)
+}
+
+fn has_popover(cx: &App) -> bool {
+    cx.try_global::<TrayGlobal>()
+        .is_some_and(|tray| tray.0.borrow().config.component.is_some())
 }
 
 /// Whether the installed tray asked for the last window to be hidden, not
@@ -963,6 +1201,13 @@ fn default_menu_applies() -> bool {
 /// is the app's, and reaches JavaScript.
 pub fn perform_menu(cx: &mut App, id: &str) {
     match id {
+        DEFAULT_OPEN_ID if has_popover(cx) => {
+            // A panel that shows only the menu, such as GNOME's, never reports
+            // a click, so the menu is the way to the popover.
+            if let Some(handler) = rn_gpui_sys::TRAY_CLICK_HANDLER.get() {
+                handler(0.0, 0.0, 0.0, 0.0, TrayButton::Left as u8);
+            }
+        }
         DEFAULT_OPEN_ID => windows::reopen(cx),
         DEFAULT_EXIT_ID => cx.quit(),
         _ => emit_menu_press(cx, id),
@@ -982,6 +1227,18 @@ pub fn emit_menu_press(cx: &App, id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_second_click_of_the_same_button_in_time_is_a_double_click() {
+        let now = std::time::Instant::now();
+        let first = Some((TrayButton::Left, now));
+        let soon = now + std::time::Duration::from_millis(300);
+        let late = now + std::time::Duration::from_millis(800);
+        assert!(is_double_click(first, TrayButton::Left, soon));
+        assert!(!is_double_click(first, TrayButton::Left, late));
+        assert!(!is_double_click(first, TrayButton::Right, soon));
+        assert!(!is_double_click(None, TrayButton::Left, soon));
+    }
 
     #[test]
     fn the_default_icon_is_a_valid_template() {

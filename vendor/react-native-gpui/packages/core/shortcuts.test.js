@@ -69,8 +69,22 @@ describe('registration', () => {
         scope: undefined,
         enabled: true,
         allowInTextInput: false,
+        global: false,
       },
     ]);
+  });
+
+  test('a global shortcut cannot also be scoped or allowed in a text input', () => {
+    register([{ id: 'palette', keys: 'alt+space', global: true }]);
+    expect(list()[0].global).toBe(true);
+    expect(() =>
+      register([{ id: 'a', keys: 'alt+a', global: true, when: 'editor' }]),
+    ).toThrow(/global/u);
+    expect(() =>
+      register([
+        { id: 'b', keys: 'alt+b', global: true, allowInTextInput: true },
+      ]),
+    ).toThrow(/global/u);
   });
 
   test('an id keeps one shortcut however many components register it', () => {
@@ -176,6 +190,7 @@ describe('registration', () => {
         when: 'editor',
         enabled: true,
         allowInTextInput: true,
+        global: false,
         description: 'Save the file',
       },
     ]);

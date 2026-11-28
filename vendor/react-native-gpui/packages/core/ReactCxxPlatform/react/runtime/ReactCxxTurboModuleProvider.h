@@ -13,6 +13,10 @@
 #include <react/nativemodule/TurboModuleProvider.h>
 #include <react/renderer/scheduler/SurfaceDelegate.h>
 
+#include <memory>
+#include <string>
+#include <unordered_map>
+
 namespace facebook::react {
 
 class CallInvoker;
@@ -41,6 +45,8 @@ class ReactCxxTurboModuleProvider final {
   std::shared_ptr<TurboModule> operator()(const std::string &name) const;
 
  private:
+  std::shared_ptr<TurboModule> create(const std::string &name) const;
+
   TurboModuleProviders turboModuleProviders_;
   std::shared_ptr<CallInvoker> jsInvoker_;
   JsErrorHandler::OnJsError onJsError_;
@@ -53,6 +59,9 @@ class ReactCxxTurboModuleProvider final {
   std::function<void()> liveReloadCallback_;
   std::shared_ptr<std::string> sourceURL_;
   std::weak_ptr<IImageLoader> imageLoader_;
+  // Shared by the copies `std::function` makes of the provider, so each name
+  // has one instance per runtime.
+  std::shared_ptr<std::unordered_map<std::string, std::shared_ptr<TurboModule>>> modules_;
 };
 
 } // namespace facebook::react

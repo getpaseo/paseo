@@ -11,6 +11,7 @@ import {
   runDesktop,
 } from '../src/commands.js';
 import { autolink } from '../src/autolink.js';
+import { doctor } from '../src/doctor.cjs';
 const requestedCommand = process.argv[2];
 const command = requestedCommand === 'run-desktop' ? 'run' : requestedCommand;
 const option = name => {
@@ -25,9 +26,13 @@ const run = (bin, args) =>
 
 if (hasFlag('--help') || hasFlag('-h')) {
   console.log(
-    'usage: npx react-native run-desktop [--project-root path] [--port 8082] [--release] [--features feature,...] [--no-launch]',
+    'usage: npx react-native run-desktop [--project-root path] [--port 8082] [--release] [--features feature,...] [--no-launch] [--sign-identity identity] [--renderer fabric|loom] [--js-thread background|main]',
   );
   process.exit(0);
+}
+
+if (command === 'doctor' || command === 'doctor-desktop') {
+  process.exit(doctor());
 }
 
 if (command === 'init-desktop') {
@@ -73,7 +78,7 @@ if (
   )
 ) {
   console.error(
-    'usage: react-native-gpui <init|init-desktop|create-library|autolink|bundle|collect-node-addons|package-desktop|prebuilt|run> [options]',
+    'usage: react-native-gpui <init|init-desktop|doctor|create-library|autolink|bundle|collect-node-addons|package-desktop|prebuilt|run> [options]',
   );
   process.exit(2);
 }
@@ -87,6 +92,10 @@ if (command === 'collect-node-addons') {
   process.exit(0);
 }
 
+if (option('--renderer')) process.env.RN_GPUI_RENDERER = option('--renderer');
+if (option('--js-thread'))
+  process.env.RN_GPUI_JS_THREAD = option('--js-thread');
+
 if (command === 'run') {
   await runDesktop({
     projectRoot,
@@ -96,6 +105,7 @@ if (command === 'run') {
     release: hasFlag('--release'),
     features: option('--features'),
     noLaunch: hasFlag('--no-launch'),
+    signIdentity: option('--sign-identity'),
     port: option('--port'),
     host: option('--host'),
   });

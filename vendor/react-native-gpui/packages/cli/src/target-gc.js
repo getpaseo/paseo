@@ -26,6 +26,8 @@ import readline from 'node:readline';
 import { execFileSync, spawn } from 'node:child_process';
 
 export const DEFAULT_MAX_AGE_DAYS = 7;
+/** How long a unit or cache that something newer has replaced is kept. */
+export const DEFAULT_SUPERSEDED_DAYS = 1;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -79,6 +81,15 @@ export function targetGcEnabled(env = process.env) {
 export function targetGcMaxAgeDays(env = process.env) {
   const days = Number(env.RN_GPUI_TARGET_GC_DAYS);
   return Number.isFinite(days) && days > 0 ? days : DEFAULT_MAX_AGE_DAYS;
+}
+
+/**
+ * How many days a superseded unit is kept, from
+ * `RN_GPUI_TARGET_GC_SUPERSEDED_DAYS`.
+ */
+export function targetGcSupersededDays(env = process.env) {
+  const days = Number(env.RN_GPUI_TARGET_GC_SUPERSEDED_DAYS);
+  return Number.isFinite(days) && days > 0 ? days : DEFAULT_SUPERSEDED_DAYS;
 }
 
 /**
@@ -198,9 +209,14 @@ function unitKind(fingerprintDir) {
  */
 export function findStale(
   targetDir,
-  { now = Date.now(), maxAgeDays = DEFAULT_MAX_AGE_DAYS } = {},
+  {
+    now = Date.now(),
+    maxAgeDays = DEFAULT_MAX_AGE_DAYS,
+    supersededDays = DEFAULT_SUPERSEDED_DAYS,
+  } = {},
 ) {
   const maxAge = maxAgeDays * DAY_MS;
+  const supersededAge = Math.min(supersededDays, maxAgeDays) * DAY_MS;
   const usage = readUsage(targetDir);
   const units = [];
   const incremental = [];
@@ -229,11 +245,16 @@ export function findStale(
     for (const group of groups.values()) {
       const newest = Math.max(...group.map(unit => unit.lastUsed));
       for (const unit of group) {
-        if (now - unit.lastUsed <= maxAge) continue;
-        // A recorded unit that no build has used for the whole period is
-        // stale. One without a record is only stale once something newer of
-        // the same crate and kind has taken its place.
-        if (unit.recorded != null || unit.lastUsed < newest) units.push(unit);
+        const age = now - unit.lastUsed;
+        if (unit.lastUsed < newest) {
+          // Something newer of the same crate and kind has taken its place,
+          // as a pin bump does to every dependency: a day is long enough.
+          if (age > supersededAge) units.push(unit);
+        } else if (unit.recorded != null && age > maxAge) {
+          // The newest of its crate and kind: stale only when no build has
+          // used it for the whole period.
+          units.push(unit);
+        }
       }
     }
     const incrementalDir = path.join(targetDir, profile, 'incremental');
@@ -241,11 +262,23 @@ export function findStale(
     try {
       caches = fs.readdirSync(incrementalDir);
     } catch {}
+    // `<crate>-<hash>`: the hash changes with the crate's inputs, so older
+    // caches of one crate are replaced by the newest.
+    const byCrate = new Map();
     for (const cache of caches) {
       const cacheDir = path.join(incrementalDir, cache);
-      // A session directory is written each time the crate is compiled, so a
-      // cache untouched for the period gives the next build nothing to reuse.
-      if (now - newestMtime(cacheDir) > maxAge) incremental.push(cacheDir);
+      const crate = cache.replace(/-[0-9a-z]{8,}$/u, '');
+      if (!byCrate.has(crate)) byCrate.set(crate, []);
+      byCrate.get(crate).push({ cacheDir, mtime: newestMtime(cacheDir) });
+    }
+    for (const group of byCrate.values()) {
+      const newest = Math.max(...group.map(cache => cache.mtime));
+      for (const { cacheDir, mtime } of group) {
+        // A session directory is written each time the crate is compiled, so a
+        // cache untouched for the period gives the next build nothing to reuse.
+        const limit = mtime < newest ? supersededAge : maxAge;
+        if (now - mtime > limit) incremental.push(cacheDir);
+      }
     }
   }
   return { units, incremental };
@@ -302,11 +335,12 @@ export function pruneTarget(
   {
     now = Date.now(),
     maxAgeDays = DEFAULT_MAX_AGE_DAYS,
+    supersededDays = targetGcSupersededDays(),
     log = message => console.log(message),
   } = {},
 ) {
   if (!fs.existsSync(targetDir)) return { units: 0, caches: 0, bytes: 0 };
-  const stale = findStale(targetDir, { now, maxAgeDays });
+  const stale = findStale(targetDir, { now, maxAgeDays, supersededDays });
   let bytes = 0;
   for (const unit of stale.units) bytes += removeUnit(targetDir, unit);
   for (const cache of stale.incremental) bytes += remove(cache);
@@ -318,9 +352,9 @@ export function pruneTarget(
   if (bytes > 0) {
     log(
       `Removed ${stale.units.length} build unit(s) and ` +
-        `${stale.incremental.length} incremental cache(s) unused for ` +
-        `${maxAgeDays} days from ${targetDir} ` +
-        `(${(bytes / 1024 ** 3).toFixed(2)} GB). ` +
+        `${stale.incremental.length} incremental cache(s) from ${targetDir} ` +
+        `(${(bytes / 1024 ** 3).toFixed(2)} GB): unused for ${maxAgeDays} days, ` +
+        `or replaced by a newer build and unused for ${supersededDays}. ` +
         'Set RN_GPUI_TARGET_GC=0 to keep them.',
     );
   }

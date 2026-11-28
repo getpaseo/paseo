@@ -30,7 +30,10 @@ export interface NativeProps extends ViewProps {
     Readonly<{ index: Int32; x: Double; label: string }>
   >;
   onRich?: CodegenTypes.DirectEventHandler<
-    Readonly<{ nested: Readonly<{ flag: boolean; names: string[] }> }>
+    Readonly<{
+      nested: Readonly<{ flag: boolean; names: string[] }>;
+      speed: 'fast' | 'slow';
+    }>
   >;
   onDone?: CodegenTypes.DirectEventHandler<null>;
 }

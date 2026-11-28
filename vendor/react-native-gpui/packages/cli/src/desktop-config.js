@@ -132,19 +132,7 @@ export function loadDesktopConfig(projectRoot, platform) {
     assertObject(override, `desktop/desktop.${os}.json`, '$');
   }
 
-  // The key that used to hold these options. It is rejected rather than read:
-  // the option would be ignored, and the app would silently get a default.
   const appConfig = readJson(appConfigPath, 'app.json') ?? {};
-  if (
-    appConfig.desktop !== undefined &&
-    appConfig.desktop !== null &&
-    typeof appConfig.desktop === 'object' &&
-    Object.keys(appConfig.desktop).length > 0
-  ) {
-    throw new Error(
-      'move `app.json` desktop.* into `desktop/desktop.json` (see the README)',
-    );
-  }
 
   const merged =
     base === undefined && override === undefined
@@ -157,6 +145,12 @@ export function loadDesktopConfig(projectRoot, platform) {
 
   const errors = [];
   validateAgainst(merged, SCHEMA, '$', errors);
+  if (
+    merged.jsThread !== undefined &&
+    (merged.renderer ?? 'fabric') !== 'loom'
+  ) {
+    errors.push('$.jsThread: only available with "renderer": "loom"');
+  }
   if (errors.length > 0) {
     throw new Error(
       `invalid desktop/desktop.json:\n${errors.map(error => `  ${error}`).join('\n')}`,
@@ -189,10 +183,12 @@ function withDefaults(config, { appConfig, packageJson }) {
   const identifier =
     config.identifier ?? identifierFromName(appConfig.name ?? productName);
   const version = config.version ?? packageJson.version ?? '1.0.0';
+  const renderer = config.renderer ?? 'fabric';
   const window = { ...DEFAULT_WINDOW, ...(config.window ?? {}) };
   if (window.title === undefined) window.title = productName;
   if (window.resizable === undefined) window.resizable = true;
   if (window.restoreState === undefined) window.restoreState = true;
+  if (window.visible === undefined) window.visible = true;
 
   const tray =
     config.tray === undefined ? undefined : { accessory: true, ...config.tray };
@@ -220,8 +216,16 @@ function withDefaults(config, { appConfig, packageJson }) {
     identifier,
     version,
     ...(config.icon === undefined ? {} : { icon: config.icon }),
+    renderer,
+    ...(renderer === 'loom'
+      ? { jsThread: config.jsThread ?? 'background' }
+      : {}),
     window,
+    ...(config.accessory === undefined ? {} : { accessory: config.accessory }),
     devMenu: config.devMenu ?? true,
+    urlSchemes: config.urlSchemes ?? [],
+    singleInstance:
+      config.singleInstance ?? (config.urlSchemes ?? []).length > 0,
     ...(tray === undefined ? {} : { tray }),
     bundle,
   };

@@ -27,6 +27,9 @@ class AppStateModule : public NativeAppStateCxxSpec<AppStateModule> {
  public:
   explicit AppStateModule(std::shared_ptr<CallInvoker> jsInvoker) : NativeAppStateCxxSpec(jsInvoker) {}
 
+  static void setState(const std::string &state);
+  static std::string state();
+
   AppStateConstants getConstants(jsi::Runtime &rt);
 
   void getCurrentAppState(jsi::Runtime &rt, const AsyncCallback<AppState> &success, jsi::Function error);

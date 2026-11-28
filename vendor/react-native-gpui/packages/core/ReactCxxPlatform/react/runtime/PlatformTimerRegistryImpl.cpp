@@ -10,6 +10,7 @@
 #include <glog/logging.h>
 #include <algorithm>
 #include <chrono>
+#include <string>
 
 namespace facebook::react {
 
@@ -41,6 +42,39 @@ uint64_t PlatformTimerRegistryImpl::pendingDueWithin(uint64_t windowMs) noexcept
     }
   }
   return count;
+}
+
+uint64_t PlatformTimerRegistryImpl::pendingDump(
+    uint64_t windowMs,
+    char* buffer,
+    uint64_t capacity) noexcept {
+  const auto now = std::chrono::steady_clock::now();
+  const auto limit = now + std::chrono::milliseconds(windowMs);
+  std::string text;
+  std::lock_guard<std::mutex> registriesGuard(
+      PlatformTimerRegistryImpl::registriesMutex_);
+  for (auto* registry : PlatformTimerRegistryImpl::registries_) {
+    std::lock_guard<std::mutex> timersGuard(registry->timersMutex_);
+    for (const auto& [id, timer] : registry->timers_) {
+      if (timer.isRecurring || timer.due > limit) continue;
+      const auto remaining =
+          std::chrono::duration_cast<std::chrono::milliseconds>(timer.due - now)
+              .count();
+      text += "timer " + std::to_string(id) + ": set for " +
+          std::to_string(static_cast<long>(timer.durationMs)) + " ms, due in " +
+          std::to_string(static_cast<long>(remaining)) + " ms\n";
+    }
+  }
+  const uint64_t length = std::min<uint64_t>(text.size(), capacity);
+  std::copy_n(text.data(), length, buffer);
+  return length;
+}
+
+extern "C" uint64_t rn_gpui_pending_timers_dump(
+    uint64_t windowMs,
+    char* buffer,
+    uint64_t capacity) noexcept {
+  return PlatformTimerRegistryImpl::pendingDump(windowMs, buffer, capacity);
 }
 
 extern "C" uint64_t rn_gpui_pending_timers_due_within(

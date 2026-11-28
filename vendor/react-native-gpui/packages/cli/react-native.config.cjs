@@ -1,11 +1,29 @@
+const { doctor, reactNativeHealthChecks } = require('./src/doctor.cjs');
+
 module.exports = {
+  healthChecks: reactNativeHealthChecks(),
   commands: [
     {
-      name: 'run-desktop',
+      name: 'doctor-desktop',
       description:
-        'Run the GPUI desktop target with Metro or as a release build',
+        'Check that the tools needed to build a desktop app are installed',
+      func: async () => {
+        process.exitCode = doctor();
+      },
+      examples: [
+        {
+          desc: 'Check this machine',
+          cmd: 'npx react-native doctor-desktop',
+        },
+      ],
+    },
+    {
+      name: 'run-desktop',
+      description: 'Run the desktop app with Metro or as a release build',
       func: async (_argv, _config, options) => {
         const { runDesktop } = await import('./src/commands.js');
+        if (options.renderer) process.env.RN_GPUI_RENDERER = options.renderer;
+        if (options.jsThread) process.env.RN_GPUI_JS_THREAD = options.jsThread;
         await runDesktop({
           projectRoot: options.projectRoot,
           entryFile: options.entryFile,
@@ -16,6 +34,7 @@ module.exports = {
           host: options.host,
           features: options.features,
           noLaunch: options.noLaunch === true || options.launch === false,
+          signIdentity: options.signIdentity,
           packager: options.packager !== false && options.noPackager !== true,
           packagerLog: options.packagerLog === true,
           terminal: options.terminal,
@@ -43,7 +62,13 @@ module.exports = {
         },
         {
           name: '--no-launch',
-          description: 'Build the desktop app without launching it',
+          description:
+            'Build the desktop app without launching it. With the test-driver feature it also writes the JavaScript bundle the test driver loads',
+        },
+        {
+          name: '--sign-identity <identity>',
+          description:
+            'macOS code signing identity for the built binary (default: $APPLE_SIGNING_IDENTITY). Applies to --no-launch builds too',
         },
         {
           name: '--no-packager',
@@ -59,6 +84,16 @@ module.exports = {
           description:
             'Run Metro in the background, logging to desktop/build/metro.log',
         },
+        {
+          name: '--renderer <renderer>',
+          description:
+            'fabric or loom, overriding "renderer" in desktop/desktop.json. loom builds the native runtime from source',
+        },
+        {
+          name: '--js-thread <thread>',
+          description:
+            'background or main, overriding "jsThread" in desktop/desktop.json. Only with the loom renderer. Rebuilds the Rust part of the runtime',
+        },
       ],
       examples: [
         {
@@ -68,6 +103,10 @@ module.exports = {
         {
           desc: 'Build a bundled release',
           cmd: 'npx react-native run-desktop --release',
+        },
+        {
+          desc: 'Run with the Loom renderer and JavaScript on the main thread',
+          cmd: 'npx react-native run-desktop --renderer loom --js-thread main',
         },
       ],
     },
@@ -108,7 +147,7 @@ module.exports = {
     },
     {
       name: 'init-desktop',
-      description: 'Add GPUI desktop support to an existing React Native app',
+      description: 'Add desktop support to an existing React Native app',
       func: async (_argv, _config, options) => {
         const { initDesktop } = await import('./src/commands.js');
         initDesktop({
@@ -135,7 +174,7 @@ module.exports = {
     },
     {
       name: 'create-library <name>',
-      description: 'Create a GPUI TurboModule library in a new directory',
+      description: 'Create a desktop TurboModule library in a new directory',
       func: async (argv, _config, options) => {
         const { createLibrary } = await import('./src/commands.js');
         createLibrary({

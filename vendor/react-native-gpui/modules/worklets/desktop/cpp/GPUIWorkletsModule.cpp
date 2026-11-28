@@ -176,6 +176,11 @@ void Module::requestAnimationFrame(std::function<void(double)> callback) {
   rngpui::requestFrames("worklets", true);
 }
 
+void Module::setAfterFrame(std::function<void()> afterFrame) {
+  std::lock_guard<std::mutex> lock(callbacksMutex_);
+  afterFrame_ = std::move(afterFrame);
+}
+
 void Module::onFrame(double timestampMs) {
   const auto count = ++workletFrames;
   if (animationTracingEnabled()) {
@@ -279,6 +284,18 @@ void Module::onFrame(double timestampMs) {
   for (auto& callback : callbacks) {
     try {
       callback(timestampMs);
+    } catch (const facebook::jsi::JSError& error) {
+      reportError(error);
+    }
+  }
+  std::function<void()> afterFrame;
+  {
+    std::lock_guard<std::mutex> lock(callbacksMutex_);
+    afterFrame = afterFrame_;
+  }
+  if (afterFrame) {
+    try {
+      afterFrame();
     } catch (const facebook::jsi::JSError& error) {
       reportError(error);
     }

@@ -79,6 +79,23 @@ GPUI waiting for a display. Use Namespace's `devbox desktop` commands before
 launching the app. Keep Cargo's generated debug-symbol symlink intact when
 rebuilding; the packager copies its contents alongside the installer.
 
+## Rules for working on this target
+
+iOS, Android, web, and macOS all run from the same app code. This target does too.
+
+- **Change the app as little as possible.** Add what GPUI needs in GPUI-specific
+  code. Do not edit shared app code to make GPUI work.
+- **Select GPUI code with a GPUI-specific Metro rule.** A GPUI file sits next to
+  the `.native` and `.web` files it stands in for, and only this target resolves
+  it. The rule is not built yet. Until it is, `desktop/metro.config.js` maps
+  files into `adapters/`.
+- **Fill the branches where it matters.** A piece the app needs and GPUI lacks,
+  such as markdown, selection in the chat, or diffs, gets a GPUI implementation
+  behind the interface the app already uses.
+- **Fix the renderer, not the React code.** When something looks or behaves
+  wrong only on GPUI, such as the tab track, the same React code is correct on
+  every other platform. The defect is in `vendor/react-native-gpui`; fix it there.
+
 ## Approach and renderer choice
 
 ```text

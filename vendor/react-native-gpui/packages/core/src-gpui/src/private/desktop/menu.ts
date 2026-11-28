@@ -25,9 +25,13 @@ export type MenuRoleAction =
   | 'cut'
   | 'copy'
   | 'paste'
+  | 'pasteWithoutFormatting'
   | 'selectAll'
   | 'minimize'
   | 'zoom'
+  | 'zoomIn'
+  | 'zoomOut'
+  | 'resetZoom'
   | 'toggleFullscreen'
   | 'close'
   | 'quit'
@@ -48,9 +52,13 @@ export type MenuRole =
   | 'cut'
   | 'copy'
   | 'paste'
+  | 'pasteWithoutFormatting'
   | 'selectAll'
   | 'minimize'
   | 'zoom'
+  | 'zoomIn'
+  | 'zoomOut'
+  | 'resetZoom'
   | 'toggleFullscreen'
   | 'close'
   | 'help'
@@ -76,6 +84,11 @@ export type MenuItemSpec =
       checked?: boolean;
       role?: MenuRole;
       icon?: DesktopIcon;
+      /**
+       * Runs when the item is chosen, in the menu that was opened from this
+       * array. The menu's own result, the item's `id`, is reported as well.
+       */
+      onPress?: () => void;
     }
   | {
       type: 'submenu';
@@ -129,6 +142,9 @@ export function nativeMenuItems(items: MenuItemSpec[]): Object[] {
       return item;
     }
     const { icon, ...rest } = item;
+    if ('onPress' in rest) {
+      delete rest.onPress;
+    }
     const uri = iconUri(icon);
     const native: { [key: string]: unknown } = uri
       ? { ...rest, icon: uri }
@@ -140,14 +156,110 @@ export function nativeMenuItems(items: MenuItemSpec[]): Object[] {
   });
 }
 
+/** The `onPress` handlers of the items of a menu, by item id. */
+export type MenuHandlers = Map<string, () => void>;
+
+/**
+ * Collects the `onPress` handlers of a menu tree by item id, and returns the
+ * tree without them, which is what the native and custom menus take.
+ */
+export function collectMenuHandlers(
+  items: MenuItemSpec[],
+  handlers: MenuHandlers = new Map(),
+): { items: MenuItemSpec[]; handlers: MenuHandlers } {
+  const stripped = items.map((item): MenuItemSpec => {
+    if (item.type === 'separator' || item.type === 'role') {
+      return item;
+    }
+    if (item.type === 'submenu') {
+      return {
+        ...item,
+        items: collectMenuHandlers(item.items, handlers).items,
+      };
+    }
+    const { onPress, ...rest } = item;
+    if (onPress) {
+      handlers.set(item.id, onPress);
+    }
+    return rest;
+  });
+  return { items: stripped, handlers };
+}
+
+let applicationMenuHandlers: MenuHandlers = new Map();
+let dockMenuHandlers: MenuHandlers = new Map();
+let applicationMenuListening = false;
+
+function listenForMenuPresses() {
+  if (applicationMenuListening) {
+    return;
+  }
+  applicationMenuListening = true;
+  DeviceEventEmitter.addListener(MENU_PRESS, payload => {
+    const id = (payload as MenuPressEvent | undefined)?.id;
+    if (id != null) {
+      (applicationMenuHandlers.get(id) ?? dockMenuHandlers.get(id))?.();
+    }
+  });
+}
+
+/** Makes `items`' handlers the ones a press of the application menu runs. */
+export function setApplicationMenuHandlers(items: MenuItemSpec[] | null) {
+  applicationMenuHandlers = items
+    ? collectMenuHandlers(items).handlers
+    : new Map();
+  listenForMenuPresses();
+}
+
+/** Hearers of `Menu.setMenuBarVisible` for the main window. */
+const menuBarVisibility = new Set<(visible: boolean) => void>();
+
+/**
+ * Whether the main window's in-window menu bar is shown, following
+ * `Menu.setMenuBarVisible` and the `window.menuBar` setting.
+ */
+export function useMenuBarVisible(): boolean {
+  const [visible, setVisible] = React.useState(true);
+  React.useEffect(() => {
+    let alive = true;
+    Menu.get().then(
+      description => {
+        if (alive) setVisible(description.menuBarVisible);
+      },
+      () => {},
+    );
+    menuBarVisibility.add(setVisible);
+    return () => {
+      alive = false;
+      menuBarVisibility.delete(setVisible);
+    };
+  }, []);
+  return visible;
+}
+
 export const Menu = {
   /**
    * Replace the application menu. `null` restores the default menu (app menu,
    * Edit, Window, Help).
    */
   setApplicationMenu(items: MenuItemSpec[] | null): Promise<void> {
+    setApplicationMenuHandlers(items);
     return request(native =>
       native.menuSetApplicationMenu(items ? nativeMenuItems(items) : null),
+    );
+  },
+
+  /**
+   * Sets the menu of the Dock icon, shown above the system's own items when the
+   * icon is right-clicked. macOS only; elsewhere it does nothing. `null` removes
+   * it. An item's `onPress` runs when it is chosen, and the press is reported to
+   * `addListener('press')` like the application menu's.
+   */
+  setDockMenu(items: MenuItemSpec[] | null): Promise<void> {
+    dockMenuHandlers = items ? collectMenuHandlers(items).handlers : new Map();
+    listenForMenuPresses();
+    return request(native =>
+      native.menuSetDockMenu(items ? nativeMenuItems(items) : null),
     );
   },
 
@@ -178,7 +290,41 @@ export const Menu = {
   },
 
   setMenuBarVisible(visible: boolean, windowId?: number): Promise<void> {
-    return request(native => native.menuSetMenuBarVisible(visible, windowId));
+    return request(native =>
+      native.menuSetMenuBarVisible(visible, windowId),
+    ).then(() => {
+      if (windowId == null) {
+        menuBarVisibility.forEach(listener => listener(visible));
+      }
+    });
+  },
+
+  /**
+   * Draws the in-window menu bar over a room your layout keeps for it, in
+   * window coordinates, in place of the strip at the top of the window.
+   * `TitleBar` does this for you. A no-op where the bar is the system's.
+   */
+  setMenuBarSlot(
+    slot: { x: number; y: number; width: number; height: number },
+    colors: { foreground: number; hover: number },
+    windowId?: number,
+  ): Promise<void> {
+    return request(native =>
+      native.menuSetMenuBarSlot(
+        slot.x,
+        slot.y,
+        slot.width,
+        slot.height,
+        colors.foreground,
+        colors.hover,
+        windowId,
+      ),
+    );
+  },
+
+  /** Gives the menu bar its own strip at the top of the window again. */
+  clearMenuBarSlot(windowId?: number): Promise<void> {
+    return request(native => native.menuClearMenuBarSlot(windowId));
   },
 
   addListener(
@@ -244,6 +390,7 @@ export function ApplicationMenu({ items, onPress }: ApplicationMenuProps) {
     const patches =
       previous != null && items != null ? diffItems(previous, items) : null;
     if (patches) {
+      setApplicationMenuHandlers(items);
       // A rejected menu call would otherwise be an unhandled rejection with
       // nothing to show for it: the menu simply would not match the props. Log it
       // and carry on, the same way `ContextMenuView` does.

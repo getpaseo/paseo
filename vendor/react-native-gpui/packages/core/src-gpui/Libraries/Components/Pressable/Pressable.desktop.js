@@ -9,16 +9,28 @@ const Pressable = forwardRef(function DesktopPressable(
 ) {
   const [pointerInside, setPointerInside] = useState(false);
   const hovered = pointerInside && !disabled;
-  const handleHoverIn = useCallback(event => {
-    setPointerInside(true);
-    onHoverIn?.(event);
-  }, [onHoverIn]);
-  const handleHoverOut = useCallback(event => {
-    setPointerInside(false);
-    onHoverOut?.(event);
-  }, [onHoverOut]);
-  const renderStyle = useCallback(state => style({ ...state, hovered }), [style, hovered]);
-  const renderChildren = useCallback(state => children({ ...state, hovered }), [children, hovered]);
+  const handleHoverIn = useCallback(
+    event => {
+      setPointerInside(true);
+      onHoverIn?.(event);
+    },
+    [onHoverIn],
+  );
+  const handleHoverOut = useCallback(
+    event => {
+      setPointerInside(false);
+      onHoverOut?.(event);
+    },
+    [onHoverOut],
+  );
+  const renderStyle = useCallback(
+    state => style({ ...state, hovered }),
+    [style, hovered],
+  );
+  const renderChildren = useCallback(
+    state => children({ ...state, hovered }),
+    [children, hovered],
+  );
   return (
     <NativePressable
       {...props}

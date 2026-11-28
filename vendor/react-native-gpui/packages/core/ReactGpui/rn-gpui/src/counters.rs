@@ -16,6 +16,23 @@ pub(crate) enum Counter {
     HostUpdateCalls,
     /// Reports the store's delivery point applied.
     HostReportsDelivered,
+    /// Operations applied to native trees.
+    NativeOpsApplied,
+    /// Microseconds spent applying them.
+    NativeApplyMicros,
+    /// Microseconds spent building native tree elements.
+    NativeRenderMicros,
+    /// Native components made by their `create`.
+    NativeInstancesCreated,
+    /// Native components taken from the pool of removed ones instead.
+    NativeInstancesRecycled,
+    /// Times a window held its last frame for new native roots to settle.
+    NativeRootHolds,
+    /// Microseconds the windows spent holding their last frame.
+    NativeRootHeldMicros,
+    /// New native roots that did not hold the window: it was scrolling, or had
+    /// held for too long lately.
+    NativeRootHoldsSkipped,
 }
 
 #[cfg(feature = "test-driver")]
@@ -23,14 +40,8 @@ mod enabled {
     use super::Counter;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    const COUNT: usize = 5;
-    static VALUES: [AtomicU64; COUNT] = [
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-    ];
+    const COUNT: usize = 16;
+    static VALUES: [AtomicU64; COUNT] = [const { AtomicU64::new(0) }; COUNT];
 
     pub(crate) fn add(counter: Counter, amount: u64) {
         VALUES[counter as usize].fetch_add(amount, Ordering::Relaxed);

@@ -1,18 +1,37 @@
 {
   "name": "@react-native-gpui/cli",
-  "version": "0.1.0",
-  "description": "React Native CLI integration and project scaffolding for the GPUI desktop platform.",
+  "version": "0.87.0-alpha.5",
+  "description": "React Native CLI integration and project scaffolding for the React Native desktop platform.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/streetwriters/react-native-gpui.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://streetwriters.github.io/react-native-gpui/",
+  "bugs": {
+    "url": "https://github.com/streetwriters/react-native-gpui/issues"
+  },
   "files": [
     "bin",
     "src",
     "templates",
     "assets",
     "react-native.config.cjs",
-    "desktop.schema.json"
+    "desktop.schema.json",
+    "CHANGELOG.md",
+    "!**/*.test.js",
+    "!**/*.test.mjs",
+    "!**/*.test.ts",
+    "!**/*.test.cjs"
   ],
   "bin": {
-    "react-native-gpui": "./bin/react-native-gpui.js"
+    "react-native-gpui": "bin/react-native-gpui.js"
   },
   "type": "module",
-  "dependencies": {}
+  "dependencies": {},
+  "publishConfig": {
+    "access": "public",
+    "tag": "latest"
+  }
 }

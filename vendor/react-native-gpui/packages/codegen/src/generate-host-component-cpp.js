@@ -177,6 +177,7 @@ class ComponentCpp {
       });
     }
     for (const declared of generator.enums) {
+      if (declared.eventEnum) continue;
       const type = `rr::${this.enumCppName(declared)}`;
       this.push(`static_assert(sizeof(${type}) == sizeof(int32_t));`);
       for (const member of declared.members) {
@@ -421,7 +422,7 @@ class ComponentCpp {
   flatten(declared, valueExpression, prefix, params, statements) {
     for (const field of declared.fields) {
       const argument = cppVar(
-        prefix === '' ? field.name : `${prefix}_${field.name}`,
+        prefix === '' ? `p_${field.name}` : `${prefix}_${field.name}`,
       );
       const target = `${valueExpression}.${field.jsName}`;
       switch (field.shape.kind) {
@@ -495,12 +496,12 @@ class ComponentCpp {
       }
       const params = [];
       const statements = [];
-      this.flatten(event.payload, 'value', '', params, statements);
+      this.flatten(event.payload, 'rn_payload', '', params, statements);
       this.push(
         `void ${shim}(${['const void* emitter', ...params].join(', ')}) {`,
-        `  ${this.emitterType}::${event.payload.name} value{};`,
+        `  ${this.emitterType}::${event.payload.name} rn_payload{};`,
         ...statements.map(statement => `  ${statement}`),
-        `  rngpui::hostEmitter<${this.emitterType}>(emitter).${event.jsName}(std::move(value));`,
+        `  rngpui::hostEmitter<${this.emitterType}>(emitter).${event.jsName}(std::move(rn_payload));`,
         '}',
         '',
       );

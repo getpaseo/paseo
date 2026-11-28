@@ -5,7 +5,12 @@
 // Usage:
 //   node scripts/build-prebuilt.mjs --version <v> --out <dir> \
 //     [--bridge <cxxbridge-include> --rncore <generated-rncore-dir>] \
-//     [--build-dir <dir>] [--native-deps <dir>] [--skip-build] [--jobs <n>]
+//     [--build-dir <dir>] [--native-deps <dir>] [--skip-build] [--jobs <n>] \
+//     [--renderer fabric|loom --react-native-dir <materialized Loom tree>]
+//
+// --renderer loom builds the runtime against the Loom React Native tree that
+// `renderer.js tree <app>` materializes (--react-native-dir) and names its
+// archive prebuilt-binaries-loom-<platform>.tar.gz.
 //
 // --bridge and --rncore are optional. When omitted, the cxxbridge headers and
 // FBReactNativeSpec sources are generated (scripts/generate-prebuilt-inputs.mjs),
@@ -48,13 +53,23 @@ const cppDir = path.join(packageDir, 'ReactGpui', 'rn-gpui-sys', 'cpp');
 const reactNativeRoot =
   findNodeModule(packageDir, 'react-native') ??
   path.join(repoRoot, 'node_modules', 'react-native');
-const reactCommonDir = path.join(reactNativeRoot, 'ReactCommon');
 const reactCxxPlatformDir = path.join(packageDir, 'ReactCxxPlatform');
 const overridesDir = path.join(packageDir, 'ReactCommonOverrides');
 const reactNativePkg = path.join(reactNativeRoot, 'package.json');
 const cargoLock = path.join(packageDir, 'ReactGpui', 'Cargo.lock');
 
 const args = parseArgs(process.argv.slice(2));
+const renderer = args.renderer ?? 'fabric';
+if (!['fabric', 'loom'].includes(renderer))
+  fail(`unknown renderer ${renderer}`);
+const loom = renderer === 'loom';
+const loomTreeDir = loom
+  ? path.resolve(
+      args['react-native-dir'] ??
+        fail('--react-native-dir is required with loom'),
+    )
+  : null;
+const reactCommonDir = path.join(loomTreeDir ?? reactNativeRoot, 'ReactCommon');
 const version = args.version;
 const outDir = path.resolve(args.out ?? fail('--out is required'));
 // Without --bridge/--rncore the generated inputs are produced into the build
@@ -79,8 +94,9 @@ const jobs =
 if (!version) fail('--version is required');
 
 const platform = hostPlatform();
-const platformDir = path.join(outDir, platform);
-const archiveName = `prebuilt-binaries-${platform}.tar.gz`;
+const platformName = loom ? `loom-${platform}` : platform;
+const platformDir = path.join(outDir, platformName);
+const archiveName = `prebuilt-binaries-${platformName}.tar.gz`;
 const started = Date.now();
 
 function parseArgs(argv) {
@@ -321,7 +337,14 @@ if (!bridgeDir || !rncoreDir) {
   const generated = spawnSync(
     process.execPath,
     [path.join(scriptDir, 'generate-prebuilt-inputs.mjs'), generatedDir],
-    { stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' },
+    {
+      stdio: ['ignore', 'pipe', 'inherit'],
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        ...(loom ? { RN_GPUI_REACT_NATIVE_DIR: loomTreeDir } : {}),
+      },
+    },
   );
   if (generated.status !== 0)
     fail('generating cxxbridge/FBReactNativeSpec failed');
@@ -373,6 +396,12 @@ if (!args['skip-build']) {
     `-DRN_GPUI_OVERRIDES_DIR=${cmakePath(overridesDir)}`,
     `-DRN_GPUI_CXXBRIDGE_INCLUDE_DIR=${cmakePath(bridgeDir)}`,
     `-DRN_GPUI_GENERATED_RNCORE_DIR=${cmakePath(rncoreDir)}`,
+    ...(loom
+      ? [
+          `-DLOOM_RENDERER=1`,
+          `-DRN_GPUI_REACT_NATIVE_DIR=${cmakePath(loomTreeDir)}`,
+        ]
+      : []),
   ]);
   run('cmake', [
     '--build',
@@ -399,19 +428,21 @@ run('cmake', [
 
 // Native-deps archives the build downloaded (DownloadNativeDeps.cmake), with
 // their sha256, so consumers and CI can see exactly which sources a build used.
+// The downloads live in a cache shared with other builds, so the list comes from
+// the `name sha256` lines CMake writes for the archives it pinned and verified.
 function nativeDepsArchives(dir) {
-  const downloads = path.join(dir, 'native-deps', 'downloads');
-  if (!existsSync(downloads)) return [];
-  return readdirSync(downloads)
-    .filter(name => !name.endsWith('.part'))
-    .sort()
-    .map(name => ({
-      name,
-      sha256: sha256File(path.join(downloads, name)),
-    }));
+  const list = path.join(dir, 'native-deps', 'archives.txt');
+  if (!existsSync(list)) return [];
+  return readFileSync(list, 'utf8')
+    .split('\n')
+    .filter(line => line.trim())
+    .map(line => {
+      const [name, sha256] = line.trim().split(' ');
+      return { name, sha256 };
+    });
 }
 
-const inputs = inputHash();
+const inputs = inputHash(renderer);
 const files = {};
 for (const rel of listFiles(platformDir)) {
   if (rel === 'manifest.json') continue;
@@ -420,6 +451,17 @@ for (const rel of listFiles(platformDir)) {
 const manifest = {
   formatVersion: 1,
   version,
+  renderer,
+  ...(loom
+    ? {
+        loom: JSON.parse(
+          readFileSync(
+            path.join(packageDir, 'ReactGpui', 'loom-pin.json'),
+            'utf8',
+          ),
+        ).commit,
+      }
+    : {}),
   inputHash: inputs.hash,
   sourceCommit: spawnSync('git', ['rev-parse', 'HEAD'], {
     cwd: repoRoot,
@@ -440,7 +482,7 @@ const manifest = {
   cxxBridgeHeaderSha256: sha256File(
     path.join(bridgeDir, 'rn-gpui-sys', 'src', 'lib.rs.h'),
   ),
-  overridesSha256: overridesSha256(),
+  overridesSha256: overridesSha256(renderer),
   // Read by the consumer: the archive is Release, so its ReactCommon headers
   // select the production ABI. No engine define belongs here; the engine glue
   // is compiled by the app instead (see RN_GPUI_JS_ENGINE_* in cpp/CMakeLists.txt).
@@ -463,7 +505,7 @@ writeFileSync(
 
 const archivePath = path.join(outDir, archiveName);
 rmSync(archivePath, { force: true });
-run(tarCommand(), ['-czf', archivePath, '-C', outDir, platform]);
+run(tarCommand(), ['-czf', archivePath, '-C', outDir, platformName]);
 writeFileSync(
   `${archivePath}.sha256`,
   `${sha256File(archivePath)}  ${archiveName}\n`,
@@ -507,7 +549,7 @@ if (process.platform === 'win32') {
   if (pdbCount === 0) {
     fail(`no PDB files were produced under ${buildDir}`);
   }
-  const pdbArchiveName = `prebuilt-binaries-${platform}-pdb.tar.gz`;
+  const pdbArchiveName = `prebuilt-binaries-${platformName}-pdb.tar.gz`;
   const pdbArchivePath = path.join(outDir, pdbArchiveName);
   rmSync(pdbArchivePath, { force: true });
   run(tarCommand(), ['-czf', pdbArchivePath, '-C', pdbDir, '.']);

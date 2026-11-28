@@ -132,6 +132,58 @@ fn smoke_arm_first_frame(cx: &mut gpui::AsyncApp, window: gpui::AnyWindowHandle)
     }
 }
 
+/// Traces the frame GPUI draws after a mount batch, the first one that shows
+/// it: `on_next_frame` callbacks run before that draw, so the callback re-arms
+/// once.
+fn trace_next_content_frame(cx: &mut gpui::AsyncApp, window: gpui::AnyWindowHandle) {
+    if std::env::var_os("RN_GPUI_STARTUP_TRACE").is_none() {
+        return;
+    }
+    let _ = cx.update_window(
+        window,
+        |_root: gpui::AnyView, window: &mut gpui::Window, _cx: &mut gpui::App| {
+            window.on_next_frame(|window, _cx| {
+                window.on_next_frame(|_window, _cx| startup_trace("content frame presented"));
+            });
+        },
+    );
+}
+
+/// Whether `RN_GPUI_MOUNT_TRACE` is set: every app-surface mount batch then logs
+/// when it was applied and when the frame that shows it was presented, and the
+/// test driver logs when it dispatches a click or keystroke, as wall-clock epoch
+/// milliseconds that line up with JS `Date.now()`.
+pub(crate) fn mount_trace_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("RN_GPUI_MOUNT_TRACE").is_some())
+}
+
+pub(crate) fn epoch_ms() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |elapsed| elapsed.as_secs_f64() * 1000.0)
+}
+
+/// Logs the frame drawn after a mount batch. `on_next_frame` callbacks run just
+/// before that frame's draw and present, on the main thread, so a task spawned
+/// from the callback runs once both are done.
+fn trace_mount_presented(cx: &mut gpui::AsyncApp, window: gpui::AnyWindowHandle, batch: u64) {
+    let _ = cx.update_window(
+        window,
+        move |_root: gpui::AnyView, window: &mut gpui::Window, _cx: &mut gpui::App| {
+            window.on_next_frame(move |_window, cx| {
+                cx.spawn(async move |_| {
+                    eprintln!(
+                        "[mount-trace] presented batch={batch} epoch_ms={:.3}",
+                        epoch_ms()
+                    );
+                })
+                .detach();
+            });
+        },
+    );
+}
+
 /// Milliseconds since the process started, measured once.
 ///
 /// A wall-clock delta from `main` would miss dyld and the C++ static
@@ -318,24 +370,8 @@ fn window_state_path(app_id: &str) -> std::path::PathBuf {
     if let Some(path) = std::env::var_os("RN_GPUI_WINDOW_STATE") {
         return path.into();
     }
-    let safe_id = app_id.replace(
-        |c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_',
-        "_",
-    );
-    #[cfg(target_os = "macos")]
-    let base = std::env::var_os("HOME")
-        .map(|home| std::path::PathBuf::from(home).join("Library/Application Support"));
-    #[cfg(target_os = "windows")]
-    let base = std::env::var_os("APPDATA").map(std::path::PathBuf::from);
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".config"))
-        });
-    base.unwrap_or_else(std::env::temp_dir)
-        .join("rn-gpui")
-        .join(format!("{safe_id}-window.json"))
+    let safe_id = crate::desktop::app_dir::safe_id(app_id);
+    crate::desktop::app_dir::app_dir().join(format!("{safe_id}-window.json"))
 }
 
 fn load_window_bounds(path: &std::path::Path) -> Option<(f32, f32, f32, f32)> {
@@ -386,6 +422,17 @@ fn save_window_bounds(
             "could not save window bounds to {}: {error}",
             path.display()
         );
+    }
+}
+
+static DESKTOP_DEFAULTS: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+
+/// Records the app's `desktop.json`, as the generated autolink crate passes it
+/// on, so the window options in it reach the app without `main.rs` repeating
+/// them. Anything `main.rs` sets on the config afterwards wins.
+pub fn set_desktop_defaults(json: &str) {
+    if let Ok(value) = serde_json::from_str(json) {
+        let _ = DESKTOP_DEFAULTS.set(value);
     }
 }
 
@@ -512,6 +559,17 @@ pub(crate) enum MainEvent {
     },
     AccessibilityFocus(i32),
     TextInputClear(i32),
+    WheelDone {
+        id: u64,
+        prevented: bool,
+    },
+    ScrollerStyleChanged,
+    BuiltinCommand {
+        tag: i32,
+        component: String,
+        name: String,
+        args: serde_json::Value,
+    },
     /// A command Fabric sent to a host component: its index in the spec's
     /// `COMMANDS` and its arguments, already validated by the generated C++
     /// dispatcher.
@@ -519,6 +577,10 @@ pub(crate) enum MainEvent {
         tag: i32,
         command: u32,
         args: Vec<crate::host_component::HostArg>,
+    },
+    NativeRootOps {
+        root: u32,
+        payload: String,
     },
     DevMenuShow,
     DevSetting {
@@ -534,6 +596,9 @@ pub(crate) enum MainEvent {
         button: u8,
     },
     TrayMenuPerform(String),
+    GlobalShortcut(u32),
+    GlobalShortcutNamed(String),
+    GlobalShortcutRefused(String, String),
     MenuBarPerform(String),
     /// One desktop-shell command, run with the app context the main loop holds.
     /// It answers through the channel it was built with, which may be later:
@@ -557,6 +622,10 @@ pub enum WindowTitleBar {
     /// No system title bar at all. GPUI only has "transparent" on macOS, so
     /// this is the same as [`WindowTitleBar::Transparent`] there.
     Hidden,
+    /// No system chrome at all. On macOS the window is borderless: no title bar,
+    /// border line or system corners, so the app draws every edge. Elsewhere this
+    /// is the same as [`WindowTitleBar::Hidden`].
+    Borderless,
 }
 
 impl WindowTitleBar {
@@ -569,6 +638,7 @@ impl WindowTitleBar {
         match name {
             "transparent" => Self::Transparent,
             "hidden" => Self::Hidden,
+            "none" => Self::Borderless,
             _ => Self::Default,
         }
     }
@@ -577,6 +647,41 @@ impl WindowTitleBar {
     /// drop its own chrome.
     pub fn is_custom(self) -> bool {
         !matches!(self, Self::Default)
+    }
+}
+
+/// What shows through a window where the app draws nothing opaque.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WindowBackground {
+    #[default]
+    Opaque,
+    /// Plain alpha transparency: the app's own colors decide how much shows.
+    Transparent,
+    /// Transparency with what is behind the window blurred.
+    Blurred,
+    /// The Windows 11 Mica material; elsewhere the window stays opaque.
+    Mica,
+}
+
+impl WindowBackground {
+    /// What a `desktop.json` value or a `background` prop names. An unknown name
+    /// keeps the window opaque, for the same reason as [`WindowTitleBar::from_name`].
+    pub fn from_name(name: &str) -> Self {
+        match name {
+            "transparent" => Self::Transparent,
+            "blurred" => Self::Blurred,
+            "mica" => Self::Mica,
+            _ => Self::Opaque,
+        }
+    }
+
+    pub fn appearance(self) -> gpui::WindowBackgroundAppearance {
+        match self {
+            Self::Opaque => gpui::WindowBackgroundAppearance::Opaque,
+            Self::Transparent => gpui::WindowBackgroundAppearance::Transparent,
+            Self::Blurred => gpui::WindowBackgroundAppearance::Blurred,
+            Self::Mica => gpui::WindowBackgroundAppearance::MicaBackdrop,
+        }
     }
 }
 
@@ -600,6 +705,10 @@ pub fn clamp_traffic_light_position(x: f32, y: f32, width: f32, height: f32) -> 
 /// Builds the GPUI view that is a GPUI-first app's main window content.
 type GpuiRootHook = Box<dyn FnOnce(&mut App, crate::runtime::ReactRuntime) -> gpui::AnyView>;
 
+/// Launching with this argument opens the main window without showing it; a tray
+/// click, the Dock icon or a second launch brings it up.
+pub const START_HIDDEN_ARGUMENT: &str = "--hidden";
+
 pub struct DesktopAppConfig {
     pub app_id: String,
     pub module: String,
@@ -611,16 +720,37 @@ pub struct DesktopAppConfig {
     pub title: Option<String>,
     pub position: Option<(f32, f32)>,
     pub restore_window_state: bool,
+    /// Whether the main window is shown when the app starts. Without it the
+    /// window is created, and its React tree mounts and commits, but nothing is
+    /// shown and no focus or activation is taken until the app shows it.
+    pub visible: bool,
     pub quit_on_last_window_closed: bool,
     pub title_bar: WindowTitleBar,
+    pub background: WindowBackground,
+    /// Whether macOS draws the traffic lights.
+    pub window_buttons: bool,
+    /// Whether the window has the system shadow.
+    pub shadow: bool,
     /// Whether the Dev Menu is available. `None` follows the build: on in a
     /// debug build, off in a release build.
     pub dev_menu: Option<bool>,
+    /// Whether the app runs with no Dock icon (macOS), which is also what lets a
+    /// window show over another app's full-screen Space.
+    pub accessory: bool,
     pub tray: Option<crate::desktop::tray::TrayConfig>,
     pub traffic_light_position: Option<(f32, f32)>,
+    /// URL schemes that open this app.
+    pub url_schemes: Vec<String>,
+    /// Whether a second launch hands its arguments to the running copy.
+    pub single_instance: bool,
     /// Whether the main window shows a menu bar. Windows and Linux only.
     pub menu_bar: bool,
+    /// Whether the caption buttons go on the left where the desktop does not say.
+    pub window_controls_left: bool,
+    /// Corner radius on Linux where the desktop's own cannot be measured.
+    pub corner_radius: Option<f32>,
     pub configure_window: Option<WindowOptionsHook>,
+    resizable: bool,
     pub on_app_ready: Option<AppReadyHook>,
 
     pub on_window_opened: Option<WindowOpenedHook>,
@@ -636,7 +766,7 @@ impl DesktopAppConfig {
     }
 
     pub fn from_env_with_defaults(module: &str, app_id: &str) -> Self {
-        Self {
+        let mut config = Self {
             app_id: env_string("RN_GPUI_APP_ID", app_id),
             module: env_string("RN_GPUI_MODULE", module),
             js_engine: String::new(),
@@ -645,16 +775,97 @@ impl DesktopAppConfig {
             title: None,
             position: None,
             restore_window_state: true,
+            visible: true,
             quit_on_last_window_closed: true,
             title_bar: WindowTitleBar::Default,
+            background: WindowBackground::Opaque,
+            window_buttons: true,
+            shadow: true,
             dev_menu: None,
+            accessory: false,
             tray: None,
             traffic_light_position: None,
+            url_schemes: Vec::new(),
+            single_instance: false,
             menu_bar: true,
+            window_controls_left: false,
+            corner_radius: None,
             configure_window: None,
+            resizable: true,
             on_app_ready: None,
             on_window_opened: None,
             gpui_root: None,
+        };
+        if let Some(defaults) = DESKTOP_DEFAULTS.get() {
+            config.apply_desktop_values(defaults);
+        }
+        config
+    }
+
+    /// The window options `desktop.json` gave the build, which the generated
+    /// autolink crate records. A builder call made after this one replaces them.
+    fn apply_desktop_values(&mut self, defaults: &serde_json::Value) {
+        let window = &defaults["window"];
+        let text = |key: &str| window.get(key).and_then(serde_json::Value::as_str);
+        let flag = |key: &str| window.get(key).and_then(serde_json::Value::as_bool);
+        let number = |value: &serde_json::Value| value.as_f64().map(|n| n as f32);
+        if let Some(title) = text("title") {
+            self.title = Some(title.to_string());
+        }
+        if std::env::var_os("RN_GPUI_WIDTH").is_none() {
+            if let Some(width) = number(&window["width"]) {
+                self.width = width.max(320.0);
+            }
+        }
+        if std::env::var_os("RN_GPUI_HEIGHT").is_none() {
+            if let Some(height) = number(&window["height"]) {
+                self.height = height.max(240.0);
+            }
+        }
+        if let (Some(x), Some(y)) = (
+            number(&window["position"]["x"]),
+            number(&window["position"]["y"]),
+        ) {
+            self.position = Some((x, y));
+        }
+        if let Some(restore) = flag("restoreState") {
+            self.restore_window_state = restore;
+        }
+        if let Some(visible) = flag("visible") {
+            self.visible = visible;
+        }
+        if let Some(resizable) = flag("resizable") {
+            self.resizable = resizable;
+        }
+        if let Some(name) = text("titleBar") {
+            self.title_bar = WindowTitleBar::from_name(name);
+        }
+        if let Some(name) = text("background") {
+            self.background = WindowBackground::from_name(name);
+        }
+        if let Some(show) = flag("windowButtons") {
+            self.window_buttons = show;
+        }
+        if let Some(shadow) = flag("shadow") {
+            self.shadow = shadow;
+        }
+        if let (Some(x), Some(y)) = (
+            number(&window["trafficLightPosition"]["x"]),
+            number(&window["trafficLightPosition"]["y"]),
+        ) {
+            self.traffic_light_position = Some((x, y));
+        }
+        if let Some(radius) = number(&window["cornerRadius"]) {
+            self.corner_radius = Some(radius);
+        }
+        if let Some(side) = text("windowControlsPosition") {
+            self.window_controls_left = side == "left";
+        }
+        if let Some(visible) = flag("menuBar") {
+            self.menu_bar = visible;
+        }
+        if let Some(accessory) = defaults["accessory"].as_bool() {
+            self.accessory = accessory;
         }
     }
 
@@ -667,6 +878,25 @@ impl DesktopAppConfig {
     #[must_use]
     pub fn tray(mut self, config: crate::desktop::tray::TrayConfig) -> Self {
         self.tray = Some(config);
+        self
+    }
+
+    #[must_use]
+    pub fn url_schemes(mut self, schemes: &[&str]) -> Self {
+        self.url_schemes = schemes.iter().map(|scheme| (*scheme).to_string()).collect();
+        self
+    }
+
+    #[must_use]
+    pub fn single_instance(mut self, enabled: bool) -> Self {
+        self.single_instance = enabled;
+        self
+    }
+
+    /// Runs the app with no Dock icon. macOS only.
+    #[must_use]
+    pub fn accessory(mut self, accessory: bool) -> Self {
+        self.accessory = accessory;
         self
     }
 
@@ -696,6 +926,12 @@ impl DesktopAppConfig {
     }
 
     #[must_use]
+    pub fn visible(mut self, visible: bool) -> Self {
+        self.visible = visible;
+        self
+    }
+
+    #[must_use]
     pub fn restore_window_state(mut self, restore: bool) -> Self {
         self.restore_window_state = restore;
         self
@@ -714,6 +950,26 @@ impl DesktopAppConfig {
     }
 
     #[must_use]
+    pub fn background(mut self, background: WindowBackground) -> Self {
+        self.background = background;
+        self
+    }
+
+    /// Whether macOS draws the traffic lights. Other systems ignore it.
+    #[must_use]
+    pub fn window_buttons(mut self, show: bool) -> Self {
+        self.window_buttons = show;
+        self
+    }
+
+    /// Whether the window has the system shadow. Only macOS draws one yet.
+    #[must_use]
+    pub fn shadow(mut self, shadow: bool) -> Self {
+        self.shadow = shadow;
+        self
+    }
+
+    #[must_use]
     pub fn traffic_light_position(mut self, x: f32, y: f32) -> Self {
         self.traffic_light_position = Some((x, y));
         self
@@ -723,6 +979,23 @@ impl DesktopAppConfig {
     ///
     /// Only Windows and Linux draw one inside the window; on macOS the bar is the
     /// system's, so this is ignored there.
+    /// The side of the title bar the caption buttons use on Linux when neither
+    /// the desktop's settings nor its theme say. `"left"` puts them there;
+    /// anything else keeps them on the right.
+    /// The corner radius, in points, of a client-decorated window on Linux when
+    /// the desktop's own frame cannot be measured.
+    #[must_use]
+    pub fn corner_radius(mut self, radius: f32) -> Self {
+        self.corner_radius = Some(radius);
+        self
+    }
+
+    #[must_use]
+    pub fn window_controls_position(mut self, side: &str) -> Self {
+        self.window_controls_left = side == "left";
+        self
+    }
+
     #[must_use]
     pub fn menu_bar(mut self, visible: bool) -> Self {
         self.menu_bar = visible;
@@ -792,6 +1065,13 @@ pub fn run() {
 }
 
 pub fn run_with(mut config: DesktopAppConfig) {
+    #[cfg(target_os = "linux")]
+    if std::env::args().nth(1).as_deref() == Some("--rn-gpui-probe-frame") {
+        crate::desktop::frame_probe::run_and_exit();
+    }
+    crate::desktop::window_frame::configure(config.corner_radius, config.shadow);
+    crate::desktop::window_frame::load(&config.app_id);
+
     #[cfg(not(feature = "test-driver"))]
     if std::env::var_os("RN_GPUI_TEST_DRIVER").is_some_and(|value| value != "0") {
         panic!("RN_GPUI_TEST_DRIVER is enabled, but this app was not built with --features test-driver");
@@ -817,8 +1097,43 @@ pub fn run_with(mut config: DesktopAppConfig) {
     let source_url = env_string("RN_GPUI_SOURCE_URL", "index");
     let app_id = config.app_id.clone();
     let js_engine = env_string("RN_GPUI_JS_ENGINE", &config.js_engine);
+    let js_thread = rn_gpui_sys::JS_THREAD;
     let dev_host = env_string("RN_GPUI_DEV_HOST", "localhost");
     let dev_port = env_u32("RN_GPUI_DEV_PORT", 8081);
+    let launch_args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(url) = crate::desktop::deep_link::url_in_args(&launch_args, &config.url_schemes) {
+        crate::desktop::deep_link::handle_url(url);
+    }
+    if config.single_instance {
+        let schemes = config.url_schemes.clone();
+        let instance = crate::desktop::deep_link::acquire(
+            &crate::desktop::app_dir::app_dir(),
+            &app_id,
+            &launch_args,
+            move |args| {
+                let url = crate::desktop::deep_link::url_in_args(&args, &schemes);
+                crate::desktop::post_to_main(Box::new(move |cx| {
+                    crate::desktop::deep_link::second_instance(&args);
+                    if std::env::var("RN_GPUI_TEST_OFFSCREEN").as_deref() != Ok("1") {
+                        let _ = crate::desktop::windows::show(
+                            cx,
+                            crate::desktop::windows::MAIN_WINDOW_KEY,
+                        );
+                    }
+                    let _ = crate::desktop::windows::focus(
+                        cx,
+                        crate::desktop::windows::MAIN_WINDOW_KEY,
+                    );
+                    if let Some(url) = url {
+                        crate::desktop::deep_link::handle_url(url);
+                    }
+                }));
+            },
+        );
+        if matches!(instance, crate::desktop::deep_link::Instance::Forwarded) {
+            std::process::exit(0);
+        }
+    }
     let module = config.module.clone();
     let width = config.width;
     let height = config.height;
@@ -933,6 +1248,13 @@ pub fn run_with(mut config: DesktopAppConfig) {
                 .collect(),
         });
     }));
+    let native_root_tx = tx.clone();
+    let _ = rn_gpui_sys::NATIVE_ROOT_OPS_HANDLER.set(Box::new(move |root, payload| {
+        let _ = native_root_tx.send_blocking(MainEvent::NativeRootOps {
+            root,
+            payload: payload.to_string(),
+        });
+    }));
     let accessibility_focus_tx = tx.clone();
     let _ = rn_gpui_sys::ACCESSIBILITY_FOCUS_HANDLER.set(Box::new(move |tag| {
         let _ = accessibility_focus_tx.send_blocking(MainEvent::AccessibilityFocus(tag));
@@ -941,6 +1263,44 @@ pub fn run_with(mut config: DesktopAppConfig) {
     let _ = rn_gpui_sys::TEXT_INPUT_CLEAR_HANDLER.set(Box::new(move |tag| {
         let _ = text_input_clear_tx.send_blocking(MainEvent::TextInputClear(tag));
     }));
+    let _ = rn_gpui_sys::SCROLLER_LEGACY_HANDLER.set(Box::new(crate::scroller_style::legacy));
+    let _ = rn_gpui_sys::HOST_MEASURE_HANDLER.set(Box::new(
+        |index, props, [min_w, min_h, max_w, max_h]| {
+            let constraint = crate::host_component::MeasureConstraint {
+                min_width: min_w,
+                min_height: min_h,
+                max_width: max_w,
+                max_height: max_h,
+            };
+            crate::host_component::measure_component(
+                index,
+                props as *const core::ffi::c_void,
+                &constraint,
+            )
+            .map(|size| (size.width, size.height))
+        },
+    ));
+    let scroller_style_tx = tx.clone();
+    crate::scroller_style::install(move || {
+        let _ = scroller_style_tx.send_blocking(MainEvent::ScrollerStyleChanged);
+    });
+    let wheel_done_tx = tx.clone();
+    let _ = rn_gpui_sys::WHEEL_DONE_HANDLER.set(Box::new(move |id, prevented| {
+        let _ = wheel_done_tx.send_blocking(MainEvent::WheelDone { id, prevented });
+    }));
+    let builtin_command_tx = tx.clone();
+    let _ =
+        rn_gpui_sys::BUILTIN_COMMAND_HANDLER.set(Box::new(move |tag, component, name, args| {
+            if crate::extensions::component_renderer(component).is_none() {
+                return;
+            }
+            let _ = builtin_command_tx.send_blocking(MainEvent::BuiltinCommand {
+                tag,
+                component: component.to_owned(),
+                name: name.to_owned(),
+                args: serde_json::from_str(args).unwrap_or(serde_json::Value::Null),
+            });
+        }));
     let desktop_tx = tx.clone();
     crate::desktop::set_command_sender(desktop_tx);
     let main_task_tx = tx.clone();
@@ -976,6 +1336,22 @@ pub fn run_with(mut config: DesktopAppConfig) {
             button,
         });
     }));
+    let global_shortcut_tx = tx.clone();
+    let _ = crate::desktop::global_shortcut::PRESS_HANDLER.set(Box::new(move |hotkey| {
+        let _ = global_shortcut_tx.send_blocking(MainEvent::GlobalShortcut(hotkey));
+    }));
+    #[cfg(target_os = "linux")]
+    {
+        let pressed_tx = tx.clone();
+        let _ = crate::desktop::portal_shortcuts::ACTIVATED_HANDLER.set(Box::new(move |id| {
+            let _ = pressed_tx.send_blocking(MainEvent::GlobalShortcutNamed(id));
+        }));
+        let refused_tx = tx.clone();
+        let _ =
+            crate::desktop::portal_shortcuts::FAILURE_HANDLER.set(Box::new(move |id, reason| {
+                let _ = refused_tx.send_blocking(MainEvent::GlobalShortcutRefused(id, reason));
+            }));
+    }
     let menu_bar_tx = tx.clone();
     let _ = rn_gpui_sys::MENU_BAR_PERFORM_HANDLER.set(Box::new(move |id| {
         let _ = menu_bar_tx.send_blocking(MainEvent::MenuBarPerform(id));
@@ -991,45 +1367,20 @@ pub fn run_with(mut config: DesktopAppConfig) {
     crate::desktop::module::register();
     crate::builtins::register();
 
-    #[cfg(feature = "visual-capture")]
-    let headless = env_bool("RN_GPUI_HEADLESS", false);
-    #[cfg(not(feature = "visual-capture"))]
-    let headless = false;
-    startup_trace(if headless {
-        "using GPUI headless platform"
-    } else {
-        "using GPUI AppKit platform"
-    });
-    let platform = gpui_platform::current_platform(headless);
-    startup_trace("platform created");
-    // A locked or absent session on macOS cannot launch AppKit, and the platform
-    // reports no display until it can. Nothing else does: on Linux GPUI starts on
-    // a placeholder connection and attaches X11 or Wayland once the app runs, so
-    // its display list is legitimately empty here — waiting for it never ends.
-    #[cfg(target_os = "macos")]
-    {
-        let mut waited_for_display = 0u64;
-        while platform.displays().is_empty() {
-            if waited_for_display == 0 {
-                log::warn!("no active display; waiting before entering AppKit launch");
-                startup_trace("waiting for an active display");
-            }
-            std::thread::sleep(Duration::from_secs(2));
-            waited_for_display += 2;
-            if waited_for_display % 30 == 0 {
-                log::warn!("still waiting for an active display ({waited_for_display}s)");
-            }
-        }
-    }
-    startup_trace("active display detected");
-    let application = Application::with_platform(platform);
+    // A headless test run starts on GPUI's test platform: no real platform,
+    // display or window server is asked for (see `headless.rs`).
+    #[cfg(feature = "test-driver")]
+    let test_headless = crate::headless::enabled();
+    #[cfg(not(feature = "test-driver"))]
+    let test_headless = false;
+    crate::desktop::test_scale::apply_to_environment();
+    let application = (!test_headless).then(platform_application);
     // Before any request can arrive: the C++ bridge reports completions through
     // this handler, and it is registered once.
     crate::http_client::install();
-    application.on_reopen(crate::desktop::windows::reopen);
-    application
-        .with_http_client(std::sync::Arc::new(crate::http_client::RnHttpClient::new()))
-        .run(move |cx: &mut App| {
+    // The real platform's application loop, or the headless test platform's
+    // (see `headless.rs`), runs the same launch.
+    let launch = move |cx: &mut App| {
         startup_trace("application run");
         crate::image_loader::install(cx);
         crate::desktop::icon::install(cx);
@@ -1041,10 +1392,10 @@ pub fn run_with(mut config: DesktopAppConfig) {
             crate::desktop::platform_window::set_dock_icon(std::path::Path::new(&icon));
         }
         // Has to happen before the first window opens.
-        if let Some(tray) = &config.tray {
-            if tray.accessory {
-                crate::desktop::platform_window::set_accessory_app(true);
-            }
+        if !test_headless
+            && (config.accessory || config.tray.as_ref().is_some_and(|tray| tray.accessory))
+        {
+            crate::desktop::platform_window::set_accessory_app(true);
         }
         if let Some(on_app_ready) = config.on_app_ready.take() {
             on_app_ready(cx);
@@ -1084,16 +1435,14 @@ pub fn run_with(mut config: DesktopAppConfig) {
         // The overlay slot (LogBox) has to be in the app root's element tree from the
         // first frame: GPUI only re-renders entities the window tracked while drawing.
         let overlay_host = cx.new(|_| OverlayHost::new());
-        let root_view = SurfaceRootView::new(APP_SURFACE_ID).with_overlay_host(overlay_host.clone());
+        let root_view =
+            SurfaceRootView::new(APP_SURFACE_ID).with_overlay_host(overlay_host.clone());
         #[cfg(all(target_os = "macos", feature = "visual-capture"))]
         let root_view = if env_bool("RN_GPUI_NATIVE_WEBVIEW_PROBE", false) {
-            root_view.with_native_view_probe(
-                crate::native_view_probe::create_webview_probe_entity(cx),
-            )
+            root_view
+                .with_native_view_probe(crate::native_view_probe::create_webview_probe_entity(cx))
         } else if env_bool("RN_GPUI_NATIVE_COMPOSITION_PROBE", false) {
-            root_view.with_native_view_probe(
-                crate::native_view_probe::create_probe_entity(cx),
-            )
+            root_view.with_native_view_probe(crate::native_view_probe::create_probe_entity(cx))
         } else {
             root_view
         };
@@ -1104,7 +1453,9 @@ pub fn run_with(mut config: DesktopAppConfig) {
             .flatten();
         startup_trace("window state loaded");
         let bounds = restored_bounds
-            .map(|(x, y, width, height)| Bounds::new(point(px(x), px(y)), size(px(width), px(height))))
+            .map(|(x, y, width, height)| {
+                Bounds::new(point(px(x), px(y)), size(px(width), px(height)))
+            })
             .unwrap_or_else(|| {
                 let size = size(px(width), px(height));
                 if let Some((x, y)) = config.position {
@@ -1113,13 +1464,25 @@ pub fn run_with(mut config: DesktopAppConfig) {
                     Bounds::centered(None, size, cx)
                 }
             });
-        #[cfg(feature = "test-driver")]
-        let bounds = if env_bool("RN_GPUI_TEST_OFFSCREEN", false) {
-            Bounds::new(point(px(-10000.0), px(-10000.0)), bounds.size)
-        } else { bounds };
-        let (width, height) = restored_bounds.map_or((width, height), |(_, _, width, height)| (width, height));
+        let test_display = crate::desktop::background::test_display(cx);
+        let bounds = if let Some(display) = &test_display {
+            Bounds::centered(Some(display.id()), bounds.size, cx)
+        } else {
+            #[cfg(feature = "test-driver")]
+            if env_bool("RN_GPUI_TEST_OFFSCREEN", false) {
+                Bounds::new(point(px(-10000.0), px(-10000.0)), bounds.size)
+            } else {
+                bounds
+            }
+            #[cfg(not(feature = "test-driver"))]
+            bounds
+        };
+        let (width, height) =
+            restored_bounds.map_or((width, height), |(_, _, width, height)| (width, height));
         if let Some((x, y, restored_width, restored_height)) = restored_bounds {
-            log::info!("restoring window at ({x:.0},{y:.0} {restored_width:.0}x{restored_height:.0})");
+            log::info!(
+                "restoring window at ({x:.0},{y:.0} {restored_width:.0}x{restored_height:.0})"
+            );
         }
         // Start React Native before the window exists.
         //
@@ -1133,30 +1496,71 @@ pub fn run_with(mut config: DesktopAppConfig) {
         // Retina default on macOS and 1.0 elsewhere. The surface is corrected
         // below if the window disagrees, so a wrong guess costs one resize, not a
         // wrong layout.
-        let estimated_scale = scale_override.unwrap_or(if cfg!(target_os = "macos") {
-            2.0
-        } else {
-            1.0
-        });
+        let estimated_scale =
+            scale_override.unwrap_or(if cfg!(target_os = "macos") { 2.0 } else { 1.0 });
         // A surface must not start at zero: `RN_GPUI_WIDTH=0` would otherwise
         // reach JS as a 0x0 viewport, and Fabric would lay out the whole tree in
         // no space at all. The window's own size is authoritative once it opens.
         let surface_width = width.max(320.0);
         let surface_height = height.max(240.0);
-        let host = Host::new(&app_id, &dev_host, dev_port, &js_engine, dev_mode());
+        let host = Host::new(
+            &app_id,
+            &dev_host,
+            dev_port,
+            &js_engine,
+            js_thread,
+            dev_mode(),
+        );
         startup_trace("host created");
         host.set_window_metrics(surface_width, surface_height, estimated_scale);
+        let screen = cx
+            .primary_display()
+            .map(|display| display.bounds().size)
+            .map(|size| (f32::from(size.width), f32::from(size.height)))
+            .unwrap_or((surface_width, surface_height));
+        host.set_display_metrics(
+            screen.0,
+            screen.1,
+            crate::desktop::display::system_font_scale(),
+        );
+        crate::desktop::memory_pressure::start(host.clone());
+        #[cfg(not(target_os = "macos"))]
+        crate::accessibility::install_announcer();
         startup_trace("bundle load start");
         if !host.load_script(&bundle, &source_url) {
             log::error!("load_script failed for {bundle}");
             std::process::exit(1);
         }
+        crate::desktop::deep_link::mark_ready(host.clone());
         startup_trace("bundle load end");
         log::info!("loaded {bundle}");
         // The surface starts now as well: mount batches queue on the main-thread
         // channel until the store and its window exist, which is the same path a
         // background surface already uses.
         let menu_bar_inset = crate::desktop::gpui_menu::menu_bar_inset();
+        // Before the window exists the compositor's answer is unknown; a custom
+        // title bar asks for client decorations, which is what gets the margin.
+        #[cfg(target_os = "linux")]
+        if crate::desktop::window_frame::wanted(
+            matches!(config.background, WindowBackground::Opaque),
+            config.shadow,
+            config.title_bar == WindowTitleBar::Borderless,
+        ) {
+            crate::desktop::window_frame::enroll(APP_SURFACE_ID);
+        }
+        let estimated_frame = if cfg!(target_os = "linux")
+            && (config.title_bar.is_custom() || crate::desktop::capabilities::is_wayland())
+        {
+            let extent = crate::desktop::window_frame::frame().shadow_extent;
+            crate::desktop::window_frame::Insets {
+                left: extent,
+                top: extent,
+                right: extent,
+                bottom: extent,
+            }
+        } else {
+            crate::desktop::window_frame::Insets::default()
+        };
         let gpui_first = config.gpui_root.is_some();
         if let Some(build) = config.gpui_root.take() {
             let view = build(cx, crate::runtime::ReactRuntime::new(estimated_scale));
@@ -1165,8 +1569,8 @@ pub fn run_with(mut config: DesktopAppConfig) {
             host.start_surface(
                 1,
                 &module,
-                surface_width,
-                (surface_height - menu_bar_inset).max(1.0),
+                (surface_width - estimated_frame.horizontal()).max(1.0),
+                (surface_height - menu_bar_inset - estimated_frame.vertical()).max(1.0),
                 estimated_scale,
             );
         }
@@ -1180,6 +1584,9 @@ pub fn run_with(mut config: DesktopAppConfig) {
                     height: Some(height),
                     resizable: true,
                     title_bar: config.title_bar,
+                    background: config.background,
+                    window_buttons: Some(config.window_buttons),
+                    shadow: Some(config.shadow),
                     traffic_light_position: config.traffic_light_position,
                     ..Default::default()
                 },
@@ -1189,6 +1596,7 @@ pub fn run_with(mut config: DesktopAppConfig) {
         startup_trace("opening GPUI window");
         let mut window_options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_background: config.background.appearance(),
             ..Default::default()
         };
         if config.title_bar.is_custom() {
@@ -1210,6 +1618,18 @@ pub fn run_with(mut config: DesktopAppConfig) {
             // client-side decorations falls back to the server's, and
             // `window.window_decorations()` then says so.
             window_options.window_decorations = Some(gpui::WindowDecorations::Client);
+            // The frame's shadow is drawn in a margin of the window itself, which
+            // has to be see-through for the shadow to show over the desktop.
+            #[cfg(target_os = "linux")]
+            if config.shadow
+                && config.title_bar != WindowTitleBar::Borderless
+                && matches!(
+                    window_options.window_background,
+                    gpui::WindowBackgroundAppearance::Opaque
+                )
+            {
+                window_options.window_background = gpui::WindowBackgroundAppearance::Transparent;
+            }
         }
         #[cfg(feature = "test-driver")]
         if env_bool("RN_GPUI_TEST_OFFSCREEN", false) {
@@ -1218,25 +1638,44 @@ pub fn run_with(mut config: DesktopAppConfig) {
             window_options.show = false;
             window_options.focus = false;
         }
+        if !config.visible
+            || std::env::args()
+                .skip(1)
+                .any(|argument| argument == START_HIDDEN_ARGUMENT)
+        {
+            window_options.show = false;
+            window_options.focus = false;
+            crate::desktop::windows::note_main_started_hidden();
+        }
+        window_options.is_resizable = config.resizable;
+        if let Some(display) = &test_display {
+            window_options.display_id = Some(display.id());
+        }
         if let Some(configure_window) = config.configure_window.take() {
             configure_window(&mut window_options);
         }
+        let show_behind = crate::desktop::background::prepare(&mut window_options);
         #[cfg(feature = "visual-capture")]
         if std::env::var_os("RN_GPUI_TRANSPARENT_TITLEBAR").is_some() {
-            window_options.titlebar.get_or_insert_with(Default::default).appears_transparent = true;
+            window_options
+                .titlebar
+                .get_or_insert_with(Default::default)
+                .appears_transparent = true;
         }
         #[cfg(target_os = "windows")]
         let opens_hidden = !window_options.show;
-        let window = cx
-            .open_window(
-                window_options,
-                {
-                    let root = root.clone();
-                    move |_window, _cx| root
-                },
-            )
-            .expect("failed to open the GPUI window");
+        crate::app_hooks::run_app_init(cx);
+        let window = crate::app_hooks::open_root_window(cx, window_options, {
+            let root = root.clone();
+            move |_window, _cx| root
+        })
+        .expect("failed to open the GPUI window");
         startup_trace("window open");
+        if show_behind {
+            let _ = window.update(cx, |_root, window, _cx| {
+                crate::desktop::background::show_behind(window);
+            });
+        }
         // Set per window, not once: a dev run's executable carries no icon, and
         // on Windows the icon belongs to the window, not the application. Windows
         // opened later get it in `windows::open_window`.
@@ -1313,7 +1752,7 @@ pub fn run_with(mut config: DesktopAppConfig) {
         log::info!("window {window_id:?} open at {window_bounds}");
 
         #[cfg(any(feature = "visual-capture", feature = "perf-timing"))]
-        let any_window = *window;
+        let any_window = window;
 
         // React Native is already running; the window supplies the three values
         // only it knows, and the surface is corrected if the estimate was wrong.
@@ -1321,13 +1760,24 @@ pub fn run_with(mut config: DesktopAppConfig) {
             .update(cx, |_root, window, _cx| window.scale_factor())
             .unwrap_or(estimated_scale);
         let scale = scale_override.unwrap_or(window_scale);
+        let _ = window.update(cx, |_root, window, _cx| {
+            crate::desktop::platform_window::style_window(
+                window,
+                config.window_buttons,
+                config.shadow,
+                config.title_bar,
+            )
+        });
 
-        let top_inset = window.update(cx, |_root, window, _cx| {
-            #[cfg(target_os = "macos")]
-            { crate::native_view::window_top_inset(window) }
-            #[cfg(not(target_os = "macos"))]
-            { 0.0 }
-        }).unwrap_or(0.0);
+        crate::desktop::windows::set_custom_title_bar(
+            crate::desktop::windows::MAIN_WINDOW_KEY,
+            config.title_bar.is_custom(),
+        );
+        let top_inset = window
+            .update(cx, |_root, window, _cx| {
+                crate::desktop::windows::top_inset(window, crate::desktop::windows::MAIN_WINDOW_KEY)
+            })
+            .unwrap_or(0.0);
         host.set_window_top_inset(top_inset);
         log::info!("[window-inset] native window top inset={top_inset}");
         let appearance = match cx.window_appearance() {
@@ -1344,8 +1794,14 @@ pub fn run_with(mut config: DesktopAppConfig) {
         // because they are wrong for different reasons — the scale is a guess from
         // the platform, the size comes from the config or the restored window
         // state, and a window manager can override either.
+        #[cfg(target_os = "linux")]
+        let _ = window.update(cx, |_root, window, _cx| {
+            crate::desktop::window_frame::sync(window, APP_SURFACE_ID)
+        });
+        let frame_insets = crate::desktop::window_frame::insets_of(APP_SURFACE_ID);
         let size_moved = (width - surface_width).abs() > f32::EPSILON
-            || (height - surface_height).abs() > f32::EPSILON;
+            || (height - surface_height).abs() > f32::EPSILON
+            || frame_insets != estimated_frame;
         if size_moved || (window_scale - estimated_scale).abs() > f32::EPSILON {
             log::info!(
                 "surface corrected {surface_width}x{surface_height}@{estimated_scale}x -> \
@@ -1364,16 +1820,14 @@ pub fn run_with(mut config: DesktopAppConfig) {
                 // what a resize calls, and it updates `Dimensions` as well.
                 host.set_surface_size(
                     APP_SURFACE_ID,
-                    width,
-                    (height - menu_bar_inset).max(1.0),
+                    (width - frame_insets.horizontal()).max(1.0),
+                    (height - menu_bar_inset - frame_insets.vertical()).max(1.0),
                     scale,
                 );
             }
         }
         if gpui_first {
-            log::info!(
-                "GPUI-first app: no React tree on surface 1 (window scale {window_scale})"
-            );
+            log::info!("GPUI-first app: no React tree on surface 1 (window scale {window_scale})");
         } else {
             log::info!(
                 "started surface 1 ({module}) at {width}x{}@{scale}x (window scale {window_scale}, \
@@ -1391,10 +1845,26 @@ pub fn run_with(mut config: DesktopAppConfig) {
             .update(cx, |_root, window, _cx| {
                 window.observe_window_appearance(move |window, _cx| {
                     let appearance = match window.appearance() {
-                        gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark => "dark",
+                        gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark => {
+                            "dark"
+                        }
                         _ => "light",
                     };
                     appearance_host.set_system_appearance(appearance);
+                    // The compositor can settle the decorations after the window
+                    // exists (a Wayland `configure`), so a change is passed on to
+                    // the app, which draws its caption buttons by it.
+                    #[cfg(target_os = "linux")]
+                    {
+                        let before = crate::desktop::capabilities::observed_client_decorations();
+                        crate::desktop::capabilities::note_window_decorations(
+                            window.window_decorations(),
+                        );
+                        if crate::desktop::capabilities::observed_client_decorations() != before {
+                            appearance_host
+                                .emit_device_event_json("gpuiDesktop:windowDecorations", "{}");
+                        }
+                    }
                 })
             })
             .expect("failed to observe window appearance");
@@ -1409,13 +1879,17 @@ pub fn run_with(mut config: DesktopAppConfig) {
                 .map(|value| matches!(value.as_str(), "1" | "true" | "yes"))
                 .unwrap_or(false);
             crate::animation_policy::set_animations_disabled(animations_disabled);
-            crate::test_driver::start(cx, store.clone(), (*window).into());
+            crate::test_driver::start(cx, store.clone(), window);
         }
         let keyboard_host = store.read(cx).host.clone();
         let keyboard_hook = frame_hook.clone();
         let navigation_keyboard_subscription = cx.intercept_keystrokes(move |event, window, cx| {
-            if window.window_handle().window_id() != window_id { return; }
-            if let Some(event_name) = crate::builtins::textinput::input::desktop_navigation_event(&event.keystroke) {
+            if window.window_handle().window_id() != window_id {
+                return;
+            }
+            if let Some(event_name) =
+                crate::builtins::textinput::input::desktop_navigation_event(&event.keystroke)
+            {
                 keyboard_host.emit_device_event(event_name);
                 keyboard_hook.arm(window);
                 log::info!("[navigation] emitted {event_name} from keyboard");
@@ -1429,6 +1903,7 @@ pub fn run_with(mut config: DesktopAppConfig) {
         // outside any update that has already leased the root.
         // `window.menuBar: false` hides the bar before it is ever drawn, so the
         // window opens at the right size instead of shrinking once the bar goes.
+        crate::desktop::button_layout::set_fallback_left(config.window_controls_left);
         if !config.menu_bar {
             crate::desktop::gpui_menu::set_menu_bar_visible(
                 crate::desktop::windows::MAIN_WINDOW_KEY,
@@ -1457,17 +1932,23 @@ pub fn run_with(mut config: DesktopAppConfig) {
             .0
             .adopt(
                 crate::desktop::windows::MAIN_WINDOW_KEY,
-                (*window).into(),
+                window,
                 1,
                 module.clone(),
                 serde_json::json!({}),
                 crate::desktop::windows::WindowRole::Main,
             );
 
+        crate::desktop::windows::install_main_window_events(
+            cx,
+            window,
+            crate::desktop::windows::MAIN_WINDOW_KEY,
+        );
+
         // Without the close hook `closeRequested` never fires for the main window.
         crate::desktop::windows::install_close_hook_for(
             cx,
-            (*window).into(),
+            window,
             crate::desktop::windows::MAIN_WINDOW_KEY,
         );
 
@@ -1568,9 +2049,7 @@ pub fn run_with(mut config: DesktopAppConfig) {
                         let hook = frame_hook.clone();
                         let moved = cx.update_window(
                             any_window,
-                            move |_root: gpui::AnyView,
-                                  window: &mut gpui::Window,
-                                  cx: &mut App| {
+                            move |_root: gpui::AnyView, window: &mut gpui::Window, cx: &mut App| {
                                 let arena_clear_needed = window.draw(cx);
                                 arena_clear_needed.clear(cx);
                                 window.dispatch_event(
@@ -1666,7 +2145,11 @@ pub fn run_with(mut config: DesktopAppConfig) {
             let host = host_for_input.clone();
             cx.spawn(async move |cx| {
                 for (index, (x, y, dx, dy)) in scrolls.into_iter().enumerate() {
-                    let delay = if index == 0 { scroll_start_ms } else { scroll_ms };
+                    let delay = if index == 0 {
+                        scroll_start_ms
+                    } else {
+                        scroll_ms
+                    };
                     cx.background_executor()
                         .timer(Duration::from_millis(u64::from(delay)))
                         .await;
@@ -1679,7 +2162,7 @@ pub fn run_with(mut config: DesktopAppConfig) {
                             let arena_clear_needed = window.draw(cx);
                             arena_clear_needed.clear(cx);
                             window.dispatch_event(
-                                gpui::PlatformInput::ScrollWheel(gpui::ScrollWheelEvent {
+                                gpui::PlatformInput::Scroll(gpui::ScrollEvent {
                                     position,
                                     delta: gpui::ScrollDelta::Pixels(gpui::point(px(dx), px(dy))),
                                     ..Default::default()
@@ -1707,7 +2190,9 @@ pub fn run_with(mut config: DesktopAppConfig) {
                     cx.background_executor()
                         .timer(Duration::from_millis(u64::from(key_ms)))
                         .await;
-                    let Ok(keystroke) = gpui::Keystroke::parse(&key) else {
+                    let Ok(keystroke) =
+                        gpui::Keystroke::parse_with_os(&key, crate::desktop::keymap::host_os())
+                    else {
                         log::warn!("invalid synthetic keystroke: {key}");
                         continue;
                     };
@@ -1790,7 +2275,9 @@ pub fn run_with(mut config: DesktopAppConfig) {
             let delay = env_u32("RN_GPUI_TITLEBAR_TOGGLE_MS", 0);
             cx.spawn(async move |cx| {
                 for transparent in [false, true] {
-                    cx.background_executor().timer(Duration::from_millis(u64::from(delay))).await;
+                    cx.background_executor()
+                        .timer(Duration::from_millis(u64::from(delay)))
+                        .await;
                     let _ = cx.update_window(any_window, move |_, window, cx| {
                         crate::native_view::set_probe_titlebar_transparent(window, transparent);
                         window.bounds_changed(cx);
@@ -1798,17 +2285,21 @@ pub fn run_with(mut config: DesktopAppConfig) {
                         log::info!("[window-inset] probe titlebar transparent={transparent}");
                     });
                 }
-            }).detach();
+            })
+            .detach();
         }
         #[cfg(feature = "visual-capture")]
         if env_u32("RN_GPUI_FULLSCREEN_MS", 0) > 0 {
             let delay = env_u32("RN_GPUI_FULLSCREEN_MS", 0);
             cx.spawn(async move |cx| {
                 for interval in [delay, 3000] {
-                    cx.background_executor().timer(Duration::from_millis(u64::from(interval))).await;
+                    cx.background_executor()
+                        .timer(Duration::from_millis(u64::from(interval)))
+                        .await;
                     let _ = cx.update_window(any_window, |_, window, _| window.toggle_fullscreen());
                 }
-            }).detach();
+            })
+            .detach();
         }
 
         // The subscription unsubscribes the moment it drops, so it is handed to the
@@ -1820,63 +2311,84 @@ pub fn run_with(mut config: DesktopAppConfig) {
                 let frame_hook = frame_hook.clone();
                 let window_state_path = window_state_path.clone();
                 let last_surface_size = last_surface_size.clone();
-                cx.observe_window_bounds(window, move |_root, window, cx| {
-                    // GPUI calls bounds observers on every resize notification and layout, so
-                    // nothing here may write to disk or log unless a value changed.
-                    let size = window.viewport_size();
-                    let scale = scale_override.unwrap_or_else(|| window.scale_factor());
-                    let (width, height) = (f32::from(size.width), f32::from(size.height));
-                    let bounds = window.bounds();
-                    let origin = (
-                        f32::from(bounds.origin.x),
-                        f32::from(bounds.origin.y),
-                    );
-                    let previous = last_surface_size.get();
-                    let resized = (previous.0 - width).abs() > 0.01
-                        || (previous.1 - height).abs() > 0.01
-                        || (previous.2 - scale).abs() > 0.001;
-                    let moved = (previous.3 - origin.0).abs() > 0.01
-                        || (previous.4 - origin.1).abs() > 0.01;
-                    #[cfg(target_os = "macos")]
-                    let top = crate::native_view::window_top_inset(window);
-                    #[cfg(not(target_os = "macos"))]
-                    let top = 0.0;
-                    let inset_changed = cx
-                        .try_global::<StoreGlobal>()
-                        .is_some_and(|global| (global.0.read(cx).top_inset - top).abs() > 0.01);
-                    if !resized && !moved && !inset_changed {
-                        return;
-                    }
-                    last_surface_size.set((width, height, scale, origin.0, origin.1));
-                    save_window_bounds(&window_state_path, bounds, size);
-                    if inset_changed {
-                        store.update(cx, |store, cx| {
-                            store.top_inset = top;
-                            store.host.set_window_top_inset(top);
-                            store.frame_hook.arm(window);
-                            for node in store.nodes.values() {
-                                let component = node.read(cx).component.clone();
-                                let depends = crate::extensions::component_renderer(&component)
-                                    .is_some_and(|renderer| renderer.depends_on_window_insets());
-                                if depends {
-                                    node.update(cx, |_, cx| cx.notify());
-                                }
-                            }
-                            store.refresh_inherited(1, cx);
-                        });
-                        log::info!(
-                            "[window-inset] native window top inset={top} fullscreen={}",
-                            window.is_fullscreen()
+                crate::app_hooks::observer_context_joined(cx, |observers| {
+                    observers.observe_window_bounds(window, move |_root, window, cx| {
+                        // GPUI calls bounds observers on every resize notification and layout, so
+                        // nothing here may write to disk or log unless a value changed.
+                        let size = window.viewport_size();
+                        let scale = scale_override.unwrap_or_else(|| window.scale_factor());
+                        let (width, height) = (f32::from(size.width), f32::from(size.height));
+                        let bounds = window.bounds();
+                        let origin = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
+                        #[cfg(target_os = "linux")]
+                        let frame_changed =
+                            crate::desktop::window_frame::sync(window, APP_SURFACE_ID);
+                        #[cfg(not(target_os = "linux"))]
+                        let frame_changed = false;
+                        let previous = last_surface_size.get();
+                        let resized = frame_changed
+                            || (previous.0 - width).abs() > 0.01
+                            || (previous.1 - height).abs() > 0.01
+                            || (previous.2 - scale).abs() > 0.001;
+                        let moved = (previous.3 - origin.0).abs() > 0.01
+                            || (previous.4 - origin.1).abs() > 0.01;
+                        let top = crate::desktop::windows::top_inset(
+                            window,
+                            crate::desktop::windows::MAIN_WINDOW_KEY,
                         );
-                    }
-                    if resized {
-                        log::info!("window resized to {width}x{height}@{scale}x");
-                        let handle: gpui::AnyWindowHandle = window.window_handle().into();
-                        store.update(cx, |store, _cx| {
-                            store.resize_window(handle, width, height, scale)
-                        });
-                        frame_hook.arm(window);
-                    }
+                        let inset_changed = cx
+                            .try_global::<StoreGlobal>()
+                            .is_some_and(|global| (global.0.read(cx).top_inset - top).abs() > 0.01);
+                        if !resized && !moved && !inset_changed {
+                            return;
+                        }
+                        last_surface_size.set((width, height, scale, origin.0, origin.1));
+                        save_window_bounds(&window_state_path, bounds, size);
+                        if inset_changed {
+                            crate::desktop::window_mirror::patch(
+                                crate::desktop::windows::MAIN_WINDOW_KEY,
+                                &[("topInset", serde_json::json!(top))],
+                            );
+                            store.update(cx, |store, _cx| {
+                                store.top_inset = top;
+                                store.host.set_window_top_inset(top);
+                                store.frame_hook.arm(window);
+                            });
+                            // Deferred: this observer runs with the window's root view
+                            // borrowed, and refreshing the surface reads it. A compositor
+                            // that settles the decorations after the window opens (sway)
+                            // changes the inset right here.
+                            let deferred_store = store.clone();
+                            cx.defer(move |cx| {
+                                deferred_store.update(cx, |store, cx| {
+                                    for node in store.nodes.values() {
+                                        let component = node.read(cx).component.clone();
+                                        let depends =
+                                            crate::extensions::component_renderer(&component)
+                                                .is_some_and(|renderer| {
+                                                    renderer.depends_on_window_insets()
+                                                });
+                                        if depends {
+                                            node.update(cx, |_, cx| cx.notify());
+                                        }
+                                    }
+                                    store.refresh_inherited(1, cx);
+                                });
+                            });
+                            log::info!(
+                                "[window-inset] native window top inset={top} fullscreen={}",
+                                window.is_fullscreen()
+                            );
+                        }
+                        if resized {
+                            log::info!("window resized to {width}x{height}@{scale}x");
+                            let handle: gpui::AnyWindowHandle = window.window_handle().into();
+                            store.update(cx, |store, cx| {
+                                store.resize_window(handle, width, height, scale, cx)
+                            });
+                            frame_hook.arm(window);
+                        }
+                    })
                 })
             })
             .expect("failed to observe the window's bounds");
@@ -1886,7 +2398,9 @@ pub fn run_with(mut config: DesktopAppConfig) {
             Some(
                 window
                     .update(cx, |_root, window, cx| {
-                        crate::desktop::windows::install_state_observer(window, cx)
+                        crate::app_hooks::observer_context_joined(cx, |observers| {
+                            crate::desktop::windows::install_state_observer(window, observers)
+                        })
                     })
                     .expect("failed to observe the window's state"),
             )
@@ -1969,6 +2483,8 @@ pub fn run_with(mut config: DesktopAppConfig) {
 
         cx.spawn(async move |cx| {
             let mut smoke_frame_armed = false;
+            let mut startup_mounts_traced = 0u32;
+            let mut mount_batches_traced = 0u64;
             #[cfg(feature = "visual-capture")]
             for (delay_ms, path) in screenshots {
                 let store = store.clone();
@@ -1991,12 +2507,28 @@ pub fn run_with(mut config: DesktopAppConfig) {
                 match event {
                     MainEvent::Mount(batch) => {
                         let surface_id = batch.surface_id;
+                        let ops = batch.ops.len();
                         let started = std::time::Instant::now();
                         store.update(cx, |store, cx| store.apply_batch(batch, cx));
                         let elapsed = started.elapsed().as_secs_f32() * 1000.0;
                         cx.update(|cx| crate::desktop::perf_monitor::record_mount(cx, elapsed));
                         // SAFETY: the C++ function decrements an atomic counter and takes no arguments.
                         unsafe { rn_gpui_mount_batch_applied() };
+                        if surface_id == APP_SURFACE_ID && mount_trace_enabled() {
+                            mount_batches_traced += 1;
+                            eprintln!(
+                                "[mount-trace] applied batch={mount_batches_traced} ops={ops} store_apply_ms={elapsed:.2} epoch_ms={:.3}",
+                                epoch_ms()
+                            );
+                            let window = store.read_with(cx, |store, _| store.window);
+                            trace_mount_presented(cx, window, mount_batches_traced);
+                        }
+                        if surface_id == APP_SURFACE_ID && startup_mounts_traced < 16 {
+                            startup_mounts_traced += 1;
+                            startup_trace(&format!("mount applied ops={ops} store_apply_ms={elapsed:.1}"));
+                            let window = store.read_with(cx, |store, _| store.window);
+                            trace_next_content_frame(cx, window);
+                        }
                         // Smoke mode: an app-surface batch is React content, so
                         // the frame GPUI draws after it is the one a human sees.
                         if smoke && !smoke_frame_armed && surface_id == APP_SURFACE_ID {
@@ -2036,6 +2568,17 @@ pub fn run_with(mut config: DesktopAppConfig) {
                                     _ => crate::desktop::tray::TrayButton::Left,
                                 },
                             )
+                        });
+                    }
+                    MainEvent::GlobalShortcut(hotkey) => {
+                        cx.update(|cx| crate::desktop::global_shortcut::fire(cx, hotkey));
+                    }
+                    MainEvent::GlobalShortcutNamed(id) => {
+                        cx.update(|cx| crate::desktop::global_shortcut::fire_named(cx, &id));
+                    }
+                    MainEvent::GlobalShortcutRefused(id, reason) => {
+                        cx.update(|cx| {
+                            crate::desktop::global_shortcut::report_failure(cx, &id, &reason)
                         });
                     }
                     MainEvent::MenuBarPerform(id) => {
@@ -2160,7 +2703,31 @@ pub fn run_with(mut config: DesktopAppConfig) {
                             });
                         }
                     }
+                    MainEvent::NativeRootOps { root, payload } => {
+                        let _ = cx.update(|cx| crate::builtins::native_root::apply_ops(cx, root, &payload));
+                    }
                     MainEvent::HostCommand { tag, command, args } => {
+                        let target = {
+                            let mut target = None;
+                            store.update(cx, |store, _cx| {
+                                target = store.nodes.get(&tag).cloned().map(|node| {
+                                    let window = store
+                                        .window_for(node.read(_cx).surface_id)
+                                        .unwrap_or(store.window);
+                                    (window, node)
+                                });
+                            });
+                            target
+                        };
+                        if let Some((window_handle, node)) = target {
+                            let _ = cx.update_window(window_handle, move |_root, window, cx| {
+                                node.update(cx, |node, cx| {
+                                    node.dispatch_host_command(command, &args, Some(window), cx);
+                                });
+                            });
+                        }
+                    }
+                    MainEvent::BuiltinCommand { tag, component, name, args } => {
                         let target = {
                             let mut target = None;
                             store.update(cx, |store, _cx| {
@@ -2168,13 +2735,20 @@ pub fn run_with(mut config: DesktopAppConfig) {
                             });
                             target
                         };
+                        let handle = crate::extensions::StoreHandle::new(store.downgrade());
                         if let Some((window_handle, node)) = target {
                             let _ = cx.update_window(window_handle, move |_root, _window, cx| {
-                                node.update(cx, |node, cx| {
-                                    node.dispatch_host_command(command, &args, cx);
-                                });
+                                crate::extensions::run_builtin_command(
+                                    &node, &component, &name, &args, &handle, cx,
+                                );
                             });
                         }
+                    }
+                    MainEvent::ScrollerStyleChanged => {
+                        let _ = cx.update(crate::scroller_style::announce);
+                    }
+                    MainEvent::WheelDone { id, prevented } => {
+                        crate::wheel::done(id, prevented, cx);
                     }
                     MainEvent::TextInputClear(tag) => {
                         let target = {
@@ -2198,20 +2772,79 @@ pub fn run_with(mut config: DesktopAppConfig) {
         })
         .detach();
 
-        // A hidden test run must not take focus or pull the user to the
-        // desktop the app launched on.
-        #[cfg(feature = "test-driver")]
-        let background = env_bool("RN_GPUI_TEST_OFFSCREEN", false);
-        #[cfg(not(feature = "test-driver"))]
-        let background = false;
-        if background {
-            #[cfg(all(target_os = "macos", feature = "test-driver"))]
+        // A background run (the test driver, or `RN_GPUI_BACKGROUND=1`) never
+        // activates the app: it must not take focus or the menu bar, or pull
+        // the person to the desktop it launched on.
+        if test_headless {
+            // No application to activate or keep out of the Dock.
+        } else if crate::desktop::background::enabled() {
+            #[cfg(target_os = "macos")]
             run_as_accessory_app();
         } else {
             cx.activate(true);
         }
         log::info!("waiting for mount batches");
+    };
+    let http_client = std::sync::Arc::new(crate::http_client::RnHttpClient::new());
+    match application {
+        Some(application) => application.with_http_client(http_client).run(launch),
+        #[cfg(feature = "test-driver")]
+        None => crate::headless::run(http_client, launch),
+        #[cfg(not(feature = "test-driver"))]
+        None => unreachable!("headless runs need the test-driver feature"),
+    }
+}
+
+/// The real platform's application: AppKit, X11/Wayland or Win32.
+fn platform_application() -> Application {
+    #[cfg(feature = "visual-capture")]
+    let headless = env_bool("RN_GPUI_HEADLESS", false);
+    #[cfg(not(feature = "visual-capture"))]
+    let headless = false;
+    startup_trace(if headless {
+        "using GPUI headless platform"
+    } else {
+        "using GPUI AppKit platform"
     });
+    let platform = gpui_platform::current_platform(headless);
+    startup_trace("platform created");
+    // A locked or absent session on macOS cannot launch AppKit, and the platform
+    // reports no display until it can. Nothing else does: on Linux GPUI starts on
+    // a placeholder connection and attaches X11 or Wayland once the app runs, so
+    // its display list is legitimately empty here — waiting for it never ends.
+    #[cfg(target_os = "macos")]
+    {
+        let mut waited_for_display = 0u64;
+        while platform.displays().is_empty() {
+            if waited_for_display == 0 {
+                log::warn!("no active display; waiting before entering AppKit launch");
+                startup_trace("waiting for an active display");
+            }
+            std::thread::sleep(Duration::from_secs(2));
+            waited_for_display += 2;
+            if waited_for_display % 30 == 0 {
+                log::warn!("still waiting for an active display ({waited_for_display}s)");
+            }
+        }
+    }
+    startup_trace("active display detected");
+    let application =
+        crate::app_hooks::with_registered_assets(Application::with_platform(platform));
+    // An accessory app takes no Dock icon or menu bar, and the policy has to
+    // be set before the run loop starts or the Dock bounces at launch.
+    #[cfg(target_os = "macos")]
+    let application = if crate::desktop::background::enabled() {
+        application.with_windowing(gpui::WindowingRequest::Headless)
+    } else {
+        application
+    };
+    application.on_reopen(crate::desktop::windows::reopen);
+    application.on_open_urls(|urls| {
+        for url in urls {
+            crate::desktop::deep_link::handle_url(url);
+        }
+    });
+    application
 }
 
 #[cfg(feature = "visual-capture")]
@@ -2254,7 +2887,7 @@ async fn capture_and_quit(
     }
 }
 
-#[cfg(all(target_os = "macos", feature = "test-driver"))]
+#[cfg(target_os = "macos")]
 fn run_as_accessory_app() {
     use objc::{class, msg_send, sel, sel_impl};
     const ACCESSORY: isize = 1;
@@ -2267,6 +2900,32 @@ fn run_as_accessory_app() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn desktop_json_window_options_apply_and_a_builder_call_still_wins() {
+        let defaults = serde_json::json!({
+            "window": {
+                "title": "From JSON",
+                "titleBar": "hidden",
+                "windowButtons": false,
+                "shadow": false,
+                "trafficLightPosition": {"x": 10, "y": 14},
+                "resizable": false,
+                "menuBar": false,
+                "visible": false,
+            },
+            "accessory": true,
+        });
+        let mut config = DesktopAppConfig::from_env_with_defaults("App", "com.example.app");
+        config.apply_desktop_values(&defaults);
+        assert_eq!(config.title.as_deref(), Some("From JSON"));
+        assert_eq!(config.title_bar, WindowTitleBar::Hidden);
+        assert!(!config.window_buttons && !config.shadow && !config.menu_bar);
+        assert_eq!(config.traffic_light_position, Some((10.0, 14.0)));
+        assert!(!config.resizable && config.accessory && !config.visible);
+        let config = config.title_bar(WindowTitleBar::Transparent);
+        assert_eq!(config.title_bar, WindowTitleBar::Transparent);
+    }
+
     use super::*;
 
     #[test]
@@ -2280,6 +2939,10 @@ mod tests {
             WindowTitleBar::Transparent
         );
         assert_eq!(WindowTitleBar::from_name("hidden"), WindowTitleBar::Hidden);
+        assert_eq!(
+            WindowTitleBar::from_name("none"),
+            WindowTitleBar::Borderless
+        );
     }
 
     #[test]
@@ -2301,6 +2964,7 @@ mod tests {
         assert!(!WindowTitleBar::Default.is_custom());
         assert!(WindowTitleBar::Transparent.is_custom());
         assert!(WindowTitleBar::Hidden.is_custom());
+        assert!(WindowTitleBar::Borderless.is_custom());
     }
 
     #[test]

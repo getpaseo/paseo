@@ -9,7 +9,8 @@ use rn_gpui_module::{FromValue, ModuleError, ModuleThread, Path, Value};
 
 use crate::builtins::main_thread::on_main;
 use crate::builtins::rn_gpui_specs::{
-    NativeGpuiShortcutsEvents, NativeGpuiShortcutsSpec, ShortcutInstallResult, ShortcutSpec,
+    NativeGpuiShortcutsEvents, NativeGpuiShortcutsSpec, ShortcutFailure, ShortcutInstallResult,
+    ShortcutSpec,
 };
 use crate::desktop::keymap;
 
@@ -90,6 +91,7 @@ impl NativeGpuiShortcutsSpec for ShortcutsModule {
                         "scope": spec.scope,
                         "enabled": spec.enabled,
                         "allowInTextInput": spec.allow_in_text_input,
+                        "global": spec.global,
                     })
                 })
                 .collect(),
@@ -98,12 +100,16 @@ impl NativeGpuiShortcutsSpec for ShortcutsModule {
         // has a shortcut that does not fire, and the error says which.
         let parsed = keymap::parse_shortcuts(&json).map_err(ModuleError::new)?;
         let installed = parsed.len();
-        on_main(move |cx| {
-            keymap::install(cx, parsed);
-        })
-        .await?;
+        let failed = on_main(move |cx| keymap::install(cx, parsed)).await?;
         Ok(ShortcutInstallResult {
             installed: installed as f64,
+            failed: failed
+                .into_iter()
+                .map(|failure| ShortcutFailure {
+                    id: failure.id,
+                    reason: failure.reason,
+                })
+                .collect(),
         })
     }
 

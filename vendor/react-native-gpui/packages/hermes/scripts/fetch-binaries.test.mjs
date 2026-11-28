@@ -123,11 +123,20 @@ describe('installedState', () => {
     return root;
   };
   const install = (root, platform, files) => {
-    mkdirSync(path.join(root, platform), { recursive: true });
     for (const file of files) {
-      writeFileSync(path.join(root, platform, file), 'binary');
+      const target = path.join(root, platform, file);
+      mkdirSync(path.dirname(target), { recursive: true });
+      writeFileSync(target, 'binary');
     }
   };
+  const DARWIN = ['libhermesvm.dylib', 'hermesc', 'release/libhermesvm.dylib'];
+  const WIN32 = [
+    'hermesvm.dll',
+    'hermesvm.lib',
+    'hermesc.exe',
+    'release/hermesvm.dll',
+    'release/hermesvm.lib',
+  ];
 
   afterAll(() => {
     for (const root of roots) rmSync(root, { recursive: true, force: true });
@@ -135,7 +144,7 @@ describe('installedState', () => {
 
   test('a complete directory with no .release is stale', () => {
     const root = tempRoot();
-    install(root, 'darwin-arm64', ['libhermesvm.dylib', 'hermesc']);
+    install(root, 'darwin-arm64', DARWIN);
     expect(installedState('darwin-arm64', RELEASE, root)).toEqual({
       state: 'stale',
     });
@@ -143,7 +152,7 @@ describe('installedState', () => {
 
   test('a matching .release is current', () => {
     const root = tempRoot();
-    install(root, 'darwin-arm64', ['libhermesvm.dylib', 'hermesc']);
+    install(root, 'darwin-arm64', DARWIN);
     writeRecordedSource('darwin-arm64', RELEASE, root);
     expect(installedState('darwin-arm64', RELEASE, root)).toEqual({
       state: 'current',
@@ -153,7 +162,7 @@ describe('installedState', () => {
 
   test('a different tag is stale, so a version bump replaces the binaries', () => {
     const root = tempRoot();
-    install(root, 'darwin-arm64', ['libhermesvm.dylib', 'hermesc']);
+    install(root, 'darwin-arm64', DARWIN);
     writeRecordedSource(
       'darwin-arm64',
       '@react-native-gpui/hermes@0.1.0',
@@ -166,7 +175,7 @@ describe('installedState', () => {
 
   test('a hand-installed source is foreign, and must be kept', () => {
     const root = tempRoot();
-    install(root, 'darwin-arm64', ['libhermesvm.dylib', 'hermesc']);
+    install(root, 'darwin-arm64', DARWIN);
     writeRecordedSource('darwin-arm64', 'from:/tmp/my-build.zip', root);
     expect(installedState('darwin-arm64', RELEASE, root)).toEqual({
       state: 'foreign',
@@ -176,7 +185,7 @@ describe('installedState', () => {
 
   test('a run source is foreign too', () => {
     const root = tempRoot();
-    install(root, 'win32-x64', ['hermesvm.dll', 'hermesvm.lib', 'hermesc.exe']);
+    install(root, 'win32-x64', WIN32);
     writeRecordedSource('win32-x64', 'run:12345', root);
     expect(installedState('win32-x64', RELEASE, root)).toEqual({
       state: 'foreign',
@@ -187,6 +196,15 @@ describe('installedState', () => {
   test('missing files win over a recorded source', () => {
     const root = tempRoot();
     install(root, 'darwin-arm64', ['libhermesvm.dylib']);
+    writeRecordedSource('darwin-arm64', RELEASE, root);
+    expect(installedState('darwin-arm64', RELEASE, root)).toEqual({
+      state: 'missing',
+    });
+  });
+
+  test('a debug VM without the release VM is missing', () => {
+    const root = tempRoot();
+    install(root, 'darwin-arm64', ['libhermesvm.dylib', 'hermesc']);
     writeRecordedSource('darwin-arm64', RELEASE, root);
     expect(installedState('darwin-arm64', RELEASE, root)).toEqual({
       state: 'missing',

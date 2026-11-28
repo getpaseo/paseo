@@ -5,6 +5,22 @@ react-native-gpui, packaged the way React Native ships its own engine: the
 public headers we compile against, plus the prebuilt VM and `hermesc` compiler
 for every platform we support.
 
+Part of [react-native-gpui](https://github.com/streetwriters/react-native-gpui), React Native for macOS, Windows and Linux.
+
+## Install
+
+Apps created with `npx @react-native-gpui/cli init` already depend on it. In an existing app:
+
+```sh
+npm install @react-native-gpui/hermes
+```
+
+The engine binaries for your platform are downloaded from the matching GitHub release the first time the app is built.
+
+The rest of this file describes how the package is built and maintained.
+
+## Build
+
 Everything here is built from one commit, recorded in `package.json`:
 
 ```json
@@ -16,13 +32,13 @@ Everything here is built from one commit, recorded in `package.json`:
 
 ## Layout
 
-| Path                           | Contents                                                       |
-| ------------------------------ | -------------------------------------------------------------- |
-| `API/`, `public/`, `include/`  | The upstream headers we compile against, byte for byte (below) |
-| `bin/<platform>-<arch>/`       | The prebuilt VM and compiler (not committed; fetched or built) |
-| `desktop/node-api-exports.txt` | Every `napi_*`/`node_api_*` name the VM exports, one per line  |
-| `patches/`                     | Patches applied to the pinned commit before building           |
-| `scripts/fetch-binaries.mjs`   | Downloads a CI artifact or release into `bin/` and verifies it |
+| Path                           | Contents                                                        |
+| ------------------------------ | --------------------------------------------------------------- |
+| `API/`, `public/`, `include/`  | The upstream headers we compile against, byte for byte (below)  |
+| `bin/<platform>-<arch>/`       | The prebuilt VMs and compiler (not committed; fetched or built) |
+| `desktop/node-api-exports.txt` | Every `napi_*`/`node_api_*` name the VM exports, one per line   |
+| `patches/`                     | Patches applied to the pinned commit before building            |
+| `scripts/fetch-binaries.mjs`   | Downloads a CI artifact or release into `bin/` and verifies it  |
 
 `desktop/node-api-exports.txt` lists the Node-API names the VM exports. On Windows
 an addon cannot resolve those symbols from a global scope — a DLL import names
@@ -95,11 +111,20 @@ matches the pinned commit plus these changes.
 
 `bin/` is gitignored, so a fresh clone has the headers but no binaries:
 
-| Platform                     | Files                                         |
-| ---------------------------- | --------------------------------------------- |
-| `darwin-arm64`, `darwin-x64` | `libhermesvm.dylib`, `hermesc`                |
-| `linux-x64`, `linux-arm64`   | `libhermesvm.so`, `hermesc`                   |
-| `win32-x64`, `win32-arm64`   | `hermesvm.dll`, `hermesvm.lib`, `hermesc.exe` |
+| Platform                     | Files                                                                                         |
+| ---------------------------- | --------------------------------------------------------------------------------------------- |
+| `darwin-arm64`, `darwin-x64` | `libhermesvm.dylib`, `hermesc`, `release/libhermesvm.dylib`                                   |
+| `linux-x64`, `linux-arm64`   | `libhermesvm.so`, `hermesc`, `release/libhermesvm.so`                                         |
+| `win32-x64`, `win32-arm64`   | `hermesvm.dll`, `hermesvm.lib`, `hermesc.exe`, `release/hermesvm.dll`, `release/hermesvm.lib` |
+
+Each platform has two VMs. The one in the platform folder is built with the
+debugger (`HERMES_ENABLE_DEBUGGER=ON`), and debug builds link it. The one under
+`release/` is built without it, and release builds link that one: it is smaller,
+and keeps no debugger state, which with the debugger compiled in included the
+compiler state of every `eval` (about 22 MB in an app whose worklets are made
+with `eval`). The choice follows React Native's Hermes glue, which compiles its
+debugger support for a `Debug` CMake build or with `REACT_NATIVE_DEBUG_OPTIMIZED`,
+so the VM and the code driving it always agree. Both are optimized builds.
 
 ## Fetching the binaries
 
@@ -140,8 +165,9 @@ The build flags are mirrored from `package.json`'s `hermes.buildFlags`:
 ```
 HERMES_ENABLE_NAPI=ON
 HERMES_ENABLE_DEBUGGER=ON
-HERMES_ENABLE_INTL=ON    # Apple only; OFF on Linux and Windows
-HERMES_ICU_RUNTIME_LOAD=ON    # Linux only; other platforms build without it
+HERMES_ENABLE_INTL=ON
+HERMES_ICU_RUNTIME_LOAD=ON
+HERMES_ICU_HEADERS_DIR=packages/hermes/third_party/icu
 HERMES_ENABLE_TEST_SUITE=OFF
 HERMES_BUILD_APPLE_FRAMEWORK=OFF
 ```
@@ -149,22 +175,37 @@ HERMES_BUILD_APPLE_FRAMEWORK=OFF
 ### Intl
 
 `HERMES_ENABLE_INTL=ON` exposes `Intl.Collator`, `Intl.NumberFormat` and
-`Intl.DateTimeFormat` (plus `Intl.getCanonicalLocales` and the `toLocale*` /
-`localeCompare` prototype methods). It is enabled on Apple only for now:
+`Intl.DateTimeFormat` (plus `Intl.getCanonicalLocales`, `formatToParts`, and the
+`toLocale*` / `localeCompare` prototype methods). The pinned Hermes has no
+`Intl.PluralRules`, `ListFormat`, `RelativeTimeFormat` or `Segmenter`.
 
-- **Apple**: Foundation (`NSLocale`, `NSDateFormatter`, …). No ICU involved and
-  nothing extra ships.
-- **Windows and Linux**: off. Upstream's backend for these platforms
-  (`lib/Platform/Intl/PlatformIntlICU.cpp`) needs ICU's C++ API, which the ICU
-  built into Windows does not expose, and its `NumberFormat` is a stub
-  (`std::to_string`). Bundling ICU would add about 30 MB. Intl comes back once
-  Hermes has a backend that loads the OS's ICU at runtime.
+Every platform uses one backend (`patches/0003-intl-on-the-system-icu.patch`)
+written against ICU's C API, with ICU loaded when it is first needed, so the
+engine ships no ICU data and links no ICU:
 
-ICU is still used with Intl off, because the non-Apple/Android Unicode backend
-needs it for case conversion, `localeCompare`, `normalize` and
-`toLocaleDateString`. Windows links the OS ICU; Linux resolves whichever
-`libicui18n.so.N` the system has with `dlopen` at first use (see
-`patches/0001-linux-load-icu-at-runtime.patch` of the react-native-gpui
-repository this package is built from). Without a system ICU on Linux the VM
-keeps working with ASCII-only case mapping, code-unit collation and no-op
-normalization. Apple builds link only CoreFoundation.
+| Platform | ICU it loads                                              | Minimum                  |
+| -------- | --------------------------------------------------------- | ------------------------ |
+| macOS    | `/usr/lib/libicucore.A.dylib`                             | the ICU of the OS (64+)  |
+| Windows  | `icu.dll` from System32                                   | Windows 10 1903 (ICU 64) |
+| Linux    | `libicui18n.so.N`, N from 100 down to 64, with `libicuuc` | ICU 64                   |
+
+`RN_GPUI_ICU_VERSION` forces one Linux version, and `0` turns loading off so
+the fallback can be tested. With no usable ICU the VM still starts: it logs one
+warning, `Intl` stays defined, numbers format as plain JavaScript numbers,
+dates as ISO 8601 in UTC, strings compare by code unit, and case mapping covers
+ASCII only.
+
+The ICU headers it compiles against are vendored in `third_party/icu` (ICU 76.1,
+unmodified, for signatures only). The backend calls only functions that ICU 64
+has; `uloc_openAvailableByType` and `ucal_getCanonicalTimeZoneID` are optional.
+`NumberFormat` builds an ICU number skeleton from the resolved options and
+formats with `unumf_*`, so style (decimal, currency, percent, unit), digits,
+grouping, compact and scientific notation, `signDisplay`, `roundingMode` and
+`trailingZeroDisplay` come from ICU itself.
+
+`scripts/intl-smoke.js` holds the assertions the `hermes-engine` workflow runs
+on every platform, and on Linux against ICU 70, ICU 74 and no ICU.
+
+## License
+
+MIT. See [LICENSE](LICENSE). Hermes is MIT-licensed by Meta Platforms, Inc.

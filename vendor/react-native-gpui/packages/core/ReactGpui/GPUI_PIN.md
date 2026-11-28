@@ -9,10 +9,47 @@ so we pin by commit SHA and bump on purpose.
 ## Pinned
 
 - Repository: https://github.com/streetwriters/gpui-fast
-- Branch: `rn-gpui-linux` (tracks upstream `main`; Linux fixes are commits on
-  top so each one can become an upstream pull request)
-- Commit: `8da7d89` (`rn-gpui-linux`, 2026-10-23: `7bf381d` plus the
-  rounded content masks below)
+- Branch: `rn-gpui-linux` (tracks upstream `main` with Linux fixes on top so each one can become an
+  upstream pull request, plus fixes for content drawn under a transform and allocation cuts)
+- Commit: `1ad3cc3` (2026-11-21: `de5ebfa` plus browser-like nested and axis scrolling and faster CPU screenshots, with `Window::render_region_to_image` (test-support) drawing one device-pixel region of a frame, which the test driver's element screenshots use. `de5ebfa` (2026-11-19: `8ddec44` plus a CPU renderer (tiny-skia) for headless tests, which `gpui_platform::test_rendering` falls back to where no GPU renderer can be made; the test driver's headless runs draw with it. `8ddec44` (2026-11-19) is `57efe10` plus a held window that can draw outside the frame request without presenting, which native roots use to settle a new page's size within the tick. `57efe10` is `9125f46` plus headless test screenshots. `9125f46` is `70f968b` with the commit after it reverted, so the same tree. `70f968b` (2026-11-18): `bdecaba` plus testing windows by role and visible text over the accessibility tree. `bdecaba` is `bcfa3e3` plus a window that can hold back presenting while its content settles, which native roots use so a new page is shown at its final layout. `bcfa3e3` is `3f7a51a` plus a button drawn again from the last frame keeping its
+  own accessibility label instead of the text inside it. `3f7a51a` is `3efc3d0` plus a change of input modality (mouse, keyboard or
+  touch) building only the views that read it, and accessibility nodes replayed for a retained
+  stretch pushed with the role they had, so a view built again inside a scroll view drawn from
+  the last frame is still known to be inside it. `3efc3d0` is `93193d4` plus nested views sharing their retained layouts
+  instead of copying them, so a view's cost does not grow with its depth, and a retained record's
+  frame indices kept in 32 bits. `93193d4` is `74dcd1f` plus memory cuts: the element arena frees the chunks the
+  last two frames did not use and keeps at most eight; global element ids are interned as a parent
+  link and the last id instead of a copy of the whole path; retained records share what they
+  inherit, their text styles and their rebuild text style stack, and keep a cached style boxed; a
+  drawn frame's lists are fitted to it; a window idle for a second frees its spare frame's lists
+  and the arena's chunks; the windows an entity invalidates are a short list rather than a map.
+  `74dcd1f` is `3bd25f1` plus a change of focus building only the views that read it; `3bd25f1` is
+  `af2bd3a` plus text in an effect group drawn without subpixel rendering and a view that paints an
+  effect group rebuilt rather than spliced. `af2bd3a` (2026-11-16) is `3ad00a0` plus a destination-in blend mode and effect groups that
+  cover their bounds, used to mask children by another element's alpha, and scroll containers exposed
+  as scroll areas to accessibility. `3ad00a0` (2026-11-11) is `355baeb` plus macOS windows keeping the frame they were given
+  while a test driver runs the app in the background, so a test window larger than a small CI display
+  is not shrunk to it. `355baeb` is Abdullah Atta's accessibility commits on `rn-gpui-linux` (unlabelled
+  buttons, links and tabs named by their painted text, clickable elements without a role as buttons,
+  hover and tooltips through the accessibility API) and macOS test windows that open behind the user's
+  and never activate, plus Windows restoring a zoomed window when it is zoomed again. Before them,
+  `11fd570`: `b015e2b` plus Windows honouring the test scale factor
+  (`RN_GPUI_TEST_SCALE_FACTOR`) and letting a window outgrow the display for it. `b015e2b` is `9087620` plus windows reporting themselves active on Linux while the
+  test driver runs the app, as macOS already did, so focus and blur reach elements of a test window
+  that is never mapped or focused. `9087620` is `d5041b0` plus two commits for react-native-gpui. `d5041b0` is Longbridge's
+  gpui-fast `main` merged into `rn-gpui-linux`, with upstream's public API kept for `ContentMask`,
+  `Hitbox` and `paint_svg`, GPUI Kit 0.9.1 and gpui-pre 0.3.12 tracked, and the hover freeze (the end
+  of a freeze draws the window again without refreshing it). The two commits: a key the focused input
+  takes as text is not offered to the key listeners of its ancestors (`fast::text_keys`, with the
+  platform insertion untouched), and `test-support` methods that drive the focused input handler as an
+  input method would (`Window::simulate_marked_text` and `simulate_committed_text`). It still has
+  `5392403`'s test hooks: a window scale factor a test run asks for (`RN_GPUI_TEST_SCALE_FACTOR`) and
+  windows reporting themselves active while the test driver runs the app in the background))
+- Toolchain: Rust 1.98 or newer (gpui-fast pins 1.98.1 and uses `Option::map_or_default`)
+- Every manifest that names gpui-fast uses this commit: `packages/core/ReactGpui`,
+  `packages/rn-gpui-tester/desktop` and
+  `packages/rn-gpui-tester/host-components-module/desktop`. The modules in
+  react-native-gpui-modules follow the same commit; see AGENTS.md
 - Pinned in: `Cargo.toml` `[workspace.dependencies] gpui.rev`
 
 ## Startup deferrals
@@ -200,3 +237,59 @@ process, so the activation cannot leak between them.
 
 Fixing this properly means replaying accessibility subtree updates for retained
 views; that is out of scope for now.
+
+## Transforms
+
+- `590f2bb`, `a678e91`, `8dab27d`, `81357fc`, `3a4e87e`: a per-frame table of 2D affine matrices and
+  an index on every primitive (`Quad`'s packs it above its border style).
+  `Window::with_transformation` and `with_transformation_about` draw and
+  hit-test a subtree under a matrix; hit boxes keep theirs. The Metal shaders
+  evaluate corners, borders, masks and shadows in the primitive's own space.
+  The wgpu shaders read the table from a storage buffer at group 0 binding 2
+  (16384 entries; the WebGL transport has none and draws untransformed). The
+  DirectX shaders read it from a structured buffer at `t2`.
+- `d58e7e2`..`464a119`: glyph and SVG sprites no longer carry an inline matrix; an `Svg`
+  with a `Transformation` draws under `Window::with_transformation` (so its clip is in the
+  svg's own space and it bypasses tile layers). Mono and subpixel sprites are 24 bytes
+  smaller, and the WebGL record stride for them is 30 words. A hit box keeps an `Rc` of its
+  matrix (none for the identity), so layers and retained frames can carry it.
+  Replay skips the table for identity primitives.
+- `934adc1`: `Window::composed_scene_layers` reports how the last frame is split across
+  GPUI composition surfaces, so a test can see which surface a view painted onto.
+- `48ef745`: effect groups (`Window::with_effect_group`): a subtree painted into a texture of its own and
+  composited with group opacity, a blur or drop shadow of its picture, and a CSS blend mode against a copy of what is beneath it, on Metal, wgpu and Direct3D 11. `Scene::finish` moves each group's primitives
+  into a scene of its own, in the texture's space. A group's texture is its bounds rounded out to device pixels
+  and clipped to the window (wgpu and Direct3D round the texture up to 64 px so frames reuse it). A scroll view whose content holds a group is not cached as a layer (the node counts it);
+  a group inside layer content, were there one, would fade each shape on its own.
+- `549d4cd`: a native surface on Windows is hidden by an empty clip; a visual from a plain
+  DirectComposition device has no `IDCompositionVisual3` opacity.
+  Against `8da7d89` on `randomized_element_tree` (18 cases): foreground instructions +0.4%,
+  wall time median about +1%, the smallest frames (110-210 us) still 5-10% slower.
+
+## Rendering
+
+- `df99de6`: the Metal layer is tagged sRGB, so a wide-gamut display shows a React
+  Native colour the way AppKit shows the same sRGB value.
+- `956427e`: blurred shadows are dithered on every backend (interleaved gradient noise,
+  scaled by the alpha so a zero stays zero), and the wgpu linear gradient is dithered like
+  the Metal and DirectX ones. The noise is keyed to the primitive's own origin, so a tile
+  rasterised at another offset gets the same pixels.
+- `bdc7e62`..`e2a4638`: colour filters. `Window::with_color_filter` composes a 4x5 colour matrix into
+  the same per-frame table as transforms (the wgpu storage buffer holds both; DirectX reads
+  the matrices at `t3`; Metal binds them at fragment buffer 9). Each primitive is filtered on its
+  own, so overlapping content is not filtered as a group. Paths and surfaces are not filtered.
+
+## API changes at `93193d4`
+
+- `GlobalElementId` no longer dereferences to `[ElementId]`: it is the last id and a link to the
+  id of the path above it. `Display` and `Debug` still print the whole path.
+
+## API changes at `807f4e5`
+
+- `Keystroke::parse` takes a `&'static str` with explicit modifiers; dynamic text, and the
+  `secondary-` alias, goes through `Keystroke::parse_with_os` and `KeyBinding::load(.., cx)`.
+  `Keystroke` has no `Display`; use `unparse(os)`. `Modifiers::secondary` takes `&App`.
+- `PlatformInput::ScrollWheel` and `ScrollWheelEvent` are `PlatformInput::Scroll` and
+  `ScrollEvent` (with a `source`); `on_scroll_wheel` is `on_scroll`.
+- Effect groups use atlas texture ids from `0xE000_0000` and dynamic textures from `0xE800_0000`.
+- Dynamic textures carry their version in `AtlasTile::padding`.

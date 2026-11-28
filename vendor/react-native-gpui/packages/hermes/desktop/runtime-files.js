@@ -18,11 +18,19 @@ const LIBRARY_NAMES = {
   win32: 'hermesvm.dll',
 };
 
-module.exports = (platform, arch) => {
+// A release build links the VM without the debugger, under `release/`, and a
+// debug build the one with it (see `CMakeLists.txt`).
+module.exports = (platform, arch, { release = true } = {}) => {
   const directory = PLATFORM_DIRECTORIES[`${platform}-${arch}`];
   if (!directory) return [];
   const library = LIBRARY_NAMES[platform];
   if (!library) return [];
-  const candidate = path.join(PACKAGE_ROOT, 'bin', directory, library);
+  const candidate = path.join(
+    PACKAGE_ROOT,
+    'bin',
+    directory,
+    ...(release ? ['release'] : []),
+    library,
+  );
   return fs.existsSync(candidate) ? [candidate] : [];
 };

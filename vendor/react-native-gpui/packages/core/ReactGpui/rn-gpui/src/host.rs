@@ -24,17 +24,24 @@ pub(crate) fn live_host() -> Option<&'static Host> {
 pub struct Host(Arc<Mutex<cxx::UniquePtr<ffi::GpuiHost>>>);
 
 impl Host {
-    pub fn new(app_id: &str, dev_host: &str, port: u32, js_engine: &str, dev_mode: bool) -> Self {
+    pub fn new(
+        app_id: &str,
+        dev_host: &str,
+        port: u32,
+        js_engine: &str,
+        js_thread: &str,
+        dev_mode: bool,
+    ) -> Self {
         #[cfg(test)]
         {
-            let _ = (app_id, dev_host, port, js_engine, dev_mode);
+            let _ = (app_id, dev_host, port, js_engine, js_thread, dev_mode);
             return Self::test_stub();
         }
         #[cfg(not(test))]
         {
             crate::host_component::freeze();
             let host = Self(Arc::new(Mutex::new(ffi::new_gpui_host(
-                app_id, dev_host, port, js_engine, dev_mode,
+                app_id, dev_host, port, js_engine, js_thread, dev_mode,
             ))));
             let _ = LIVE_HOST.set(host.clone());
             host
@@ -66,6 +73,7 @@ impl Host {
     }
 
     pub fn start_surface(&self, id: i32, module: &str, w: f32, h: f32, scale: f32) {
+        crate::text::set_device_scale(scale);
         #[cfg(test)]
         let _ = (self, id, module, w, h, scale);
         #[cfg(not(test))]
@@ -81,6 +89,7 @@ impl Host {
         h: f32,
         scale: f32,
     ) {
+        crate::text::set_device_scale(scale);
         #[cfg(test)]
         let _ = (self, id, module, props_json, w, h, scale);
         #[cfg(not(test))]
@@ -90,6 +99,7 @@ impl Host {
     }
 
     pub fn set_surface_size(&self, id: i32, w: f32, h: f32, scale: f32) {
+        crate::text::set_device_scale(scale);
         #[cfg(test)]
         let _ = (self, id, w, h, scale);
         #[cfg(not(test))]
@@ -156,10 +166,34 @@ impl Host {
     }
 
     pub fn set_window_metrics(&self, w: f32, h: f32, scale: f32) {
+        crate::text::set_device_scale(scale);
         #[cfg(test)]
         let _ = (self, w, h, scale);
         #[cfg(not(test))]
         self.lock().pin_mut().set_window_metrics(w, h, scale)
+    }
+
+    pub fn set_display_metrics(&self, screen_width: f32, screen_height: f32, font_scale: f32) {
+        #[cfg(test)]
+        let _ = (self, screen_width, screen_height, font_scale);
+        #[cfg(not(test))]
+        self.lock()
+            .pin_mut()
+            .set_display_metrics(screen_width, screen_height, font_scale)
+    }
+
+    pub fn set_app_state(&self, state: &str) {
+        #[cfg(test)]
+        let _ = (self, state);
+        #[cfg(not(test))]
+        self.lock().pin_mut().set_app_state(state)
+    }
+
+    pub fn emit_memory_warning(&self) {
+        #[cfg(test)]
+        let _ = self;
+        #[cfg(not(test))]
+        self.lock().emit_memory_warning()
     }
 
     pub fn request_reload(&self) {
@@ -252,7 +286,18 @@ impl Host {
         #[cfg(test)]
         let _ = (self, tag, ty, payload);
         #[cfg(not(test))]
-        self.lock().dispatch_event(tag, ty, &payload.to_string())
+        self.lock().dispatch_event(tag, ty, &payload.to_string());
+        // React Native holds events until its next event beat, and nothing
+        // else may be about to tick it.
+        self.on_render();
+    }
+
+    pub fn dispatch_wheel(&self, tag: i32, id: u64, payload: &serde_json::Value) {
+        #[cfg(test)]
+        let _ = (self, tag, id, payload);
+        #[cfg(not(test))]
+        self.lock().dispatch_wheel(tag, id, &payload.to_string());
+        self.on_render();
     }
 
     pub fn emit_device_event(&self, event_name: &str) {
@@ -295,6 +340,7 @@ impl Host {
             self.lock()
                 .dispatch_pointer_event(&target_chain, x, y, phase, timestamp);
         }
+        self.on_render();
     }
 
     pub fn set_scroll_offset(&self, tag: i32, x: f32, y: f32) {

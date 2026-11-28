@@ -20,11 +20,14 @@ unsafe extern "C" {
     fn rn_gpui_http_requests_not_ignored(patterns: *const std::ffi::c_char) -> u64;
     fn rn_gpui_mount_batches_in_flight() -> u64;
     fn rn_gpui_pending_timers_due_within(window_ms: u64) -> u64;
+    fn rn_gpui_pending_timers_dump(window_ms: u64, buffer: *mut u8, capacity: u64) -> u64;
     fn rn_gpui_websocket_messages_in_flight() -> u64;
     fn rn_gpui_pending_js_tasks() -> u64;
+    fn rn_gpui_pending_js_tasks_dump(buffer: *mut u8, capacity: u64) -> u64;
     fn rn_gpui_native_animations_active() -> u64;
     fn rn_gpui_frame_demand() -> u64;
     fn rn_gpui_pending_work() -> u64;
+    fn rn_gpui_rust_promises_in_flight(younger_than_ms: u64) -> u64;
     fn rn_gpui_request_reload();
     fn rn_gpui_reload_in_progress() -> bool;
     /// Counts the React instances created so far. It changes when a reload
@@ -41,6 +44,44 @@ struct Request {
 /// The generation of the React instance currently mounted, or 0 before the host
 /// has created one. Reported by `hello`, `tree` and `reload` so a client can
 /// wait for a *particular* instance after a reload.
+#[cfg(target_os = "macos")]
+fn dock_menu(command: &str, params: &Value) -> Value {
+    use cocoa::base::id;
+    use objc::{class, msg_send, sel, sel_impl};
+    // SAFETY: AppKit is messaged on the main thread, where the driver runs; the
+    // menu is the delegate's own and outlives this call.
+    unsafe {
+        let app: id = msg_send![class!(NSApplication), sharedApplication];
+        let delegate: id = msg_send![app, delegate];
+        let menu: id = msg_send![delegate, applicationDockMenu: app];
+        if menu.is_null() {
+            return json!({"titles": Vec::<String>::new()});
+        }
+        if command == "dockMenuPress" {
+            let index = params.get("index").and_then(Value::as_i64).unwrap_or(0);
+            let _: () = msg_send![menu, performActionForItemAtIndex: index as isize];
+            return json!({"pressed": index});
+        }
+        let count: isize = msg_send![menu, numberOfItems];
+        let titles: Vec<String> = (0..count)
+            .map(|index| {
+                let item: id = msg_send![menu, itemAtIndex: index];
+                let title: id = msg_send![item, title];
+                let bytes: *const std::os::raw::c_char = msg_send![title, UTF8String];
+                std::ffi::CStr::from_ptr(bytes)
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        json!({"titles": titles})
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn dock_menu(_command: &str, _params: &Value) -> Value {
+    json!({"error": "the Dock menu is only available on macOS"})
+}
+
 fn instance_generation() -> u64 {
     // SAFETY: the C++ function takes no arguments and reads an atomic.
     unsafe { rn_gpui_instance_generation() }
@@ -125,6 +166,63 @@ async fn serve_commands(
                     let hidden = false;
                 json!({"x":f32::from(bounds.origin.x),"y":f32::from(bounds.origin.y),"width":f32::from(bounds.size.width),"height":f32::from(bounds.size.height), "hidden":hidden})
             }).unwrap_or_else(|error|json!({"error":error.to_string()})),
+            #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+            "compositeCapture" => cx
+                .update_window(window, |_, window, _| {
+                    match composite_png(window) {
+                        Ok((png, width, height)) => json!({
+                            "png": base64::engine::general_purpose::STANDARD.encode(png),
+                            "width": width,
+                            "height": height,
+                            "scale": window.scale_factor(),
+                            "viewport": {
+                                "width": f32::from(window.viewport_size().width),
+                                "height": f32::from(window.viewport_size().height),
+                            },
+                        }),
+                        Err(error) => json!({"error": error}),
+                    }
+                })
+                .unwrap_or_else(|error| json!({"error": error.to_string()})),
+            "compositionLayers" => cx
+                .update_window(window, |_, window, _| {
+                    json!({"count": window.composed_scene_layers().len()})
+                })
+                .unwrap_or_else(|error| json!({"error": error.to_string()})),
+            "nativeSurfaces" => {
+                let (scale, layers) = cx
+                    .update_window(window, |_, window, _| {
+                        (window.scale_factor(), window.composed_scene_layers())
+                    })
+                    .unwrap_or((1.0, Vec::new()));
+                let ops = |surface| {
+                    layers
+                        .iter()
+                        .find(|layer| layer.surface == surface)
+                        .map_or(0, |layer| layer.ranges.iter().map(|range| range.len()).sum())
+                };
+                let base_ops: usize = layers.first().map_or(0, |layer| {
+                    layer.ranges.iter().map(|range| range.len()).sum()
+                });
+                cx.update_entity(&store, |store, cx| {
+                    let mut surfaces: Vec<Value> = store
+                        .nodes
+                        .iter()
+                        .filter_map(|(tag, entity)| {
+                            let node = entity.read(cx);
+                            let surface = node.native_surface()?;
+                            let mut state = surface.test_state(scale);
+                            state["tag"] = json!(tag);
+                            state["testID"] = json!(node.view.test_id);
+                            state["aboveOps"] = json!(ops(surface.above()));
+                            state["baseOps"] = json!(base_ops);
+                            Some(state)
+                        })
+                        .collect();
+                    surfaces.sort_by_key(|surface| surface["tag"].as_i64());
+                    json!({"surfaces": surfaces})
+                })
+            }
             "hostCounters" => {
                 use crate::counters::{read, reset, Counter};
                 let counters = json!({
@@ -134,6 +232,14 @@ async fn serve_commands(
                     "hostPropsBytesCopied": read(Counter::HostPropsBytesCopied),
                     "hostUpdateCalls": read(Counter::HostUpdateCalls),
                     "hostReportsDelivered": read(Counter::HostReportsDelivered),
+                    "nativeOpsApplied": read(Counter::NativeOpsApplied),
+                    "nativeApplyMicros": read(Counter::NativeApplyMicros),
+                    "nativeRenderMicros": read(Counter::NativeRenderMicros),
+                    "nativeInstancesCreated": read(Counter::NativeInstancesCreated),
+                    "nativeInstancesRecycled": read(Counter::NativeInstancesRecycled),
+                    "nativeRootHolds": read(Counter::NativeRootHolds),
+                    "nativeRootHeldMs": read(Counter::NativeRootHeldMicros) as f64 / 1000.0,
+                    "nativeRootHoldsSkipped": read(Counter::NativeRootHoldsSkipped),
                 });
                 if params.get("reset").and_then(Value::as_bool).unwrap_or(false) {
                     reset();
@@ -141,28 +247,199 @@ async fn serve_commands(
                 }
                 counters
             }
+            "displays" => cx.update(|cx| {
+                let primary = cx.primary_display().map(|display| display.id());
+                let rect = |bounds: gpui::Bounds<gpui::Pixels>| {
+                    json!({
+                        "x": f32::from(bounds.origin.x),
+                        "y": f32::from(bounds.origin.y),
+                        "width": f32::from(bounds.size.width),
+                        "height": f32::from(bounds.size.height),
+                    })
+                };
+                json!(cx
+                    .displays()
+                    .iter()
+                    .map(|display| json!({
+                        "primary": Some(display.id()) == primary,
+                        "bounds": rect(display.bounds()),
+                        "visibleBounds": rect(display.visible_bounds()),
+                        "scaleFactor": crate::desktop::background::display_scale(
+                            display.id().into()
+                        ),
+                    }))
+                    .collect::<Vec<_>>())
+            }),
             "getWindowSize" => cx
                 .update_window(window, |_, window, _| {
                     let size = window.viewport_size();
                     json!({"width": f32::from(size.width), "height":f32::from(size.height)})
                 })
                 .unwrap_or_else(|error| json!({"error":error.to_string()})),
-            "focusWindow" => cx
-                .update_window(window, |_, window, _| {
-                    if std::env::var("RN_GPUI_TEST_OFFSCREEN").as_deref() != Ok("1") { window.activate_window(); }
-                    json!({"focused":true})
+            "dockMenu" | "dockMenuPress" => dock_menu(method, &params),
+            "layoutStats" => {
+                let reset = params.get("reset").and_then(Value::as_bool).unwrap_or(false);
+                cx.update_window(window, |_, window, cx| {
+                    let views = crate::store::store_from(cx)
+                        .map_or(0, |store| store.read(cx).nodes.len());
+                    let stats = window.layout_stats();
+                    let target_at = crate::wheel::target_at_stats(reset);
+                    let scroll_deltas = crate::wheel::scroll_delta_stats(reset);
+                    let ms = |duration: std::time::Duration| duration.as_secs_f64() * 1000.0;
+                    let report = json!({
+                        "frames": stats.frames,
+                        "nodesCreated": stats.nodes_created,
+                        "nodesReused": stats.nodes_reused,
+                        "nodesFreed": stats.nodes_freed,
+                        "styleCompares": stats.style_compares,
+                        "styleWrites": stats.style_writes,
+                        "childrenWrites": stats.children_writes,
+                        "measureRebinds": stats.measure_rebinds,
+                        "measurementsKept": stats.measurements_kept,
+                        "measurementsReplayed": stats.measurements_replayed,
+                        "measureCalls": stats.measure_calls,
+                        "measureMs": ms(stats.measure_time),
+                        "computeLayoutCalls": stats.compute_layout_calls,
+                        "buildMs": ms(stats.build_time),
+                        "prepaintMs": ms(stats.prepaint_time),
+                        "paintMs": ms(stats.paint_time),
+                        "computeLayoutMs": ms(stats.compute_layout_time),
+                        "linesShaped": stats.lines_shaped,
+                        "shapeMs": ms(stats.shape_time),
+                        "viewsBuilt": stats.views_built,
+                        "viewsReused": stats.views_reused,
+                        "layerFramesComposited": stats.layer_frames_composited,
+                        "layerFramesRepainted": stats.layer_frames_repainted,
+                        "tilesDirtied": stats.tiles_dirtied,
+                        "layerRebuildsForInput": stats.layer_rebuilds_for_input,
+                        "layersDemoted": stats.layers_demoted,
+                        "layoutNodes": window.layout_node_count(),
+                        "views": views,
+                        "targetAtCalls": target_at.0,
+                        "targetAtMs": target_at.1,
+                        "scrollEvents": scroll_deltas.0,
+                        "scrollEventsWholePixel": scroll_deltas.1,
+                    });
+                    if reset {
+                        window.reset_layout_stats();
+                    }
+                    report
                 })
-                .unwrap_or_else(|error| json!({"error":error.to_string()})),
-            "a11yTree" => {
-                let _ = cx.update_window(window, |_, window, _| {
-                    #[cfg(target_os = "macos")]
-                    crate::native_view::activate_accessibility_probe(window);
+                .unwrap_or_else(|error| json!({"error": error.to_string()}))
+            }
+            "windowAlpha" => cx
+                .update_window(window, |_, window, _| {
+                    json!({
+                        "alpha": crate::desktop::platform_window::window_alpha(window),
+                        "revealedBy": crate::desktop::windows::last_reveal(),
+                    })
+                })
+                .unwrap_or_else(|error| json!({"error": error.to_string()})),
+            "tooltip" => {
+                let active = crate::tooltip::active();
+                #[cfg(target_os = "macos")]
+                let (owner_text, tracking_areas) = cx
+                    .update_window(window, |_, window, _| {
+                        crate::tooltip::native_probe(window, active.as_ref().map_or(0, |a| a.tag))
+                    })
+                    .unwrap_or((None, 0));
+                #[cfg(not(target_os = "macos"))]
+                let (owner_text, tracking_areas): (Option<String>, usize) = (None, 0);
+                let drawn = crate::tooltip::drawn();
+                json!({
+                    "mode": crate::tooltip::mode(),
+                    "tag": active.as_ref().map(|active| active.tag),
+                    "text": active.as_ref().map(|active| active.text.clone()),
+                    "rect": active.as_ref().map(|active| active.rect),
+                    "drawn": drawn.map(|drawn| drawn.text),
+                    "ownerText": owner_text,
+                    "trackingAreas": tracking_areas,
+                })
+            }
+            "focusWindow" => {
+                let offscreen = std::env::var("RN_GPUI_TEST_OFFSCREEN").as_deref() == Ok("1");
+                if !offscreen && crate::desktop::background::enabled() {
+                    // A background run is never the operating system's active
+                    // application, so the window is made active logically.
+                    cx.update(|cx| {
+                        crate::desktop::windows::simulate_activation(cx, 1, true)
+                            .map(|_| json!({"focused": true}))
+                            .unwrap_or_else(|error| error.to_json_value())
+                    })
+                } else {
+                let hwnd = cx.update_window(window, |_, window, _| {
+                    if offscreen {
+                        return None;
+                    }
+                    window.activate_window();
                     #[cfg(target_os = "windows")]
-                    activate_accessibility_probe(window);
-                    window.refresh();
+                    return window_hwnd(window);
+                    #[cfg(not(target_os = "windows"))]
+                    None::<isize>
                 });
-                wait_for_frame(window, cx, Duration::from_millis(16)).await;
-                wait_for_frame(window, cx, Duration::from_millis(16)).await;
+                // The calls send activation messages that re-enter the window
+                // procedure, so they run after the window update has returned.
+                #[cfg(target_os = "windows")]
+                if let Ok(Some(hwnd)) = hwnd {
+                    bring_to_front(hwnd);
+                }
+                match hwnd {
+                    Ok(_) => json!({"focused":true}),
+                    Err(error) => json!({"error":error.to_string()}),
+                }
+                }
+            }
+            "setScrollerStyle" => {
+                let legacy = params.get("legacy").and_then(Value::as_bool).unwrap_or(false);
+                cx.update(|cx| crate::scroller_style::set_for_test(legacy, cx));
+                json!({"legacy": legacy})
+            }
+            "setWindowActive" => {
+                let key = params.get("windowId").and_then(Value::as_u64).unwrap_or(1) as u32;
+                let active = params.get("active").and_then(Value::as_bool).unwrap_or(true);
+                cx.update(|cx| {
+                    crate::desktop::windows::simulate_activation(cx, key, active)
+                        .unwrap_or_else(|error| error.to_json_value())
+                })
+            }
+            "focusReadout" => {
+                let mirror = crate::desktop::window_mirror::get(1)
+                    .and_then(|state| state.get("isFocused").cloned())
+                    .unwrap_or(Value::Null);
+                #[cfg(target_os = "windows")]
+                let mut readout = cx
+                    .update_window(window, |_, window, _| window_hwnd(window))
+                    .ok()
+                    .flatten()
+                    .map(focus_readout)
+                    .unwrap_or_else(|| json!({}));
+                #[cfg(not(target_os = "windows"))]
+                let mut readout = json!({});
+                readout["mirrorIsFocused"] = mirror;
+                readout
+            }
+            "a11yTree" => {
+                let activated = cx
+                    .update_window(window, |_, window, _| {
+                        static ASKED: std::sync::atomic::AtomicBool =
+                            std::sync::atomic::AtomicBool::new(false);
+                        if window.is_a11y_active()
+                            || ASKED.swap(true, std::sync::atomic::Ordering::Relaxed)
+                        {
+                            return false;
+                        }
+                        #[cfg(target_os = "macos")]
+                        crate::native_view::activate_accessibility_probe(window);
+                        #[cfg(target_os = "windows")]
+                        activate_accessibility_probe(window);
+                        window.refresh();
+                        true
+                    })
+                    .unwrap_or(false);
+                if activated {
+                    wait_for_frame(window, cx, Duration::from_millis(16)).await;
+                    wait_for_frame(window, cx, Duration::from_millis(16)).await;
+                }
                 cx.update_window(window, |_, window, _| window.debug_a11y_tree_json())
                     .map(|tree| {
                         tree.and_then(|tree| serde_json::from_str::<Value>(&tree).ok())
@@ -296,7 +573,7 @@ async fn serve_commands(
                             // never-mapped window has it immediately.
                             let deadline =
                                 std::time::Instant::now() + std::time::Duration::from_secs(2);
-                            loop {
+                            let reply = loop {
                                 let size = cx
                                     .update_window(window, |_, window, app| {
                                         window.bounds_changed(app);
@@ -314,7 +591,29 @@ async fn serve_commands(
                                 }
                                 wait_for_frame(window, cx, std::time::Duration::from_millis(16))
                                     .await;
+                            };
+                            // React lays the surface out at the new size later: a
+                            // resize soon after another is held back for the
+                            // store's resize interval, and the layout is a JS
+                            // commit. Frames, hit tests and screenshots taken
+                            // before it lands see the old layout, so wait
+                            // (bounded) until the surface's top views fill it.
+                            let deadline =
+                                std::time::Instant::now() + std::time::Duration::from_secs(5);
+                            let mut laid_out = false;
+                            while std::time::Instant::now() < deadline {
+                                laid_out = cx.update_entity(&store, |store, cx| {
+                                    store.window_layout_matches_size(window, cx)
+                                });
+                                if laid_out {
+                                    break;
+                                }
+                                wait_for_frame(window, cx, std::time::Duration::from_millis(16))
+                                    .await;
                             }
+                            let mut reply = reply;
+                            reply["laidOut"] = json!(laid_out);
+                            reply
                         }
                     }
                 }
@@ -326,8 +625,8 @@ async fn serve_commands(
                         RectF {
                             x: 0.0,
                             y: 0.0,
-                            w: f32::from(size.width),
-                            h: f32::from(size.height),
+                            w: f32::from(size.width) / crate::desktop::zoom::get(crate::store::APP_SURFACE_ID),
+                            h: f32::from(size.height) / crate::desktop::zoom::get(crate::store::APP_SURFACE_ID),
                         }
                     })
                     .unwrap_or_default();
@@ -363,14 +662,19 @@ async fn serve_commands(
                         RectF {
                             x: 0.0,
                             y: 0.0,
-                            w: f32::from(size.width),
-                            h: f32::from(size.height),
+                            w: f32::from(size.width) / crate::desktop::zoom::get(crate::store::APP_SURFACE_ID),
+                            h: f32::from(size.height) / crate::desktop::zoom::get(crate::store::APP_SURFACE_ID),
                         }
                     })
                     .ok();
                 let target = viewport.and_then(|viewport| {
                     cx.update_entity(&store, |store, cx| {
                         let tag = params.get("tag").and_then(Value::as_i64)? as i32;
+                        if let Some((position, root_tag)) =
+                            crate::builtins::native_root::pointer_target(tag)
+                        {
+                            return Some(Ok((position, root_tag)));
+                        }
                         let node = store.nodes.get(&tag)?;
                         if node.read(cx).view.accessibility_disabled {
                             return Some(Err("click target is disabled"));
@@ -456,6 +760,7 @@ async fn serve_commands(
                                 let dispatched =
                                     cx.update_window(window, move |_root, window, app| {
                                         draw_frame(window, app);
+                                        trace_input_dispatch("input");
                                         window.dispatch_event(
                                             gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
                                                 button,
@@ -488,21 +793,26 @@ async fn serve_commands(
                     None => json!({"error": "click requires a mounted tag"}),
                 }
             }
-            "hover" | "scroll" => {
+            "hover" | "scroll" | "pinch" => {
                 let viewport = cx
                     .update_window(window, |_, window, _| {
                         let size = window.viewport_size();
                         RectF {
                             x: 0.0,
                             y: 0.0,
-                            w: f32::from(size.width),
-                            h: f32::from(size.height),
+                            w: f32::from(size.width) / crate::desktop::zoom::get(crate::store::APP_SURFACE_ID),
+                            h: f32::from(size.height) / crate::desktop::zoom::get(crate::store::APP_SURFACE_ID),
                         }
                     })
                     .ok();
                 let target = viewport.and_then(|viewport| {
                     cx.read_entity(&store, |store, cx| {
                         let tag = params.get("tag").and_then(Value::as_i64)? as i32;
+                        if let Some((position, root_tag)) =
+                            crate::builtins::native_root::pointer_target(tag)
+                        {
+                            return Some(Ok((root_tag, position)));
+                        }
                         let node = store.nodes.get(&tag)?;
                         if node.read(cx).view.accessibility_disabled {
                             return Some(Err("pointer target is disabled"));
@@ -523,6 +833,33 @@ async fn serve_commands(
                         let kind = method.to_owned();
                         let dx = params.get("dx").and_then(Value::as_f64).unwrap_or(0.0) as f32;
                         let dy = params.get("dy").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+                        let phased = params.get("phase").is_some();
+                        let touch_phase = match params.get("phase").and_then(Value::as_str) {
+                            Some("started") => gpui::TouchPhase::Started,
+                            Some("ended") => gpui::TouchPhase::Ended,
+                            _ => gpui::TouchPhase::Moved,
+                        };
+                        let lines = params.get("lines").and_then(Value::as_bool).unwrap_or(false);
+                        let held = |name: &str| {
+                            params
+                                .get("modifiers")
+                                .and_then(|modifiers| modifiers.get(name))
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false)
+                        };
+                        let modifiers = gpui::Modifiers {
+                            shift: held("shift"),
+                            control: held("control"),
+                            alt: held("alt"),
+                            platform: held("platform"),
+                            ..Default::default()
+                        };
+                        let pinch_delta = params.get("delta").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+                        let scroll_delta = if lines {
+                            gpui::ScrollDelta::Lines(point(dx, dy))
+                        } else {
+                            gpui::ScrollDelta::Pixels(point(px(dx), px(dy)))
+                        };
                         let preflight = cx.update_window(window, move |_root, window, app| {
                             draw_frame(window, app);
                             window.dispatch_event(
@@ -546,6 +883,11 @@ async fn serve_commands(
                         let mut rendered = 0usize;
                         let mut rendered_total = 0usize;
                         let mut a11y_active = false;
+                        let interval_ms = params
+                            .get("intervalMs")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0)
+                            .min(200);
                         let repeat = params
                             .get("repeat")
                             .and_then(Value::as_u64)
@@ -553,28 +895,80 @@ async fn serve_commands(
                             .clamp(1, 1000);
                         let result: Result<(), String> = match hit {
                             Some((true, _)) if kind == "hover" => Ok(()),
-                            Some((true, _)) => cx
+                            Some((true, _)) if kind == "pinch" => cx
                                 .update_window(window, |_root, window, app| {
                                     draw_frame(window, app);
                                     window.dispatch_event(
-                                        gpui::PlatformInput::ScrollWheel(gpui::ScrollWheelEvent {
+                                        gpui::PlatformInput::Pinch(gpui::PinchEvent {
                                             position,
-                                            delta: gpui::ScrollDelta::Pixels(point(px(dx), px(dy))),
+                                            delta: pinch_delta,
+                                            modifiers,
+                                            phase: touch_phase,
+                                        }),
+                                        app,
+                                    );
+                                    draw_frame(window, app);
+                                })
+                                .map_err(|error| error.to_string()),
+                            Some((true, _)) => cx
+                                .update_window(window, |_root, window, app| {
+                                    draw_frame(window, app);
+                                    if kind == "scroll" && !phased {
+                                        // A wheel tick within the latching window of the
+                                        // last one belongs to its sequence and stays with
+                                        // its container. Each driver scroll is a separate
+                                        // gesture, so a tick of the other delta kind that
+                                        // moves nothing ends that sequence first.
+                                        window.dispatch_event(
+                                            gpui::PlatformInput::Scroll(gpui::ScrollEvent {
+                                                position,
+                                                delta: if lines {
+                                                    gpui::ScrollDelta::Pixels(point(px(0.0), px(0.0)))
+                                                } else {
+                                                    gpui::ScrollDelta::Lines(point(0.0, 0.0))
+                                                },
+                                                modifiers,
+                                                touch_phase,
+                                                ..Default::default()
+                                            }),
+                                            app,
+                                        );
+                                    }
+                                    window.dispatch_event(
+                                        gpui::PlatformInput::Scroll(gpui::ScrollEvent {
+                                            position,
+                                            delta: scroll_delta,
+                                            modifiers,
+                                            touch_phase,
                                             ..Default::default()
                                         }),
                                         app,
                                     );
                                     a11y_active = window.is_a11y_active();
+                                    // Delta k goes out `k * interval_ms` after the
+                                    // first, whatever the frames in between cost, so
+                                    // a gesture's speed does not depend on how
+                                    // loaded the machine is.
+                                    let first_sent = std::time::Instant::now();
                                     for step in 0..repeat {
+                                        if step > 0 && interval_ms > 0 {
+                                            let due = first_sent
+                                                + std::time::Duration::from_millis(
+                                                    interval_ms * step,
+                                                );
+                                            let now = std::time::Instant::now();
+                                            if due > now {
+                                                std::thread::sleep(due - now);
+                                            }
+                                        }
                                         if step > 0 {
                                             window.dispatch_event(
-                                                gpui::PlatformInput::ScrollWheel(
-                                                    gpui::ScrollWheelEvent {
+                                                gpui::PlatformInput::Scroll(
+                                                    gpui::ScrollEvent {
                                                         position,
-                                                        delta: gpui::ScrollDelta::Pixels(point(
-                                                            px(dx),
-                                                            px(dy),
-                                                        )),
+                                                        delta: scroll_delta,
+                                                        modifiers,
+                                                        touch_phase,
                                                         ..Default::default()
                                                     },
                                                 ),
@@ -643,11 +1037,29 @@ async fn serve_commands(
                             platform: modifiers["platform"].as_bool().unwrap_or(false),
                             function: modifiers["function"].as_bool().unwrap_or(false),
                         };
+                        // A button pressed by this driver stays held until it is
+                        // released, so a move in between is a drag, as with a mouse.
+                        static HELD: std::sync::Mutex<Option<gpui::MouseButton>> =
+                            std::sync::Mutex::new(None);
+                        let held = {
+                            let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+                            match method {
+                                "mouseDown" => *held = Some(button),
+                                "mouseUp" => *held = None,
+                                _ => {}
+                            }
+                            *held
+                        };
                         let event = match method {
                             "mouseDown" => gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
                                 position,
                                 button,
                                 modifiers,
+                                click_count: params
+                                    .get("clickCount")
+                                    .and_then(Value::as_u64)
+                                    .unwrap_or(1)
+                                    .clamp(1, 3) as usize,
                                 ..Default::default()
                             }),
                             "mouseUp" => gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
@@ -662,7 +1074,8 @@ async fn serve_commands(
                                 pressed_button: params
                                     .get("button")
                                     .and_then(Value::as_str)
-                                    .map(|_| button),
+                                    .map(|_| button)
+                                    .or(held),
                                 ..Default::default()
                             }),
                         };
@@ -678,15 +1091,67 @@ async fn serve_commands(
                     json!({"error":"Pointer command requires x and y"})
                 }
             }
+            "dragFiles" | "dropFiles" | "dragFilesExit" => {
+                let x = params.get("x").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+                let y = params.get("y").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+                let position = point(px(x), px(y));
+                let paths: Vec<std::path::PathBuf> = params
+                    .get("paths")
+                    .and_then(Value::as_array)
+                    .map(|paths| {
+                        paths
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(std::path::PathBuf::from)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let method = method.to_owned();
+                cx.update_window(window, move |_, window, app| {
+                    draw_frame(window, app);
+                    let mut send = |event: gpui::FileDropEvent| {
+                        window.dispatch_event(gpui::PlatformInput::FileDrop(event), app);
+                        draw_frame(window, app);
+                    };
+                    match method.as_str() {
+                        "dragFiles" => {
+                            if !paths.is_empty() {
+                                send(gpui::FileDropEvent::Entered {
+                                    position,
+                                    paths: gpui::ExternalPaths(paths.into_iter().collect()),
+                                });
+                            }
+                            send(gpui::FileDropEvent::Pending { position });
+                        }
+                        "dropFiles" => {
+                            send(gpui::FileDropEvent::Submit { position });
+                            send(gpui::FileDropEvent::Ended);
+                        }
+                        _ => {
+                            send(gpui::FileDropEvent::Exited);
+                            send(gpui::FileDropEvent::Ended);
+                        }
+                    }
+                    json!({"dispatched": true})
+                })
+                .unwrap_or_else(|error| json!({"error": error.to_string()}))
+            }
             "focus" => {
-                let handle = cx.update_entity(&store, |store,cx| {
-                    let tag = params.get("tag").and_then(Value::as_i64)? as i32;
-                    store.nodes.get(&tag)?.read(cx).nearest_focus_handle(cx)
-                });
-                if let Some(handle) = handle {
-                    cx.update_window(window, move |_,window,app| { window.focus(&handle,app); draw_frame(window, app); json!({"focused":true}) })
-                        .unwrap_or_else(|error|json!({"error":error.to_string()}))
-                } else {json!({"error":"Target has no focusable ancestor"})}
+                let node = params
+                    .get("tag")
+                    .and_then(Value::as_i64)
+                    .and_then(|tag| store.read_with(cx, |store, _| store.nodes.get(&(tag as i32)).cloned()));
+                cx.update_window(window, move |_, window, app| {
+                    match node.and_then(|node| crate::node_view::RNNodeView::press_focus_handle(&node, window, app)) {
+                        Some(handle) => {
+                            window.focus(&handle, app);
+                            draw_frame(window, app);
+                            json!({"focused": true})
+                        }
+                        None => json!({"error": "Target has no focusable ancestor"}),
+                    }
+                })
+                .unwrap_or_else(|error| json!({"error": error.to_string()}))
             },
             "press" => {
                 let key = params.get("key").and_then(Value::as_str).unwrap_or("");
@@ -698,7 +1163,14 @@ async fn serve_commands(
                         "ctrl-"
                     },
                 );
-                match gpui::Keystroke::parse(&key) {
+                // Modifiers first, the key last: `mod-ArrowDown`, `shift-PageUp`.
+                let key = match key.rsplit_once('-') {
+                    Some((modifiers, name)) if !name.is_empty() => {
+                        format!("{modifiers}-{}", crate::desktop::keymap::gpui_key_name(name))
+                    }
+                    _ => crate::desktop::keymap::gpui_key_name(&key),
+                };
+                match gpui::Keystroke::parse_with_os(&key, crate::desktop::keymap::host_os()) {
                     Ok(keystroke) => {
                         let dispatched = cx.update_window(window, move |_root, window, app| {
                             draw_frame(window, app);
@@ -716,12 +1188,85 @@ async fn serve_commands(
                     Err(error) => json!({"error": format!("invalid keystroke {key:?}: {error}")}),
                 }
             }
+            "ime" => {
+                let tag = params.get("tag").and_then(Value::as_i64).unwrap_or(0) as i32;
+                let steps = params
+                    .get("steps")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                let target = cx.update_entity(&store, |store, cx| {
+                    if let Some((position, _)) = crate::builtins::native_root::pointer_target(tag) {
+                        return Some(position);
+                    }
+                    let node = store.nodes.get(&tag)?.read(cx);
+                    if node.component != "TextInput" || !node.input().editable {
+                        return None;
+                    }
+                    node_frame(store, tag, cx)
+                        .map(|frame| frame_center(frame, window_offset(store, tag, cx)))
+                });
+                match target {
+                    None => json!({"error": "ime requires a mounted, editable text input"}),
+                    Some(position) => {
+                        let store = store.clone();
+                        let result = cx.update_window(window, move |_root, window, app| {
+                            draw_frame(window, app);
+                            let focused = store
+                                .read(app)
+                                .nodes
+                                .get(&tag)
+                                .and_then(|node| node.read(app).accessibility_focus_handle())
+                                .is_some_and(|handle| handle.is_focused(window));
+                            if !focused {
+                                window.dispatch_event(
+                                    gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                                        button: gpui::MouseButton::Left,
+                                        position,
+                                        ..Default::default()
+                                    }),
+                                    app,
+                                );
+                                window.dispatch_event(
+                                    gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+                                        button: gpui::MouseButton::Left,
+                                        position,
+                                        ..Default::default()
+                                    }),
+                                    app,
+                                );
+                            }
+                            draw_frame(window, app);
+                            let mut all = true;
+                            for step in &steps {
+                                if let Some(text) = step.get("mark").and_then(Value::as_str) {
+                                    all &= window.simulate_marked_text(text, app);
+                                } else if let Some(text) =
+                                    step.get("commit").and_then(Value::as_str)
+                                {
+                                    all &= window.simulate_committed_text(text, app);
+                                }
+                                draw_frame(window, app);
+                            }
+                            all
+                        });
+                        match result {
+                            Ok(true) => json!({"composed": true}),
+                            Ok(false) => json!({"error": "focused view has no text input handler"}),
+                            Err(error) => json!({"error": error.to_string()}),
+                        }
+                    }
+                }
+            }
             "type" => {
                 let target = cx.update_entity(&store, |store, cx| {
                     let tag = params.get("tag").and_then(Value::as_i64)? as i32;
+                    if let Some((position, _)) = crate::builtins::native_root::pointer_target(tag) {
+                        return Some(position);
+                    }
                     let entity = store.nodes.get(&tag)?;
                     let node = entity.read(cx);
-                    if node.component != "TextInput" || !node.input_editable {
+                    if node.component != "TextInput" || !node.input().editable {
                         return None;
                     }
                     node_frame(store, tag, cx).map(|frame| {
@@ -736,24 +1281,34 @@ async fn serve_commands(
                 match target {
                     None => json!({"error": "type requires a mounted, editable TextInput"}),
                     Some(position) => {
+                        let tag = params.get("tag").and_then(Value::as_i64).unwrap_or(0) as i32;
+                        let store = store.clone();
                         let dispatched = cx.update_window(window, move |_root, window, app| {
                             draw_frame(window, app);
-                            window.dispatch_event(
-                                gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
-                                    button: gpui::MouseButton::Left,
-                                    position,
-                                    ..Default::default()
-                                }),
-                                app,
-                            );
-                            window.dispatch_event(
-                                gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
-                                    button: gpui::MouseButton::Left,
-                                    position,
-                                    ..Default::default()
-                                }),
-                                app,
-                            );
+                            let focused = store
+                                .read(app)
+                                .nodes
+                                .get(&tag)
+                                .and_then(|node| node.read(app).accessibility_focus_handle())
+                                .is_some_and(|handle| handle.is_focused(window));
+                            if !focused {
+                                window.dispatch_event(
+                                    gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                                        button: gpui::MouseButton::Left,
+                                        position,
+                                        ..Default::default()
+                                    }),
+                                    app,
+                                );
+                                window.dispatch_event(
+                                    gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+                                        button: gpui::MouseButton::Left,
+                                        position,
+                                        ..Default::default()
+                                    }),
+                                    app,
+                                );
+                            }
                             // Focusing can install a new InputHandler during
                             // paint. Native OS input arrives on a later turn;
                             // synthetic typing must complete that paint first.
@@ -763,6 +1318,7 @@ async fn serve_commands(
                                 key: "a".to_owned(),
                                 key_char: Some(text),
                             };
+                            trace_input_dispatch("input");
                             let handled = window.dispatch_keystroke(keystroke.clone(), app);
                             window.dispatch_event(
                                 gpui::PlatformInput::KeyUp(gpui::KeyUpEvent { keystroke }),
@@ -850,6 +1406,7 @@ async fn serve_commands(
                                         gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
                                             button: gpui::MouseButton::Left,
                                             position: start,
+                                            click_count: 1,
                                             ..Default::default()
                                         }),
                                         app,
@@ -992,8 +1549,8 @@ async fn serve_commands(
                             RectF {
                                 x: 0.0,
                                 y: 0.0,
-                                w: f32::from(size.width),
-                                h: f32::from(size.height),
+                                w: f32::from(size.width) / crate::desktop::zoom::get(crate::store::APP_SURFACE_ID),
+                                h: f32::from(size.height) / crate::desktop::zoom::get(crate::store::APP_SURFACE_ID),
                             },
                             window.scale_factor(),
                         )
@@ -1013,43 +1570,49 @@ async fn serve_commands(
                             .map(|frame| (frame, window_offset(store, tag, cx)))
                     })
                 });
+                let capture_started = Instant::now();
+                // An element is drawn as its own device-pixel region of the
+                // frame, not as the whole frame cropped afterwards.
                 let captured = cx.update_window(window, |_root, window, app| {
                     draw_frame(window, app);
-                    window.render_to_image()
+                    match frame {
+                        Some((frame, offset)) => {
+                            let size = window.viewport_size();
+                            let (width, height) = (
+                                (f32::from(size.width) * scale).round() as i32,
+                                (f32::from(size.height) * scale).round() as i32,
+                            );
+                            match device_region(frame, offset, scale, width, height) {
+                                Some((x, y, w, h)) => window
+                                    .render_region_to_image(gpui::Bounds {
+                                        origin: point(
+                                            gpui::DevicePixels(x),
+                                            gpui::DevicePixels(y),
+                                        ),
+                                        size: gpui::size(
+                                            gpui::DevicePixels(w),
+                                            gpui::DevicePixels(h),
+                                        ),
+                                    })
+                                    .map(Some),
+                                None => Ok(None),
+                            }
+                        }
+                        None => window.render_to_image().map(Some),
+                    }
                 });
+                if std::env::var_os("RN_GPUI_TEST_SCREENSHOT_TIMING").is_some() {
+                    eprintln!(
+                        "[rn-gpui-test] screenshot tag={:?} capture_ms={:.1}",
+                        tag,
+                        capture_started.elapsed().as_secs_f64() * 1000.0
+                    );
+                }
                 match captured {
                     Ok(Ok(image)) => {
                         if tag.is_some() && frame.is_none() {
                             json!({"error": "screenshot target is not mounted or visible"})
                         } else {
-                            let image = if let Some((frame, offset)) = frame {
-                                let (image_width, image_height) = image.dimensions();
-                                let x = (frame.x * scale).floor().max(0.0) as u32;
-                                let y =
-                                    ((frame.y + offset) * scale).floor().max(0.0) as u32;
-                                let right = ((frame.x + frame.w) * scale).ceil().max(0.0) as u32;
-                                let bottom = ((frame.y + offset + frame.h) * scale)
-                                    .ceil()
-                                    .max(0.0) as u32;
-                                let right = right.min(image_width);
-                                let bottom = bottom.min(image_height);
-                                if x >= right || y >= bottom {
-                                    None
-                                } else {
-                                    Some(
-                                        image::imageops::crop_imm(
-                                            &image,
-                                            x,
-                                            y,
-                                            right - x,
-                                            bottom - y,
-                                        )
-                                        .to_image(),
-                                    )
-                                }
-                            } else {
-                                Some(image)
-                            };
                             match image {
                                 None => json!({"error": "screenshot target has no visible pixels"}),
                                 Some(image) => match image.save(&path) {
@@ -1174,7 +1737,9 @@ async fn serve_commands(
             "menuBarState" => cx.update(|cx| {
                 json!({
                     "enabled": crate::desktop::gpui_menu::should_use_gpui_menu_bar(),
-                    "inset": crate::desktop::gpui_menu::menu_bar_inset(),
+                    "inset": crate::desktop::gpui_menu::menu_bar_inset_for_window_id(
+        crate::desktop::windows::MAIN_WINDOW_KEY,
+    ),
                     "titles": crate::desktop::gpui_menu::menu_bar_entries(cx)
                         .into_iter()
                         .map(|(label, _)| label)
@@ -1189,6 +1754,20 @@ async fn serve_commands(
                     .to_string();
                 cx.update(|cx| {
                     json!({"opened": crate::desktop::gpui_menu::open_menu_bar_menu(cx, &title)})
+                })
+            }
+            "clipboardText" => cx.update(|cx| {
+                json!({"text": cx.read_from_clipboard().and_then(|item| item.text())})
+            }),
+            "setClipboardText" => {
+                let text = params
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                cx.update(|cx| {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                    json!({"set": true})
                 })
             }
             "contextMenuPresenter" => {
@@ -1236,6 +1815,12 @@ async fn serve_commands(
                         .unwrap_or_else(|error| error.to_json_value())
                 })
             }
+            // What the window's close button does first when a Modal is shown.
+            "modalCloseRequest" => cx
+                .update_window(window, |_, window, app| {
+                    json!({"handled": crate::desktop::windows::request_modal_close(window, app)})
+                })
+                .unwrap_or_else(|error| json!({"error": error.to_string()})),
             "osCloseWindow" => {
                 let key = params.get("windowId").and_then(Value::as_u64).unwrap_or(0) as u32;
                 cx.update(|cx| json!({"closed": crate::desktop::windows::os_close(cx, key)}))
@@ -1246,6 +1831,79 @@ async fn serve_commands(
             "appReopen" => cx.update(|cx| {
                 crate::desktop::windows::reopen(cx);
                 crate::desktop::windows::list_windows(cx).unwrap_or(Value::Null)
+            }),
+            // Stands in for the OS opening one of the app's URL schemes.
+            "openUrl" => {
+                let url = params
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                crate::desktop::deep_link::handle_url(url);
+                json!({"delivered": true})
+            }
+            #[cfg(target_os = "macos")]
+            "shareOpen" => json!({
+                "open": crate::builtins::share::mac::is_open(),
+                "anchor": crate::builtins::share::mac::last_anchor()
+                    .map(|(x, y, w, h, flipped)| json!({"x": x, "y": y, "width": w, "height": h, "flipped": flipped})),
+            }),
+            #[cfg(target_os = "macos")]
+            "shareChoose" => {
+                let name = params.get("service").and_then(Value::as_str);
+                json!({"sent": crate::builtins::share::mac::simulate_choice(name)})
+            }
+            "alertState" => cx.update(|cx| {
+                crate::builtins::alert::dialog::describe(cx).unwrap_or_else(|| {
+                    #[cfg(target_os = "macos")]
+                    {
+                        crate::builtins::alert::mac::describe().unwrap_or(Value::Null)
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        Value::Null
+                    }
+                })
+            }),
+            "alertRespond" => {
+                let button = params.get("button").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let texts: Vec<String> = params
+                    .get("texts")
+                    .and_then(Value::as_array)
+                    .map(|texts| {
+                        texts
+                            .iter()
+                            .filter_map(|text| text.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let responded = cx.update(|cx| {
+                    if crate::builtins::alert::dialog::respond(cx, button, &texts) {
+                        return true;
+                    }
+                    #[cfg(target_os = "macos")]
+                    {
+                        crate::builtins::alert::mac::respond(button, &texts)
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        false
+                    }
+                });
+                json!({ "responded": responded })
+            }
+            "alertEscape" => cx.update(|cx| {
+                if crate::builtins::alert::dialog::press_escape(cx) {
+                    return json!({"sent": true});
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    json!({"sent": crate::builtins::alert::mac::press_escape()})
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    json!({"sent": false})
+                }
             }),
             "listWindows" => cx.update(|cx| {
                 crate::desktop::windows::list_windows(cx).unwrap_or(Value::Null)
@@ -1295,17 +1953,25 @@ async fn serve_commands(
 fn draw_frame(window: &mut gpui::Window, app: &mut App) {
     let needs_clear = window.draw(app);
     needs_clear.clear(app);
+    crate::events::flush_hover_retarget(window, app);
     let Some(store) = app.try_global::<crate::store::StoreGlobal>() else {
         return;
     };
     let store = store.0.clone();
-    let transitioning: Vec<Entity<RNNodeView>> = store
-        .read(app)
-        .nodes
-        .values()
-        .filter(|node| node.read(app).transition_active(app))
-        .cloned()
-        .collect();
+    let transitioning: Vec<Entity<RNNodeView>> = {
+        let store = store.read(app);
+        let mut tracked = store.transitioning.borrow_mut();
+        tracked.retain(|tag| {
+            store
+                .nodes
+                .get(tag)
+                .is_some_and(|node| node.read(app).transition_active(app))
+        });
+        tracked
+            .iter()
+            .filter_map(|tag| store.nodes.get(tag).cloned())
+            .collect()
+    };
     for node in transitioning {
         node.update(app, |_, cx| cx.notify());
     }
@@ -1342,11 +2008,8 @@ async fn wait_for_frame(
     cx: &mut gpui::AsyncApp,
     timeout: Duration,
 ) -> bool {
-    let Some(window) = drawable_window(window, cx) else {
-        return false;
-    };
-    if cx
-        .update_window(window, move |_root, window, app| {
+    let drawn = drawable_window(window, cx).is_some_and(|window| {
+        cx.update_window(window, move |_root, window, app| {
             draw_frame(window, app);
             // A forced draw does not run the compositor's frame callbacks.
             // Deliver Fabric's EventBeat too, so buffered native events reach JS.
@@ -1357,12 +2020,31 @@ async fn wait_for_frame(
                 host.on_render();
             }
         })
-        .is_err()
-    {
+        .is_ok()
+    });
+    if !drawn {
+        // No window could be drawn: none is open yet, or it is in the middle of
+        // an update. Callers retry in a loop, and returning at once never
+        // yields the main thread, so the window could not open or finish its
+        // update until their timeout ran out. Give the app a frame first.
+        cx.background_executor()
+            .timer(timeout.min(Duration::from_millis(16)))
+            .await;
         return false;
     }
 
-    let interval = timeout.min(Duration::from_millis(16));
+    // The pause after a forced draw lets JS answer the frame's events. A test
+    // does not need a display's 16 ms for that: 4 ms halves the cost of every
+    // idle wait. 1 ms was fast enough to let a scroll bar hover race ahead of
+    // the thumb under load, so `RN_GPUI_TEST_FRAME_MS` stays an override.
+    static FRAME_MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let frame_ms = *FRAME_MS.get_or_init(|| {
+        std::env::var("RN_GPUI_TEST_FRAME_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(4)
+    });
+    let interval = timeout.min(Duration::from_millis(frame_ms));
     cx.background_executor().timer(interval).await;
     true
 }
@@ -1403,9 +2085,19 @@ fn idle_status(
     if (js_tasks > 0 || unsafe { rn_gpui_reload_in_progress() })
         && !ignore.iter().any(|item| item == "js")
     {
-        busy.push(
-            json!({"source":"js", "detail":format!("{js_tasks} queued or running JS task(s)")}),
-        );
+        let mut detail = format!("{js_tasks} queued or running JS task(s)");
+        if std::env::var_os("RN_GPUI_DEBUG_JS_TASKS").is_some() {
+            let mut buffer = vec![0u8; 64 * 1024];
+            // SAFETY: the buffer is valid for the capacity given, and the call
+            // writes at most that many bytes.
+            let length =
+                unsafe { rn_gpui_pending_js_tasks_dump(buffer.as_mut_ptr(), buffer.len() as u64) }
+                    as usize;
+            buffer.truncate(length.min(buffer.len()));
+            detail.push_str(":\n");
+            detail.push_str(&String::from_utf8_lossy(&buffer));
+        }
+        busy.push(json!({"source":"js", "detail": detail}));
     }
     // SAFETY: these C++ probes take no pointers and only read counters.
     let native_animations = unsafe { rn_gpui_native_animations_active() };
@@ -1416,6 +2108,25 @@ fn idle_status(
     {
         busy.push(
             json!({"source": "animations", "detail": format!("{native_animations} native animation driver(s), {pending_work} pending module work item(s), frame demand {frame_demand}")}),
+        );
+    }
+    // SAFETY: the C++ probe takes no pointers and only reads its table.
+    let promises = unsafe { rn_gpui_rust_promises_in_flight(1_000) };
+    if promises > 0 && !ignore.iter().any(|item| item == "modules") {
+        busy.push(json!({"source": "modules", "detail": format!("{promises} Rust module promise call(s) made in the last second and not settled")}));
+    }
+    if crate::builtins::native_slot::layouts_pending() && !ignore.iter().any(|item| item == "slots")
+    {
+        busy.push(json!({"source": "slots", "detail": "a native slot is waiting for its content to get its width"}));
+    }
+    if store.has_pending_resize() && !ignore.iter().any(|item| item == "resize") {
+        busy.push(
+            json!({"source": "resize", "detail": "a surface has a window size React has not been given yet"}),
+        );
+    }
+    if crate::wheel::pending() && !ignore.iter().any(|item| item == "wheel") {
+        busy.push(
+            json!({"source": "wheel", "detail": "a wheel event is waiting for its JS handlers"}),
         );
     }
     if store.frame_hook.gesture_is_active() && !ignore.iter().any(|item| item == "gestures") {
@@ -1443,7 +2154,17 @@ fn idle_status(
     // SAFETY: these C++ probes take no pointers and only read counters.
     let pending_timers = unsafe { rn_gpui_pending_timers_due_within(1_500) };
     if pending_timers > 0 && !ignore.iter().any(|item| item == "timers") {
-        busy.push(json!({"source": "timers", "detail": format!("{pending_timers} one-shot timer(s) due within 1500 ms")}));
+        let mut detail = format!("{pending_timers} one-shot timer(s) due within 1500 ms");
+        let mut buffer = vec![0u8; 2048];
+        // SAFETY: the buffer is valid for the capacity given, and the call
+        // writes at most that many bytes.
+        let length =
+            unsafe { rn_gpui_pending_timers_dump(1_500, buffer.as_mut_ptr(), buffer.len() as u64) }
+                as usize;
+        buffer.truncate(length.min(buffer.len()));
+        detail.push_str(":\n");
+        detail.push_str(&String::from_utf8_lossy(&buffer));
+        busy.push(json!({"source": "timers", "detail": detail}));
     }
     if !ignore.iter().any(|item| item == "animations") {
         for (tag, entity) in &store.nodes {
@@ -1466,7 +2187,7 @@ fn idle_status(
         "idle": busy.is_empty(),
         "stableFrames": stable_count,
         "busySources": busy,
-        "trackedSources": ["frames", "animations", "gestures", "mount", "timers", "network", "images", "js"],
+        "trackedSources": ["frames", "animations", "gestures", "mount", "timers", "network", "images", "js", "slots", "resize"],
         "untrackedSources": []
     })
 }
@@ -1522,15 +2243,15 @@ fn serve_socket(listener: TcpListener, token: String, tx: Sender<Request>) {
 }
 
 fn extension_props(node: &RNNodeView) -> Value {
-    if node.extension_props_json().is_empty() {
-        return Value::Object(serde_json::Map::new());
+    match node.extension_props() {
+        Value::Null => Value::Object(serde_json::Map::new()),
+        props => props.clone(),
     }
-    serde_json::from_str(node.extension_props_json()).unwrap_or(Value::Null)
 }
 
 fn paragraph_text(node: &RNNodeView) -> String {
     if node.component == "TextInput" {
-        return node.input_text.clone();
+        return node.input().text.clone();
     }
     node.paragraph
         .as_ref()
@@ -1549,20 +2270,25 @@ pub(crate) fn node_frame(store: &ViewStore, tag: i32, cx: &gpui::App) -> Option<
     let node = entity.read(cx);
     let origin = node.absolute_origin(cx);
     let (scale_x, scale_y) = node.cumulative_scale(cx);
-    let height = node.frame.h;
-    Some(RectF {
-        x: f32::from(origin.x),
-        y: f32::from(origin.y),
-        w: node.frame.w * scale_x,
-        h: height * scale_y,
-    })
+    let (x, y, w, h) = node.transformed_bounds(
+        cx,
+        (
+            f32::from(origin.x),
+            f32::from(origin.y),
+            node.frame.w * scale_x,
+            node.frame.h * scale_y,
+        ),
+    );
+    Some(RectF { x, y, w, h })
 }
 
 /// The GPUI menu bar is drawn inside the window (Linux by default), so the RN
 /// surface starts below it: surface frames become window coordinates by adding
 /// the inset. It is zero on platforms whose menu bar is native.
-fn menu_bar_offset() -> f32 {
-    crate::desktop::gpui_menu::menu_bar_inset()
+pub(crate) fn menu_bar_offset() -> f32 {
+    crate::desktop::gpui_menu::menu_bar_inset_for_window_id(
+        crate::desktop::windows::MAIN_WINDOW_KEY,
+    )
 }
 
 /// Asks GPUI to start publishing accessibility data on Windows.
@@ -1618,9 +2344,10 @@ fn activate_accessibility_probe(window: &gpui::Window) {
 /// The window-space center of a surface-space frame. Pointer events dispatched
 /// with it land on the node the frame names, not `menu_bar_offset()` above it.
 fn frame_center(frame: RectF, offset: f32) -> gpui::Point<gpui::Pixels> {
+    let zoom = crate::desktop::zoom::get(crate::store::APP_SURFACE_ID);
     point(
-        px(frame.x + frame.w / 2.0),
-        px(frame.y + offset + frame.h / 2.0),
+        px((frame.x + frame.w / 2.0) * zoom),
+        px((frame.y + frame.h / 2.0) * zoom + offset),
     )
 }
 
@@ -1749,6 +2476,8 @@ fn query(store: &ViewStore, params: &Value, viewport: RectF, cx: &gpui::App) -> 
             "visible": node_visible_frame(store, *tag, viewport, cx).is_some(),
             "enabled": !node.view.accessibility_disabled}))
     }).collect();
+    let mut items = items;
+    items.extend(native_query(by, value, exact, name));
     json!(items)
 }
 
@@ -1779,25 +2508,176 @@ fn tree(store: &ViewStore, cx: &gpui::Context<ViewStore>) -> Value {
     json!({"surface": store.primary_surface_id, "generation": instance_generation(), "children": children})
 }
 
+/// The color of each border side as ARGB, `0` for none.
+fn border_colors_json(node: &RNNodeView) -> Value {
+    let colors = node
+        .resolved_state()
+        .map_or(node.view.border_colors, |state| {
+            state.border_colors(node.view.border_colors)
+        });
+    json!({"left": colors[0], "top": colors[1], "right": colors[2], "bottom": colors[3]})
+}
+
+/// The color of a node's text: the one a state style gives it, else its first
+/// non-empty fragment's, as ARGB.
+fn text_color(node: &RNNodeView) -> Value {
+    if let Some(color) = node.state_text_color() {
+        return json!(color);
+    }
+    node.paragraph
+        .as_ref()
+        .and_then(|paragraph| {
+            paragraph
+                .fragments
+                .iter()
+                .find(|fragment| !fragment.text.is_empty())
+        })
+        .map_or(Value::Null, |fragment| json!(fragment.color))
+}
+
+/// The background and opacity a node paints with, the state styles applied.
+fn effective_background(node: &RNNodeView) -> u32 {
+    node.resolved_state()
+        .and_then(|state| state.background())
+        .unwrap_or(node.view.background_color)
+}
+
+fn effective_opacity(node: &RNNodeView) -> f32 {
+    node.resolved_state()
+        .and_then(|state| state.opacity())
+        .unwrap_or(node.view.opacity)
+}
+
 fn tree_node(
     entity: &Entity<RNNodeView>,
     store: &ViewStore,
     cx: &gpui::Context<ViewStore>,
 ) -> Value {
     let node = entity.read(cx);
-    let children = node
+    let mut children = node
         .children
         .iter()
         .map(|(_, child)| tree_node(child, store, cx))
         .collect::<Vec<_>>();
+    if node.component == crate::builtins::native_root::COMPONENT {
+        let root = node
+            .extension_props
+            .get("rootId")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32;
+        children.extend(native_tree_json(root));
+    }
     json!({"tag": node.tag, "component": node.component, "testID": node.view.test_id,
         "text": paragraph_text(node), "role": node.view.accessibility_role,
         "label": node.view.accessibility_label,
+        "backgroundColor": effective_background(node), "opacity": effective_opacity(node),
+        "borderColors": border_colors_json(node), "textColor": text_color(node),
         "frame": [node.frame.x, node.frame.y, node.frame.w, node.frame.h],
         "contentSize": node.scroll.as_ref().map(|scroll| json!([scroll.content_size.0, scroll.content_size.1])).unwrap_or(Value::Null),
         "scrollOffset": [node.scroll_offset().x, node.scroll_offset().y],
+        "scrollIndicatorShown": node.scroll_indicator_shown(cx),
         "intrinsicSize": node.intrinsic_size().map(|(width, height)| json!([width, height])).unwrap_or(Value::Null),
         "children": children})
+}
+
+/// The frame of an instance as the test driver reports frames: the window's
+/// coordinates less the menu bar the surface starts below.
+fn native_frame(bounds: Option<gpui::Bounds<gpui::Pixels>>) -> [f32; 4] {
+    bounds.map_or([0.0; 4], |bounds| {
+        [
+            f32::from(bounds.origin.x),
+            f32::from(bounds.origin.y) - menu_bar_offset(),
+            f32::from(bounds.size.width),
+            f32::from(bounds.size.height),
+        ]
+    })
+}
+
+fn native_text(props: &serde_json::Map<String, Value>, name: &str) -> String {
+    props
+        .get(name)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// The instances of a native tree, nested as the tree is.
+fn native_tree_json(root: u32) -> Vec<Value> {
+    let infos = crate::builtins::native_root::instances(root);
+    let by_tag: std::collections::HashMap<i32, usize> = infos
+        .iter()
+        .enumerate()
+        .map(|(index, info)| (info.tag, index))
+        .collect();
+    fn build(
+        infos: &[crate::builtins::native_root::InstanceInfo],
+        by_tag: &std::collections::HashMap<i32, usize>,
+        index: usize,
+    ) -> Value {
+        let info = &infos[index];
+        let children: Vec<Value> = info
+            .children
+            .iter()
+            .filter_map(|tag| by_tag.get(tag))
+            .map(|child| build(infos, by_tag, *child))
+            .collect();
+        json!({
+            "tag": info.tag,
+            "component": info.type_name,
+            "native": true,
+            "testID": native_text(&info.props, "testID"),
+            "text": native_text(&info.props, "text"),
+            "role": native_text(&info.props, "accessibilityRole"),
+            "label": native_text(&info.props, "accessibilityLabel"),
+            "frame": native_frame(info.bounds),
+            "children": children,
+        })
+    }
+    infos
+        .first()
+        .map(|_| vec![build(&infos, &by_tag, 0)])
+        .unwrap_or_default()
+}
+
+fn native_query(by: &str, value: &str, exact: bool, name: &str) -> Vec<Value> {
+    let mut items = Vec::new();
+    for root in crate::builtins::native_root::root_ids() {
+        for info in crate::builtins::native_root::instances(root) {
+            let text = native_text(&info.props, "text");
+            let label = {
+                let label = native_text(&info.props, "accessibilityLabel");
+                if label.is_empty() {
+                    text.clone()
+                } else {
+                    label
+                }
+            };
+            let role = native_text(&info.props, "accessibilityRole");
+            let test_id = native_text(&info.props, "testID");
+            let actual = match by {
+                "testID" => test_id.as_str(),
+                "text" => text.as_str(),
+                "role" => role.as_str(),
+                "label" => label.as_str(),
+                _ => continue,
+            };
+            if actual.is_empty()
+                || !matches_query(actual, value, exact)
+                || (!name.is_empty() && !label.contains(name) && !text.contains(name))
+            {
+                continue;
+            }
+            let frame = native_frame(info.bounds);
+            items.push(json!({
+                "tag": info.tag, "component": info.type_name, "testID": test_id,
+                "text": text, "role": role, "label": label,
+                "state": {"disabled": false, "selected": false, "checked": Value::Null},
+                "frame": {"x": frame[0], "y": frame[1], "width": frame[2], "height": frame[3]},
+                "visible": info.bounds.is_some(), "enabled": true,
+            }));
+        }
+    }
+    items
 }
 
 fn get_props(store: &ViewStore, params: &Value, cx: &gpui::Context<ViewStore>) -> Value {
@@ -1812,6 +2692,20 @@ fn get_props(store: &ViewStore, params: &Value, cx: &gpui::Context<ViewStore>) -
         return json!({"error": format!("tag {tag} is not mounted")});
     };
     let node = entity.read(cx);
+    let outline = node.resolved_state().map_or(
+        (
+            node.view.outline_color,
+            node.view.outline_width,
+            node.view.outline_offset,
+        ),
+        |state| {
+            state.outline((
+                node.view.outline_color,
+                node.view.outline_width,
+                node.view.outline_offset,
+            ))
+        },
+    );
     let paragraph_fragments = node
         .paragraph
         .as_ref()
@@ -1826,6 +2720,12 @@ fn get_props(store: &ViewStore, params: &Value, cx: &gpui::Context<ViewStore>) -
                         "fontSize": fragment.font_size,
                         "fontWeight": fragment.font_weight,
                         "italic": fragment.italic,
+                        "color": fragment.color,
+                        "lineHeight": fragment.line_height,
+                        "letterSpacing": fragment.letter_spacing,
+                        "underline": fragment.underline,
+                        "strikethrough": fragment.strikethrough,
+                        "textTransform": fragment.text_transform,
                     })
                 })
                 .collect::<Vec<_>>()
@@ -1838,22 +2738,77 @@ fn get_props(store: &ViewStore, params: &Value, cx: &gpui::Context<ViewStore>) -
         "borderWidths": {"left": node.view.border_widths.left, "top": node.view.border_widths.top,
             "right": node.view.border_widths.right, "bottom": node.view.border_widths.bottom},
         "borderStyles": node.view.border_styles,
-        "outlineWidth": node.view.outline_width,
+        "borderColors": border_colors_json(node),
+        "borderRadii": {"topLeft": node.view.border_radii.tl, "topRight": node.view.border_radii.tr,
+            "bottomRight": node.view.border_radii.br, "bottomLeft": node.view.border_radii.bl},
+        "boxShadows": node.view.shadows.iter().map(|shadow| json!({
+            "offsetX": shadow.dx, "offsetY": shadow.dy, "blurRadius": shadow.blur,
+            "spreadDistance": shadow.spread, "color": shadow.color, "inset": shadow.inset,
+        })).collect::<Vec<_>>(),
+        "textColor": text_color(node),
+        "textAlign": node.paragraph.as_ref().map(|paragraph| paragraph.text_align),
+        "numberOfLines": node.paragraph.as_ref().map(|paragraph| paragraph.max_lines),
+        "outlineColor": outline.0,
+        "outlineOffset": outline.2,
+        "outlineWidth": outline.1,
         "imageUri": extension_props(node).get("uri").cloned().unwrap_or(Value::Null),
         "imageResizeMode": extension_props(node).get("resizeMode").cloned().unwrap_or(Value::Null),
-        "opacity":node.view.opacity,"backgroundColor":node.view.background_color,"transform":node.view.transform,"renderCount":node.test_render_count(),
+        "opacity":effective_opacity(node),"backgroundColor":effective_background(node),"baseBackgroundColor":node.view.background_color,"baseOpacity":node.view.opacity,"states":node.active_state_names(),"transform":node.view.transform,"renderCount":node.test_render_count(),
         "scrollStrategy": node.scroll_strategy_name(),
         "selection": if node.component == "TextInput" { json!({
-            "start": node.input_text[..node.input_selection.start].encode_utf16().count(),
-            "end": node.input_text[..node.input_selection.end].encode_utf16().count()
+            "start": node.input().text[..node.input().selection.start].encode_utf16().count(),
+            "end": node.input().text[..node.input().selection.end].encode_utf16().count()
         }) } else { Value::Null },
-        "inputScrollX": if node.component == "TextInput" { json!(node.input_scroll_x) } else { Value::Null },
+        "inputScrollX": if node.component == "TextInput" { json!(node.input().scroll_x) } else { Value::Null },
         "frame": node_frame(store, tag, cx).map(|frame| json!({"x":frame.x,"y":frame.y,"width":frame.w,"height":frame.h}))})
+}
+
+/// The whole device pixels (x, y, width, height) an element's `frame`, shifted
+/// down by `offset`, covers in a window of `width` x `height` device pixels, or
+/// `None` when none are inside it.
+fn device_region(
+    frame: RectF,
+    offset: f32,
+    scale: f32,
+    width: i32,
+    height: i32,
+) -> Option<(i32, i32, i32, i32)> {
+    let (width, height) = (width.max(0) as u32, height.max(0) as u32);
+    let x = ((frame.x * scale).floor().max(0.0) as u32).min(width);
+    let y = (((frame.y + offset) * scale).floor().max(0.0) as u32).min(height);
+    let right = (((frame.x + frame.w) * scale).ceil().max(0.0) as u32).min(width);
+    let bottom = (((frame.y + offset + frame.h) * scale).ceil().max(0.0) as u32).min(height);
+    if x >= right || y >= bottom {
+        return None;
+    }
+    Some((x as i32, y as i32, (right - x) as i32, (bottom - y) as i32))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{intersect, matches_query, RectF};
+    use super::{device_region, intersect, matches_query, RectF};
+
+    #[test]
+    fn device_region_scales_to_whole_device_pixels_and_clamps() {
+        let frame = RectF {
+            x: 10.25,
+            y: 4.0,
+            w: 20.0,
+            h: 10.5,
+        };
+        // 2x: x 20.5 -> 20, right 60.5 -> 61; y (4 + 1) * 2 = 10, bottom 31
+        assert_eq!(
+            device_region(frame, 1.0, 2.0, 200, 100),
+            Some((20, 10, 41, 21))
+        );
+        // Clamped to the window.
+        assert_eq!(
+            device_region(frame, 0.0, 2.0, 30, 100),
+            Some((20, 8, 10, 21))
+        );
+        // Outside it.
+        assert_eq!(device_region(frame, 0.0, 2.0, 10, 100), None);
+    }
 
     #[test]
     fn query_matching_supports_exact_and_substring_modes() {
@@ -1901,5 +2856,261 @@ mod tests {
         };
 
         assert!(intersect(frame, clip).is_none());
+    }
+}
+
+/// The window as the compositor shows it, native views included, as PNG bytes
+/// with its size in pixels.
+#[cfg(target_os = "macos")]
+fn composite_png(window: &gpui::Window) -> Result<(Vec<u8>, usize, usize), String> {
+    crate::native_view::test_composite_png(window)
+}
+
+/// The window as the X server shows it: `XGetImage` includes the child windows
+/// native views live in. Wayland offers no such read.
+#[cfg(target_os = "linux")]
+fn composite_png(window: &gpui::Window) -> Result<(Vec<u8>, usize, usize), String> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use x11_dl::xlib;
+
+    let id = match HasWindowHandle::window_handle(window)
+        .map_err(|error| error.to_string())?
+        .as_raw()
+    {
+        RawWindowHandle::Xcb(handle) => u64::from(handle.window.get()),
+        RawWindowHandle::Xlib(handle) => handle.window,
+        _ => return Err("the window cannot be captured outside X11".into()),
+    };
+    let scale = window.scale_factor();
+    let size = window.viewport_size();
+    let (width, height) = (
+        (f32::from(size.width) * scale).round() as u32,
+        (f32::from(size.height) * scale).round() as u32,
+    );
+    let xlib = xlib::Xlib::open().map_err(|error| error.to_string())?;
+    // SAFETY: the display is opened and closed here, the image is destroyed once, and its pixels are read within its own `bytes_per_line` and height.
+    unsafe {
+        let display = (xlib.XOpenDisplay)(std::ptr::null());
+        if display.is_null() {
+            return Err("could not open the X display".into());
+        }
+        let image = (xlib.XGetImage)(display, id, 0, 0, width, height, !0, xlib::ZPixmap);
+        if image.is_null() {
+            (xlib.XCloseDisplay)(display);
+            return Err("XGetImage failed".into());
+        }
+        let (red, green, blue) = ((*image).red_mask, (*image).green_mask, (*image).blue_mask);
+        let channel =
+            |mask: u64, pixel: u64| -> u8 { ((pixel & mask) >> mask.trailing_zeros()) as u8 };
+        let mut rgba = image::RgbaImage::new(width, height);
+        for y in 0..height {
+            for x in 0..width {
+                let pixel = ((xlib.XGetPixel)(image, x as i32, y as i32)) as u64;
+                rgba.put_pixel(
+                    x,
+                    y,
+                    image::Rgba([
+                        channel(red, pixel),
+                        channel(green, pixel),
+                        channel(blue, pixel),
+                        255,
+                    ]),
+                );
+            }
+        }
+        (xlib.XDestroyImage)(image);
+        (xlib.XCloseDisplay)(display);
+        let mut png = std::io::Cursor::new(Vec::new());
+        rgba.write_to(&mut png, image::ImageFormat::Png)
+            .map_err(|error| error.to_string())?;
+        Ok((png.into_inner(), width as usize, height as usize))
+    }
+}
+
+/// The window as the desktop shows it, DirectComposition content included: the
+/// screen is copied at the window's client rectangle, so the window must be on
+/// screen and not covered.
+#[cfg(target_os = "windows")]
+fn composite_png(window: &gpui::Window) -> Result<(Vec<u8>, usize, usize), String> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows_sys::Win32::Foundation::HWND;
+
+    let RawWindowHandle::Win32(handle) = HasWindowHandle::window_handle(window)
+        .map_err(|error| error.to_string())?
+        .as_raw()
+    else {
+        return Err("the window is not a Win32 window".into());
+    };
+    capture_client(handle.hwnd.get() as HWND)
+}
+
+#[cfg(target_os = "windows")]
+fn window_hwnd(window: &gpui::Window) -> Option<isize> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    match HasWindowHandle::window_handle(window).ok()?.as_raw() {
+        RawWindowHandle::Win32(win32) => Some(win32.hwnd.get()),
+        _ => None,
+    }
+}
+
+/// Which window holds the foreground, the active state and the keyboard focus,
+/// next to this process's window.
+#[cfg(target_os = "windows")]
+fn focus_readout(hwnd: isize) -> Value {
+    use windows_sys::Win32::UI::{
+        Input::KeyboardAndMouse::{GetActiveWindow, GetFocus},
+        WindowsAndMessaging::GetForegroundWindow,
+    };
+    // SAFETY: the calls only read the calling thread's input state.
+    let (foreground, active, focus) = unsafe {
+        (
+            GetForegroundWindow() as isize,
+            GetActiveWindow() as isize,
+            GetFocus() as isize,
+        )
+    };
+    json!({
+        "hwnd": hwnd,
+        "foreground": foreground,
+        "active": active,
+        "focus": focus,
+        "foregroundIsWindow": foreground == hwnd,
+        "activeIsWindow": active == hwnd,
+        "focusIsWindow": focus == hwnd,
+    })
+}
+
+/// Takes the foreground for the window. A new process is refused it by
+/// default, so an Alt key press, which Windows counts as input from the
+/// process, comes first; the window is then raised above the others.
+#[cfg(target_os = "windows")]
+fn bring_to_front(hwnd: isize) {
+    use windows_sys::Win32::UI::{
+        Input::KeyboardAndMouse::{keybd_event, KEYEVENTF_KEYUP, VK_MENU},
+        WindowsAndMessaging::{
+            AllowSetForegroundWindow, SetForegroundWindow, SetWindowPos, ASFW_ANY, HWND_NOTOPMOST,
+            HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE,
+        },
+    };
+    let hwnd = hwnd as windows_sys::Win32::Foundation::HWND;
+    // SAFETY: `hwnd` is the live handle of this process's window; the calls only
+    // change its z-order and foreground state.
+    unsafe {
+        AllowSetForegroundWindow(ASFW_ANY);
+        keybd_event(VK_MENU as u8, 0, 0, 0);
+        keybd_event(VK_MENU as u8, 0, KEYEVENTF_KEYUP, 0);
+        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+        SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+        SetForegroundWindow(hwnd);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn capture_client(
+    hwnd: windows_sys::Win32::Foundation::HWND,
+) -> Result<(Vec<u8>, usize, usize), String> {
+    use windows_sys::Win32::{
+        Foundation::{POINT, RECT},
+        Graphics::Dwm::DwmFlush,
+        Graphics::Gdi::{
+            BitBlt, ClientToScreen, CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject,
+            GetDC, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CAPTUREBLT,
+            DIB_RGB_COLORS, SRCCOPY,
+        },
+        UI::WindowsAndMessaging::{
+            GetClientRect, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        },
+    };
+    // SAFETY: every GDI object created here is released before returning; the pixel buffer is the section's own memory, read within its width and height.
+    unsafe {
+        let mut client = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        GetClientRect(hwnd, &mut client);
+        let (width, height) = (client.right - client.left, client.bottom - client.top);
+        if width <= 0 || height <= 0 {
+            return Err("the window has no client area".into());
+        }
+        // The screen is copied, so a window in front of this one (a console
+        // another test left on the desktop) would be copied with it. Put this
+        // one on top and let the compositor present it.
+        SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+        DwmFlush();
+        let mut origin = POINT { x: 0, y: 0 };
+        ClientToScreen(hwnd, &mut origin);
+        let screen = GetDC(std::ptr::null_mut());
+        let memory = CreateCompatibleDC(screen);
+        let mut info: BITMAPINFO = std::mem::zeroed();
+        info.bmiHeader = BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: width,
+            biHeight: -height,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB,
+            ..std::mem::zeroed()
+        };
+        let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
+        let section = CreateDIBSection(
+            screen,
+            &info,
+            DIB_RGB_COLORS,
+            &mut bits,
+            std::ptr::null_mut(),
+            0,
+        );
+        let previous = SelectObject(memory, section);
+        let copied = BitBlt(
+            memory,
+            0,
+            0,
+            width,
+            height,
+            screen,
+            origin.x,
+            origin.y,
+            SRCCOPY | CAPTUREBLT,
+        );
+        let result = if copied == 0 || bits.is_null() {
+            Err("the screen could not be copied".to_string())
+        } else {
+            let bgra = std::slice::from_raw_parts(bits as *const u8, (width * height * 4) as usize);
+            let mut rgba = image::RgbaImage::new(width as u32, height as u32);
+            for (pixel, source) in rgba.pixels_mut().zip(bgra.chunks_exact(4)) {
+                *pixel = image::Rgba([source[2], source[1], source[0], 255]);
+            }
+            let mut png = std::io::Cursor::new(Vec::new());
+            rgba.write_to(&mut png, image::ImageFormat::Png)
+                .map(|()| (png.into_inner(), width as usize, height as usize))
+                .map_err(|error| error.to_string())
+        };
+        SelectObject(memory, previous);
+        DeleteObject(section);
+        DeleteDC(memory);
+        ReleaseDC(std::ptr::null_mut(), screen);
+        result
+    }
+}
+
+/// Logs when an input event reaches the window, for latency measured from the
+/// event rather than from the driver call that sent it (`RN_GPUI_MOUNT_TRACE`).
+fn trace_input_dispatch(kind: &str) {
+    if crate::bootstrap::mount_trace_enabled() {
+        eprintln!(
+            "[mount-trace] {kind} epoch_ms={:.3}",
+            crate::bootstrap::epoch_ms()
+        );
     }
 }

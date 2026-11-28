@@ -23,8 +23,15 @@
 //! emitter handles, the registry, the report queue and command arguments.
 
 use crate::extensions::StoreHandle;
-use gpui::{AnyElement, Window};
-pub use serde_json::Value;
+pub use crate::native_tree::{NativeCall, NativeComponent, NativeContext, NativeEmitter};
+use gpui::{AnyElement, App, Window};
+pub use serde_json::{Map, Value};
+
+/// The object a missing struct prop of a native tree reads as.
+pub fn empty_map() -> &'static Map<String, Value> {
+    static EMPTY: std::sync::OnceLock<Map<String, Value>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(Map::new)
+}
 use std::cell::{Cell, RefCell};
 use std::marker::PhantomData;
 use std::rc::Rc;
@@ -100,6 +107,10 @@ impl std::fmt::Debug for HostReport {
 pub(crate) struct HostReports {
     reports: RefCell<Vec<HostReport>>,
     flush_scheduled: Cell<bool>,
+    /// Asks the store to deliver the queue on a later turn. Installed by the
+    /// store; a report sent from outside a host call needs it, because nothing
+    /// else would deliver it.
+    waker: RefCell<Option<Box<dyn Fn()>>>,
 }
 
 impl HostReports {
@@ -126,6 +137,25 @@ impl HostReports {
     pub(crate) fn release_flush(&self) {
         self.flush_scheduled.set(false);
     }
+
+    /// Installs the waker, once.
+    pub(crate) fn install_waker(&self, waker: impl Fn() + 'static) {
+        let mut slot = self.waker.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(Box::new(waker));
+        }
+    }
+
+    /// Schedules a delivery of what is queued, unless one is already scheduled.
+    pub(crate) fn wake(&self) {
+        if self.claim_flush() {
+            return;
+        }
+        match self.waker.borrow().as_ref() {
+            Some(waker) => waker(),
+            None => self.release_flush(),
+        }
+    }
 }
 
 impl std::fmt::Debug for HostReports {
@@ -134,6 +164,36 @@ impl std::fmt::Debug for HostReports {
             .field("reports", &self.reports.borrow().len())
             .field("flush_scheduled", &self.flush_scheduled.get())
             .finish()
+    }
+}
+
+/// Sends typed events for one node from anywhere on the main thread: an OS
+/// callback, a timer, a task. Generated code wraps it with the component's
+/// event methods.
+///
+/// The event joins the store's ordered report queue and is delivered on a later
+/// turn. It is dropped, without effect, if the node has unmounted by then. A
+/// sender is not `Send`: the platforms deliver view callbacks on the main
+/// thread, and the payload closures and the queue are single-threaded.
+#[derive(Clone)]
+pub struct HostEventSender {
+    tag: i32,
+    queue: HostReportQueue,
+}
+
+impl HostEventSender {
+    /// The Fabric tag of the node the events are about.
+    pub fn tag(&self) -> i32 {
+        self.tag
+    }
+
+    /// Queues `send`, which owns the payload and calls the generated shim.
+    pub fn send(&self, send: impl FnOnce() + 'static) {
+        self.queue.push(HostReport::Event {
+            tag: self.tag,
+            send: Box::new(send),
+        });
+        self.queue.wake();
     }
 }
 
@@ -349,6 +409,33 @@ impl HostArg {
     }
 }
 
+/// Where the `&mut App` of the call in progress is kept, so a context can hand
+/// it to the component and only for the length of that call.
+#[derive(Clone, Default)]
+struct AppSlot(Rc<Cell<Option<std::ptr::NonNull<App>>>>);
+
+/// Ends the borrow of the `App` a [`HostContext`] was entered with.
+pub(crate) struct AppScope(AppSlot);
+
+impl Drop for AppScope {
+    fn drop(&mut self) {
+        (self.0).0.set(None);
+    }
+}
+
+/// The same for the `Window` of the call, when the caller has one to give.
+#[derive(Clone, Default)]
+struct WindowSlot(Rc<Cell<Option<std::ptr::NonNull<Window>>>>);
+
+/// Ends the borrow of the `Window` a [`HostContext`] was entered with.
+pub(crate) struct WindowScope(WindowSlot);
+
+impl Drop for WindowScope {
+    fn drop(&mut self) {
+        (self.0).0.set(None);
+    }
+}
+
 /// What a host component is given besides its props.
 pub struct HostContext {
     /// The Fabric tag of the node. A command, an event or a measurement is
@@ -362,6 +449,10 @@ pub struct HostContext {
     /// needs around React's children.
     pending_insets: Option<EdgeInsets>,
     queue: HostReportQueue,
+    app: AppSlot,
+    window: WindowSlot,
+    /// The surface the node belongs to, which says which window is its own.
+    surface_id: Option<i32>,
 }
 
 impl HostContext {
@@ -374,7 +465,84 @@ impl HostContext {
             pending_size: None,
             pending_insets: None,
             queue,
+            app: AppSlot::default(),
+            window: WindowSlot::default(),
+            surface_id: None,
         }
+    }
+
+    /// Says which surface the node belongs to, so [`with_window`](Self::with_window)
+    /// finds the node's own window.
+    pub(crate) fn on_surface(mut self, surface_id: i32) -> Self {
+        self.surface_id = Some(surface_id);
+        self
+    }
+
+    /// Lets the component reach `window` through [`window`](Self::window) until
+    /// the returned scope drops.
+    pub(crate) fn enter_window(self, window: &mut Window) -> (Self, WindowScope) {
+        self.window.0.set(Some(std::ptr::NonNull::from(window)));
+        let scope = WindowScope(self.window.clone());
+        (self, scope)
+    }
+
+    /// The `Window` of the call, when the caller had one: a command and the
+    /// native view methods do. `None` in `create` and `update`, which run in a
+    /// mount batch; use [`with_window`](Self::with_window) there.
+    pub fn window(&mut self) -> Option<&mut Window> {
+        // SAFETY: as for `app`.
+        self.window
+            .0
+            .get()
+            .map(|mut window| unsafe { window.as_mut() })
+    }
+
+    /// Runs `f` with the node's own window and the `App`, the window of the call
+    /// if it has one and otherwise the window its surface belongs to. `None` when
+    /// there is no `App` in this call, the surface has no window yet, or that
+    /// window is busy.
+    pub fn with_window<R>(&mut self, f: impl FnOnce(&mut Window, &mut App) -> R) -> Option<R> {
+        let mut app = self.app.0.get()?;
+        if let Some(mut window) = self.window.0.get() {
+            // SAFETY: both pointers are live for the length of the call.
+            return Some(unsafe { f(window.as_mut(), app.as_mut()) });
+        }
+        // SAFETY: as for `app`.
+        let app = unsafe { app.as_mut() };
+        let surface = self.surface_id?;
+        let handle = crate::store::window_of_surface(surface)?;
+        handle.update(app, |_root, window, app| f(window, app)).ok()
+    }
+
+    /// Lets the component reach `app` through [`app`](Self::app) until the
+    /// returned scope drops. Core holds the scope for the length of the call
+    /// and does not touch `app` meanwhile.
+    pub(crate) fn enter(self, app: &mut App) -> (Self, AppScope) {
+        self.app.0.set(Some(std::ptr::NonNull::from(app)));
+        let scope = AppScope(self.app.clone());
+        (self, scope)
+    }
+
+    /// [`enter`](Self::enter) when there is an `App` to give.
+    pub(crate) fn enter_with(self, app: Option<&mut App>) -> (Self, Option<AppScope>) {
+        match app {
+            Some(app) => {
+                let (context, scope) = self.enter(app);
+                (context, Some(scope))
+            }
+            None => (self, None),
+        }
+    }
+
+    /// The `App` of the call this context was given to: the one GPUI handed to
+    /// whatever called the component (a mount, a frame or a command). `None`
+    /// outside such a call, which includes a context a component kept after
+    /// its method returned, and in a component's unit test.
+    pub fn app(&mut self) -> Option<&mut App> {
+        // SAFETY: the pointer is set by `enter` from a live `&mut App` and cleared
+        // when its scope drops at the end of the call; `&mut self` allows one
+        // borrow at a time.
+        self.app.0.get().map(|mut app| unsafe { app.as_mut() })
     }
 
     /// The same, with the store handle a command can act through.
@@ -437,6 +605,14 @@ impl HostContext {
             tag: self.tag,
             send: Box::new(send),
         });
+    }
+
+    /// A sender for this node's events that outlives the call.
+    pub fn event_sender(&self) -> HostEventSender {
+        HostEventSender {
+            tag: self.tag,
+            queue: self.queue.clone(),
+        }
     }
 
     /// Core's store handle, for a component that needs to run a deferred
@@ -511,14 +687,23 @@ pub struct HostComponentOptions {
     /// [`HostContext::set_intrinsic_size`]. Its shadow node is a leaf with a Yoga
     /// measure function.
     pub measured: bool,
-    /// The component's content is composited by the OS (a native view, a GPU
-    /// surface) rather than painted by GPUI. A `ScrollView` holding one stays
-    /// off the scroll-layer path, because a scroll-only composite frame skips
-    /// the prepaint that sets a native surface's bounds.
+    /// The component hosts an OS view (a web view, a map) that the platform
+    /// composites above GPUI's content. Core attaches the view
+    /// [`HostObject::create_view`] returns to a composition surface and places
+    /// it at the node's bounds every frame. A `ScrollView` holding one stays off
+    /// the scroll-layer path, because a scroll-only composite frame skips the
+    /// prepaint that sets the bounds.
     pub native_surface: bool,
     /// The component is a container that draws chrome around React children.
     /// Core paints the children; the component paints only its chrome.
     pub container: bool,
+    /// The component is implemented in C++ (`GpuiCppHostComponent.h`): core
+    /// drives its C++ view and needs no Rust code or codegen spec.
+    pub cpp: bool,
+    /// The component's first React child is a mask: the other children show only
+    /// where it paints, scaled by its alpha. Core draws it; the component needs
+    /// no Rust code.
+    pub mask_children: bool,
 }
 
 /// How a host component object is driven. Generated code implements it for each
@@ -540,6 +725,70 @@ pub trait HostObject: 'static {
 
     /// A command from JS, by its index in the spec's `COMMANDS`.
     fn command(&mut self, index: u32, args: &[HostArg], cx: HostContext);
+
+    /// The OS view of a component declared `nativeSurface`. Core calls it once,
+    /// when the node is first painted, after it created the composition surface
+    /// the view lives in (`parent`); a component that hosts no view returns an
+    /// error.
+    fn create_view(
+        &mut self,
+        parent: &crate::native_surface::NativeViewParent<'_>,
+        window: &mut Window,
+        cx: HostContext,
+    ) -> crate::native_surface::Result<crate::native_surface::NativeViewHandle> {
+        let _ = (parent, window, cx);
+        Err(anyhow::anyhow!("the component hosts no native view"))
+    }
+
+    /// The node's props changed while `view` is attached. Called after
+    /// [`update`](Self::update), with the same mask.
+    fn update_view(
+        &mut self,
+        view: crate::native_surface::NativeViewHandle,
+        changed: &[u64],
+        cx: HostContext,
+    ) {
+        let _ = (view, changed, cx);
+    }
+}
+
+/// The room Yoga offers a measured component: its size is anywhere from the
+/// minimum to the maximum on each axis. A maximum is infinite when the parent
+/// leaves the axis open.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MeasureConstraint {
+    pub min_width: f32,
+    pub min_height: f32,
+    pub max_width: f32,
+    pub max_height: f32,
+}
+
+impl MeasureConstraint {
+    /// `size` brought within the constraint.
+    pub fn clamp(&self, size: MeasuredSize) -> MeasuredSize {
+        MeasuredSize {
+            width: size
+                .width
+                .clamp(self.min_width, self.max_width.max(self.min_width)),
+            height: size
+                .height
+                .clamp(self.min_height, self.max_height.max(self.min_height)),
+        }
+    }
+
+    /// The width text may take, or `None` when the axis is open.
+    pub fn text_width(&self) -> Option<f32> {
+        self.max_width.is_finite().then_some(self.max_width)
+    }
+}
+
+pub use crate::text::{measure_text, TextExtent, TextStyle};
+
+/// A size a component measured, in DIPs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MeasuredSize {
+    pub width: f32,
+    pub height: f32,
 }
 
 /// A generated registration value: a component's name and how to create it.
@@ -547,24 +796,37 @@ pub trait HostComponentSpec: 'static {
     /// The Fabric component name the spec declares.
     const NAME: &'static str;
 
+    /// The size of a `measured` node under a constraint, on the layout thread.
+    /// `props` is the address of the node's props handle.
+    fn measure(
+        props: *const core::ffi::c_void,
+        constraint: &MeasureConstraint,
+    ) -> Option<MeasuredSize> {
+        let _ = (props, constraint);
+        None
+    }
+
     /// Creates the component for a node that just mounted.
     fn create(props: PropsHandle, emitter: EmitterHandle, cx: HostContext) -> Box<dyn HostObject>;
 }
 
 type CreateFn = fn(PropsHandle, EmitterHandle, HostContext) -> Box<dyn HostObject>;
+type MeasureFn = fn(*const core::ffi::c_void, &MeasureConstraint) -> Option<MeasuredSize>;
 
 /// One registry slot: what autolink declared, and what the package registered.
 #[derive(Clone)]
 pub struct HostEntry {
     pub name: String,
     pub options: HostComponentOptions,
+    index: u32,
     create: Option<CreateFn>,
+    measure: Option<MeasureFn>,
 }
 
 impl HostEntry {
     /// Whether a package registered code for this declaration.
     pub fn is_registered(&self) -> bool {
-        self.create.is_some()
+        self.create.is_some() || self.options.cpp || self.options.mask_children
     }
 
     /// Creates the component's object, or `None` when the package never
@@ -575,8 +837,23 @@ impl HostEntry {
         emitter: EmitterHandle,
         cx: HostContext,
     ) -> Option<Box<dyn HostObject>> {
+        if self.options.cpp {
+            let object = crate::cpp_host::CppHostObject::create(self.index, cx.tag, props)?;
+            return Some(Box::new(object));
+        }
         self.create.map(|create| create(props, emitter, cx))
     }
+}
+
+/// Measures node `index` under `constraint`; `None` when the component has no
+/// measure of its own. Called on the layout thread.
+pub(crate) fn measure_component(
+    index: u32,
+    props: *const core::ffi::c_void,
+    constraint: &MeasureConstraint,
+) -> Option<MeasuredSize> {
+    let measure = entry(index)?.measure?;
+    measure(props, constraint).map(|size| constraint.clamp(size))
 }
 
 impl std::fmt::Debug for HostEntry {
@@ -584,7 +861,7 @@ impl std::fmt::Debug for HostEntry {
         f.debug_struct("HostEntry")
             .field("name", &self.name)
             .field("options", &self.options)
-            .field("registered", &self.create.is_some())
+            .field("registered", &self.is_registered())
             .finish()
     }
 }
@@ -633,7 +910,9 @@ pub fn declare_host_component(index: u32, name: &str, options: HostComponentOpti
     slots[index] = Some(HostEntry {
         name: name.to_string(),
         options,
+        index: index as u32,
         create: None,
+        measure: None,
     });
     any_declared_flag().store(true, Ordering::Relaxed);
 }
@@ -660,7 +939,10 @@ pub fn register_component<C: HostComponentSpec>(spec: C) {
         .flatten()
         .find(|entry| entry.name == C::NAME)
     {
-        Some(entry) => entry.create = Some(C::create as CreateFn),
+        Some(entry) => {
+            entry.create = Some(C::create as CreateFn);
+            entry.measure = Some(C::measure as MeasureFn);
+        }
         None => {
             log::error!(
                 "[host-component] {} is registered but not declared under platforms.desktop.hostComponents",
@@ -677,7 +959,7 @@ pub fn freeze() {
     frozen().get_or_init(|| {
         let slots = std::mem::take(&mut *pending().lock().expect("host component registry poisoned"));
         for entry in slots.iter().flatten() {
-            if entry.create.is_none() {
+            if !entry.is_registered() {
                 log::error!(
                     "[host-component] {} is declared in hostComponents but no package registered it",
                     entry.name

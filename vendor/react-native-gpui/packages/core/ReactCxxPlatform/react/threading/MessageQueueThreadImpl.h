@@ -18,6 +18,13 @@ using MessageQueueThreadFactory = std::function<std::shared_ptr<MessageQueueThre
 constexpr char MessageQueueThreadFactoryKey[] = "MessageQueueThreadFactoryKey";
 
 /**
+ * Wraps a JavaScript task so that, from now until it has run, it counts as
+ * queued JS work for the test driver's idle check. For a queue that does not
+ * run through `MessageQueueThreadImpl`.
+ */
+std::function<void()> trackJsTask(std::function<void()> runnable);
+
+/**
  * MessageQueueThread implementation that uses a TaskDispatchThread for
  * queueing and threading logic
  */

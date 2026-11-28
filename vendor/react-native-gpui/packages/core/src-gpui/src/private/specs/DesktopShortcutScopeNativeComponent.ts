@@ -8,7 +8,7 @@
  *
  * The name must end in `NativeComponent.ts`: React Native's babel plugin turns
  * any such file into a static view config, which is how core's other
- * hand-registered host components (`WindowControl`, `NativeViewHost`) work too.
+ * hand-registered host component (`WindowControl`) works too.
  * Core has no component codegen, so the props, the descriptor and the props
  * reader are all hand-written; see
  * `ReactCxxPlatform/react/renderer/components/shortcutscope/`.

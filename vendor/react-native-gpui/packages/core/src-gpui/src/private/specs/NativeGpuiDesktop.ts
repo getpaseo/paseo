@@ -27,6 +27,8 @@ export type DesktopCapabilities = {
   trayPopoverAnchored: boolean;
   windowPosition: boolean;
   alwaysOnTop: boolean;
+  /** Whether a window can be shown on every Space or workspace. */
+  visibleOnAllWorkspaces: boolean;
   transparentTitlebar: boolean;
   /**
    * Whether a frameless window can still be resized, so an app may draw its own
@@ -44,11 +46,29 @@ export type DesktopAppInfo = {
   capabilities: DesktopCapabilities;
 };
 
+export type PlatformConstants = {
+  osVersion: string;
+  isTesting: boolean;
+};
+
 export interface Spec extends TurboModule {
   /** Read synchronously; these never touch the GPUI main thread. */
   capabilities(): DesktopCapabilities;
   platform(): string;
+  /**
+   * Where the window's caption buttons sit, as a GTK `button-layout` string such
+   * as `appmenu:minimize,maximize,close`. Linux reads it from the desktop; other
+   * platforms answer the GTK default.
+   */
+  windowButtonLayout(): string;
+  /**
+   * The icon theme's caption button icon (`close`, `minimize`, `maximize` or
+   * `restore`) as an SVG data URI painted in `color` (`#rrggbb`), or an empty
+   * string when the theme has none. Linux only.
+   */
+  windowButtonIcon(action: string, color: string): string;
   appId(): string;
+  platformConstants(): PlatformConstants;
 
   appInfo(): Promise<DesktopAppInfo>;
 

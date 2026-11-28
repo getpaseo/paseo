@@ -115,6 +115,16 @@ pub fn install(cx: &mut App, app_name: &str, dev_menu: bool) {
         // consulted, so handling the key here would take it away from a shortcut
         // that is entitled to it. Asking the keymap first is what keeps the
         // precedence the rest of this design promises.
+        if let Some(id) =
+            crate::desktop::keymap::unfocused_app_shortcut(cx, window, &event.keystroke)
+        {
+            crate::desktop::keymap::emit_app_shortcut(cx, &id, None);
+            if let Some(store) = store_from(cx) {
+                store.read(cx).frame_hook.arm(window);
+            }
+            cx.stop_propagation();
+            return;
+        }
         if crate::desktop::keymap::claims_keystroke(cx, window, &event.keystroke) {
             return;
         }
@@ -154,11 +164,11 @@ pub fn handle_accelerator(
             .0
             .accelerators
             .iter()
-            .map(|(bound, _)| bound.to_string())
+            .map(|(bound, _)| bound.unparse(crate::desktop::keymap::host_os()))
             .collect::<Vec<_>>();
         log::info!(
             "[desktop] keystroke {} matched={} installed=[{}]",
-            keystroke,
+            keystroke.unparse(crate::desktop::keymap::host_os()),
             action.is_some(),
             installed.join(", ")
         );
@@ -190,6 +200,20 @@ pub fn set_application_menu(cx: &mut App, items: Option<&Value>) -> DesktopResul
     let user_set = items.is_some();
     apply(cx, model, user_set)?;
     Ok(json!({"items": current_model(cx).ids().len()}))
+}
+
+/// Sets the menu of the Dock icon. Its items report as `menuPress` like the
+/// application menu's. Other platforms have no Dock, so nothing happens there.
+pub fn set_dock_menu(cx: &mut App, items: Option<&Value>) -> DesktopResult {
+    let model = match items {
+        Some(value) => menu_model::parse_menu(value)?,
+        None => MenuModel { items: Vec::new() },
+    };
+    #[cfg(target_os = "macos")]
+    cx.set_dock_menu(build_items(&model.items));
+    #[cfg(not(target_os = "macos"))]
+    let _ = &model;
+    Ok(json!({"items": model.ids().len()}))
 }
 
 pub fn update_item(cx: &mut App, id: &str, patch: &Value) -> DesktopResult {
@@ -245,6 +269,19 @@ pub fn set_menu_bar_visible(cx: &mut gpui::App, window_id: u32, visible: bool) -
     // inset change to reach the React root.
     crate::desktop::gpui_menu::resize_surfaces_for_menu_bar(cx, window_id);
     Ok(json!({"windowId": window_id, "menuBarVisible": visible}))
+}
+
+/// Reserves, or with `None` gives back, the room a window's React tree keeps for
+/// the menu bar. The bar is then drawn there, and the top of the window stops
+/// being a strip of its own.
+pub fn set_menu_bar_slot(
+    cx: &mut gpui::App,
+    window_id: u32,
+    slot: Option<crate::desktop::gpui_menu::MenuBarSlot>,
+) -> DesktopResult {
+    crate::desktop::gpui_menu::set_menu_bar_slot(window_id, slot);
+    crate::desktop::gpui_menu::resize_surfaces_for_menu_bar(cx, window_id);
+    Ok(json!({"windowId": window_id, "slot": slot.is_some()}))
 }
 
 pub fn menu_json(cx: &App) -> Value {
@@ -304,9 +341,13 @@ fn role_name(role: MenuRole) -> &'static str {
         MenuRole::Cut => "cut",
         MenuRole::Copy => "copy",
         MenuRole::Paste => "paste",
+        MenuRole::PasteWithoutFormatting => "pasteWithoutFormatting",
         MenuRole::SelectAll => "selectAll",
         MenuRole::Minimize => "minimize",
         MenuRole::Zoom => "zoom",
+        MenuRole::ZoomIn => "zoomIn",
+        MenuRole::ZoomOut => "zoomOut",
+        MenuRole::ResetZoom => "resetZoom",
         MenuRole::ToggleFullscreen => "toggleFullscreen",
         MenuRole::Close => "close",
         MenuRole::Help => "help",
@@ -489,6 +530,7 @@ pub fn default_accelerator(role: MenuRole) -> Option<&'static str> {
         MenuRole::Cut => "secondary-x",
         MenuRole::Copy => "secondary-c",
         MenuRole::Paste => "secondary-v",
+        MenuRole::PasteWithoutFormatting => "secondary-shift-v",
         MenuRole::SelectAll => "secondary-a",
         MenuRole::Minimize => "secondary-m",
         MenuRole::Close => "secondary-w",
@@ -496,6 +538,9 @@ pub fn default_accelerator(role: MenuRole) -> Option<&'static str> {
         MenuRole::Hide => "secondary-h",
         MenuRole::HideOthers => "secondary-alt-h",
         MenuRole::ToggleFullscreen => "ctrl-cmd-f",
+        MenuRole::ZoomIn => "secondary-=",
+        MenuRole::ZoomOut => "secondary--",
+        MenuRole::ResetZoom => "secondary-0",
         _ => return None,
     })
 }
@@ -778,9 +823,13 @@ pub fn role_action_id(role: MenuRole) -> &'static str {
         MenuRole::Cut => "role:cut",
         MenuRole::Copy => "role:copy",
         MenuRole::Paste => "role:paste",
+        MenuRole::PasteWithoutFormatting => "role:pasteWithoutFormatting",
         MenuRole::SelectAll => "role:selectAll",
         MenuRole::Minimize => "role:minimize",
         MenuRole::Zoom => "role:zoom",
+        MenuRole::ZoomIn => "role:zoomIn",
+        MenuRole::ZoomOut => "role:zoomOut",
+        MenuRole::ResetZoom => "role:resetZoom",
         MenuRole::ToggleFullscreen => "role:toggleFullscreen",
         MenuRole::Close => "role:close",
         MenuRole::Quit => "role:quit",
@@ -997,6 +1046,12 @@ fn replace_accelerator_bindings(
         .filter(|binding| !is_desktop_action(binding.action()))
         .cloned()
         .collect();
+    // Of two bindings for one key in one context the later one wins, and a
+    // shortcut has to win over a menu accelerator, so the shortcut bindings go
+    // back after the menu's.
+    let (shortcut_bindings, kept): (Vec<KeyBinding>, Vec<KeyBinding>) = kept
+        .into_iter()
+        .partition(|binding| crate::desktop::keymap::is_shortcut_action(binding.action()));
     {
         let mut keymap = keymap.borrow_mut();
         keymap.clear();
@@ -1010,12 +1065,20 @@ fn replace_accelerator_bindings(
             continue;
         }
         let action = accelerator_action(id);
-        new_bindings.push(binding_for(keystroke, &action));
-        if let Ok(parsed) = gpui::Keystroke::parse(keystroke) {
+        match binding_for(keystroke, &action, cx) {
+            Ok(binding) => new_bindings.push(binding),
+            Err(error) => log::warn!("[menu] {id} has unparseable keys {keystroke:?}: {error}"),
+        }
+        if let Ok(parsed) =
+            gpui::Keystroke::parse_with_os(keystroke, crate::desktop::keymap::host_os())
+        {
             accelerators.push((parsed, action));
         }
     }
     cx.bind_keys(new_bindings);
+    cx.key_bindings()
+        .borrow_mut()
+        .add_bindings(shortcut_bindings);
     accelerators
 }
 
@@ -1029,7 +1092,7 @@ fn accelerator_action(id: &str) -> AcceleratorAction {
     if let Some(kind) = id.strip_prefix("role:") {
         if matches!(
             kind,
-            "undo" | "redo" | "cut" | "copy" | "paste" | "selectAll"
+            "undo" | "redo" | "cut" | "copy" | "paste" | "pasteWithoutFormatting" | "selectAll"
         ) {
             return AcceleratorAction::Edit(kind.to_string());
         }
@@ -1041,6 +1104,9 @@ fn accelerator_action(id: &str) -> AcceleratorAction {
                 | "showAll"
                 | "minimize"
                 | "zoom"
+                | "zoomIn"
+                | "zoomOut"
+                | "resetZoom"
                 | "toggleFullscreen"
                 | "close"
                 | "about"
@@ -1059,23 +1125,23 @@ fn accelerator_action(id: &str) -> AcceleratorAction {
 /// shortcut consumes the key first and the menu item never runs. Without a
 /// context the accelerator would tie with the window scope and win by being
 /// added later, which is the behaviour this work set out to fix.
-fn binding_for(keystroke: &str, action: &AcceleratorAction) -> KeyBinding {
-    let context = crate::desktop::keymap::APP_CONTEXT;
-    match action {
+fn binding_for(
+    keystroke: &str,
+    action: &AcceleratorAction,
+    cx: &App,
+) -> Result<KeyBinding, gpui::InvalidKeystrokeError> {
+    let context = std::rc::Rc::new(
+        gpui::KeyBindingContextPredicate::parse(crate::desktop::keymap::APP_CONTEXT)
+            .expect("the app context is a valid predicate"),
+    );
+    let action: Box<dyn gpui::Action> = match action {
         AcceleratorAction::Press(id) | AcceleratorAction::Dev(id) => {
-            KeyBinding::new(keystroke, MenuAccelerator { id: id.clone() }, Some(context))
+            Box::new(MenuAccelerator { id: id.clone() })
         }
-        AcceleratorAction::Edit(kind) => KeyBinding::new(
-            keystroke,
-            MenuEditAction { kind: kind.clone() },
-            Some(context),
-        ),
-        AcceleratorAction::Host(kind) => KeyBinding::new(
-            keystroke,
-            MenuHostAction { kind: kind.clone() },
-            Some(context),
-        ),
-    }
+        AcceleratorAction::Edit(kind) => Box::new(MenuEditAction { kind: kind.clone() }),
+        AcceleratorAction::Host(kind) => Box::new(MenuHostAction { kind: kind.clone() }),
+    };
+    KeyBinding::load(keystroke, action, Some(context), false, None, cx)
 }
 
 fn build_menus(model: &MenuModel, app_name: &str, dev_menu: bool) -> Vec<Menu> {
@@ -1208,6 +1274,7 @@ fn role_menu_item(role: MenuRole, label: Option<&str>) -> MenuItem {
         MenuRole::Cut
         | MenuRole::Copy
         | MenuRole::Paste
+        | MenuRole::PasteWithoutFormatting
         | MenuRole::SelectAll
         | MenuRole::Undo
         | MenuRole::Redo => MenuItem::action(
@@ -1223,6 +1290,9 @@ fn role_menu_item(role: MenuRole, label: Option<&str>) -> MenuItem {
         | MenuRole::Quit
         | MenuRole::Minimize
         | MenuRole::Zoom
+        | MenuRole::ZoomIn
+        | MenuRole::ZoomOut
+        | MenuRole::ResetZoom
         | MenuRole::ToggleFullscreen
         | MenuRole::Close => MenuItem::action(
             SharedString::from(label),
@@ -1306,13 +1376,16 @@ fn focused_text_input(cx: &mut App, window: gpui::AnyWindowHandle) -> Option<Ent
 /// It goes through the same dispatch the native menu uses, so the action, the
 /// window and the effect are identical however the user asked for it.
 pub fn perform_role(cx: &mut App, role: &str) -> DesktopResult {
-    let handle = cx.active_window();
+    let handle = cx
+        .active_window()
+        .or_else(|| crate::desktop::windows::main_window_handle(cx));
     match role {
         "undo" => perform_edit(cx, "undo", handle),
         "redo" => perform_edit(cx, "redo", handle),
         "cut" => perform_edit(cx, "cut", handle),
         "copy" => perform_edit(cx, "copy", handle),
         "paste" => perform_edit(cx, "paste", handle),
+        "pasteWithoutFormatting" => perform_edit(cx, "paste", handle),
         "selectAll" => perform_edit(cx, "selectAll", handle),
         "minimize" => {
             if let Some(handle) = handle {
@@ -1329,6 +1402,7 @@ pub fn perform_role(cx: &mut App, role: &str) -> DesktopResult {
                 let _ = handle.update(cx, |_, window, _| window.toggle_fullscreen());
             }
         }
+        "zoomIn" | "zoomOut" | "resetZoom" => step_zoom(cx, role, handle),
         "close" => {
             if let Some(handle) = handle {
                 let _ = handle.update(cx, |_, window, _| window.remove_window());
@@ -1357,7 +1431,22 @@ fn perform_edit(cx: &mut App, kind: &str, handle: Option<gpui::AnyWindowHandle>)
         let Some(window) = handle.or_else(|| cx.active_window()) else {
             return;
         };
-        let Some(node) = focused_text_input(cx, window) else {
+        let focused =
+            focused_text_input(cx, window).filter(|node| node.read(cx).component == "TextInput");
+        let Some(node) = focused else {
+            // Selected `Text` takes Copy and Select All when no input is focused.
+            if let Some(selected) = crate::builtins::text_select::active_node(cx) {
+                match kind.as_str() {
+                    "copy" => {
+                        crate::builtins::text_select::copy_active(cx);
+                    }
+                    "selectAll" => selected.update(cx, |node, cx| {
+                        crate::builtins::text_select::select_all(node, cx)
+                    }),
+                    _ => {}
+                }
+                return;
+            }
             if debug {
                 log::info!("[desktop][menu] edit {kind}: no focused text input");
             }
@@ -1371,7 +1460,7 @@ fn perform_edit(cx: &mut App, kind: &str, handle: Option<gpui::AnyWindowHandle>)
                 "cut" => {
                     crate::builtins::textinput::input::cut_selection(node, window, cx);
                 }
-                "paste" => {
+                "paste" | "pasteWithoutFormatting" => {
                     crate::builtins::textinput::input::paste_clipboard(node, window, cx);
                 }
                 "selectAll" => {
@@ -1386,7 +1475,7 @@ fn perform_edit(cx: &mut App, kind: &str, handle: Option<gpui::AnyWindowHandle>)
                 log::info!(
                     "[desktop][menu] edit {kind} on {} selection={:?}",
                     node.component,
-                    node.input_selection
+                    node.input().selection
                 );
             }
         });
@@ -1399,6 +1488,13 @@ fn perform_dev_action(cx: &mut App, id: String) {
     cx.defer(move |cx| crate::desktop::dev_menu::perform(cx, &id));
 }
 
+fn step_zoom(cx: &mut App, role: &str, handle: Option<gpui::AnyWindowHandle>) {
+    let key = handle
+        .and_then(|handle| crate::desktop::windows::window_key_for_handle(cx, handle))
+        .unwrap_or(crate::desktop::windows::MAIN_WINDOW_KEY);
+    let _ = crate::desktop::windows::step_zoom(cx, key, role);
+}
+
 fn perform_host_action(cx: &mut App, kind: &str, handle: Option<gpui::AnyWindowHandle>) {
     match kind {
         "quit" => cx.quit(),
@@ -1408,6 +1504,13 @@ fn perform_host_action(cx: &mut App, kind: &str, handle: Option<gpui::AnyWindowH
         "about" => show_about_panel(cx),
         // Deferred: the accelerator runs inside the keystroke's window update.
         "devMenu" => cx.defer(|cx| crate::desktop::dev_menu::show(cx)),
+        "zoomIn" | "zoomOut" | "resetZoom" => {
+            let kind = kind.to_string();
+            cx.defer(move |cx| {
+                let handle = handle.or_else(|| cx.active_window());
+                step_zoom(cx, &kind, handle);
+            });
+        }
         "minimize" | "zoom" | "toggleFullscreen" | "close" => {
             let kind = kind.to_string();
             cx.defer(move |cx| {

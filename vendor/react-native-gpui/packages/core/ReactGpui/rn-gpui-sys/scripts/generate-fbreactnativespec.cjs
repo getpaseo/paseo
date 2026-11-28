@@ -15,7 +15,15 @@ const packageRoot = path.resolve(__dirname, '../../..');
 const platformPackage = require(path.join(packageRoot, 'package.json'));
 const expectedVersion = platformPackage.peerDependencies['react-native'];
 const reactNativePackage = require(path.join(reactNativeDir, 'package.json'));
-if (reactNativePackage.version !== expectedVersion) {
+// The peer range is a minor (`0.87.x`): the generated spec is stable across its
+// patch releases.
+const expectedMinor = /^(\d+\.\d+)\.x$/u.exec(expectedVersion)?.[1];
+const installedMinor = /^(\d+\.\d+)\./u.exec(reactNativePackage.version)?.[1];
+if (
+  expectedMinor === undefined
+    ? reactNativePackage.version !== expectedVersion
+    : installedMinor !== expectedMinor
+) {
   throw new Error(
     `React Native ${reactNativePackage.version} is installed; this generated GPUI spec is pinned to ${expectedVersion}. Update the pin and verify the generated C++ before continuing.`,
   );

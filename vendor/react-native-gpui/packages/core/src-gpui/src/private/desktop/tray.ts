@@ -64,6 +64,21 @@ export interface TrayOptions {
    * effect together with `quitOnLastWindowClosed`, which ends the app instead.
    */
   hideWindowOnClose?: boolean;
+  /**
+   * Where the popover is drawn on a Linux desktop that will not place it at the
+   * icon (Wayland). `'auto'` (the default) puts it at the end of the panel's edge,
+   * found from the screen's work area; the others name a corner of the work area,
+   * and `'center'` its middle. Ignored where the popover opens at the icon.
+   */
+  popoverAnchor?:
+    | 'auto'
+    | 'top-left'
+    | 'top-right'
+    | 'bottom-left'
+    | 'bottom-right'
+    | 'center';
+  /** Moves the popover from its corner, in points. Same cases as `popoverAnchor`. */
+  popoverOffset?: { x: number; y: number };
 }
 
 export interface TrayState {
@@ -130,8 +145,61 @@ export const Tray = {
     );
   },
 
+  /**
+   * Opens the popover, as a click on the icon does. Use it to open the popover
+   * from something else, such as an item of the tray's menu. Rejects when the tray
+   * has no `component`.
+   */
+  showPopover(): Promise<void> {
+    return request(native => native.trayShowPopover());
+  },
+
+  hidePopover(): Promise<void> {
+    return request(native => native.trayHidePopover());
+  },
+
+  togglePopover(): Promise<void> {
+    return request(native => native.trayTogglePopover());
+  },
+
+  /**
+   * Changes where the popover opens next time, as `popoverAnchor` and
+   * `popoverOffset` in {@link TrayOptions} do. What is left out stays as it was.
+   */
+  setPopoverPosition(position: {
+    anchor?: TrayOptions['popoverAnchor'];
+    offset?: TrayOptions['popoverOffset'];
+  }): Promise<void> {
+    return request(native =>
+      native.traySetPopoverPosition(
+        position.anchor ?? null,
+        position.offset ?? null,
+      ),
+    );
+  },
+
   getState(): Promise<TrayState> {
     return request(native => native.trayGetState()) as Promise<TrayState>;
+  },
+
+  /**
+   * Calls `handler` when the icon is clicked. `double` is true for a second
+   * click of the same button within half a second, which also reports as a
+   * click. Where the icon opens a menu or the popover itself, the click is
+   * reported too.
+   */
+  onClick(
+    handler: (event: {
+      button: 'left' | 'right' | 'middle';
+      double: boolean;
+    }) => void,
+  ): { remove: () => void } {
+    const subscription = DeviceEventEmitter.addListener(
+      'gpuiDesktop:trayClick',
+      (event: { button?: 'left' | 'right' | 'middle'; double?: boolean }) =>
+        handler({ button: event?.button ?? 'left', double: !!event?.double }),
+    );
+    return { remove: () => subscription.remove() };
   },
 
   onMenuPress(handler: (id: string) => void): { remove: () => void } {

@@ -7,8 +7,7 @@
 #include <react/renderer/debug/DebugStringConvertible.h>
 
 // Hand-written rather than generated: core has no component codegen, because
-// autolink only runs it for dependencies and core is the runtime. This follows
-// `nativeviewhost/NativeViewHost.h`, core's other hand-registered component.
+// autolink only runs it for dependencies and core is the runtime.
 namespace facebook::react {
 
 extern const char WindowControlComponentName[];

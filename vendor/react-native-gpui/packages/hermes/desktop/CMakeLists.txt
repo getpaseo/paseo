@@ -68,7 +68,17 @@ else()
 endif()
 
 set(RN_GPUI_HERMES_PLATFORM_BIN_DIR "${RN_GPUI_HERMES_BIN_ROOT}/${RN_GPUI_HERMES_PLATFORM}")
-set(RN_GPUI_HERMES_LIBRARY "${RN_GPUI_HERMES_PLATFORM_BIN_DIR}/${_rn_gpui_hermes_library_name}")
+# Two VMs per platform: the one with the debugger in the platform folder, and
+# the one without it, smaller and with no debugger state in the interpreter or
+# on each `eval`, under `release/`. The choice follows React Native's Hermes
+# glue below, which compiles its debugger support under the same condition:
+# the VM and the code driving it have to agree on HERMES_ENABLE_DEBUGGER.
+if(CMAKE_BUILD_TYPE MATCHES Debug OR REACT_NATIVE_DEBUG_OPTIMIZED)
+  set(RN_GPUI_HERMES_VM_DIR "${RN_GPUI_HERMES_PLATFORM_BIN_DIR}")
+else()
+  set(RN_GPUI_HERMES_VM_DIR "${RN_GPUI_HERMES_PLATFORM_BIN_DIR}/release")
+endif()
+set(RN_GPUI_HERMES_LIBRARY "${RN_GPUI_HERMES_VM_DIR}/${_rn_gpui_hermes_library_name}")
 
 # Hermes binaries are gitignored, so a fresh checkout has none. Fetch this
 # platform's zip from the package's own release once; the script exits 0 without
@@ -110,11 +120,12 @@ if(_rn_gpui_hermes_import_library_name)
   # DLL platforms link through the import library; only the DLL itself is needed
   # at run time, and the app build script stages it next to the executable.
   set(RN_GPUI_HERMES_IMPORT_LIBRARY
-    "${RN_GPUI_HERMES_PLATFORM_BIN_DIR}/${_rn_gpui_hermes_import_library_name}")
+    "${RN_GPUI_HERMES_VM_DIR}/${_rn_gpui_hermes_import_library_name}")
   if(NOT EXISTS "${RN_GPUI_HERMES_IMPORT_LIBRARY}")
     message(FATAL_ERROR
       "Hermes import library not found at ${RN_GPUI_HERMES_IMPORT_LIBRARY}. A "
-      "win32 Hermes artifact must contain hermesvm.dll, hermesvm.lib and hermesc.exe.")
+      "win32 Hermes artifact must contain hermesvm.dll, hermesvm.lib and hermesc.exe, "
+      "and release/hermesvm.dll and release/hermesvm.lib.")
   endif()
   set_target_properties(hermes-engine::hermesvm PROPERTIES
     IMPORTED_IMPLIB "${RN_GPUI_HERMES_IMPORT_LIBRARY}")
@@ -179,8 +190,8 @@ add_executable(hermes_runtime_test
   "${CMAKE_CURRENT_LIST_DIR}/test/hermes_runtime_test.cpp")
 target_link_libraries(hermes_runtime_test PRIVATE hermes-engine::hermesvm jsi)
 set_target_properties(hermes_runtime_test PROPERTIES
-  BUILD_RPATH "${RN_GPUI_HERMES_PLATFORM_BIN_DIR}"
-  INSTALL_RPATH "${RN_GPUI_HERMES_PLATFORM_BIN_DIR}")
+  BUILD_RPATH "${RN_GPUI_HERMES_VM_DIR}"
+  INSTALL_RPATH "${RN_GPUI_HERMES_VM_DIR}")
 
 add_library(gpui_node_api_smoke MODULE
   "${CMAKE_CURRENT_LIST_DIR}/test/node_api_smoke_addon.c")
@@ -206,8 +217,8 @@ set_target_properties(gpui_node_api_smoke PROPERTIES
   PREFIX ""
   SUFFIX ".node"
   OUTPUT_NAME "gpui_node_api_smoke"
-  BUILD_RPATH "${RN_GPUI_HERMES_PLATFORM_BIN_DIR}"
-  INSTALL_RPATH "${RN_GPUI_HERMES_PLATFORM_BIN_DIR}")
+  BUILD_RPATH "${RN_GPUI_HERMES_VM_DIR}"
+  INSTALL_RPATH "${RN_GPUI_HERMES_VM_DIR}")
 if(APPLE)
   target_link_options(gpui_node_api_smoke PRIVATE "-undefined" "dynamic_lookup")
 elseif(WIN32)
@@ -219,8 +230,8 @@ add_executable(hermes_node_api_addon_test
 target_link_libraries(hermes_node_api_addon_test PRIVATE
   hermes-engine::hermesvm jsi)
 set_target_properties(hermes_node_api_addon_test PROPERTIES
-  BUILD_RPATH "${RN_GPUI_HERMES_PLATFORM_BIN_DIR}"
-  INSTALL_RPATH "${RN_GPUI_HERMES_PLATFORM_BIN_DIR}")
+  BUILD_RPATH "${RN_GPUI_HERMES_VM_DIR}"
+  INSTALL_RPATH "${RN_GPUI_HERMES_VM_DIR}")
 # The DLL has to sit beside the test executable: Windows has no rpath, and the
 # fixture imports from it.
 if(WIN32)

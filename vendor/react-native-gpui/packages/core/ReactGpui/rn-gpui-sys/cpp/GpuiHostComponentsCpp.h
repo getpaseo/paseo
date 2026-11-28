@@ -139,8 +139,25 @@ void dispatchHostCommand(
     uint32_t command,
     std::vector<HostCommandValue>&& args);
 
-/// A leaf host component: its measure function returns the size in its state,
-/// when it declares itself `measured`.
+/// The registry index of the component with this handle.
+uint32_t hostComponentIndex(facebook::react::ComponentHandle handle);
+
+/// Asks the Rust half to measure a node under a constraint, on the layout
+/// thread. `props` is the address of a `HostPropsHandle`. Returns whether the
+/// component measures; the size is in `width` and `height`.
+bool hostMeasure(
+    uint32_t index,
+    const void* props,
+    float minWidth,
+    float minHeight,
+    float maxWidth,
+    float maxHeight,
+    float* width,
+    float* height);
+
+/// A leaf host component: its measure function asks the component for the size
+/// under the constraint, or returns the size in its state, when it declares
+/// itself `measured`.
 template <const char* Name, class P, class E, bool Measured>
 class GpuiHostLeafShadowNode final
     : public facebook::react::
@@ -178,6 +195,22 @@ class GpuiHostLeafShadowNode final
       const facebook::react::LayoutContext& /*layoutContext*/,
       const facebook::react::LayoutConstraints& layoutConstraints)
       const override {
+    if constexpr (Measured) {
+      HostPropsHandle propsHandle{this->getProps()};
+      float measuredWidth = 0.f;
+      float measuredHeight = 0.f;
+      if (hostMeasure(
+              hostComponentIndex(this->getComponentHandle()),
+              &propsHandle,
+              layoutConstraints.minimumSize.width,
+              layoutConstraints.minimumSize.height,
+              layoutConstraints.maximumSize.width,
+              layoutConstraints.maximumSize.height,
+              &measuredWidth,
+              &measuredHeight)) {
+        return facebook::react::Size{measuredWidth, measuredHeight};
+      }
+    }
     const auto& stateData = this->getStateData();
     float width = stateData.width;
     float height = stateData.height;

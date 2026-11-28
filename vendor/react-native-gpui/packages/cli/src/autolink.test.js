@@ -2,7 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, expect, test } from 'vitest';
-import { autolink } from './autolink.js';
+import {
+  applyPatchBlock,
+  autolink,
+  gpuiKitPatchNames,
+  manifestDependencyNames,
+  specFilesFor,
+} from './autolink.js';
 
 // The repository root by lookup, not by counting parents: this file sits at a
 // different depth before and after a folder move.
@@ -300,6 +306,26 @@ test('registers a crate that has no TurboModule specs', () => {
   expect(generated).toContain('fake_paint::rn_gpui_register();');
 });
 
+test('hands desktop.json to the app so its window options need no main.rs change', () => {
+  const { projectRoot, configPath } = createProject();
+  fs.writeFileSync(
+    path.join(projectRoot, 'desktop/desktop.json'),
+    JSON.stringify({
+      window: { titleBar: 'hidden', trafficLightPosition: { x: 10, y: 14 } },
+    }),
+  );
+  autolink({ projectRoot, configFile: configPath });
+  const generated = fs.readFileSync(
+    path.join(projectRoot, 'desktop/autolink/src/lib.rs'),
+    'utf8',
+  );
+  expect(generated).toContain(
+    'react_native_gpui::set_desktop_defaults(DESKTOP_JSON);',
+  );
+  expect(generated).toContain('"titleBar":"hidden"');
+  expect(generated).toContain('"trafficLightPosition":{"x":10,"y":14}');
+});
+
 /**
  * A project with one Rust module crate, so the manifest checks have something to
  * read. The crate's manifest is the argument: the tests below vary only that.
@@ -365,6 +391,50 @@ test('the app manifest gets a managed patch block pointing at core', () => {
   expect(rev).toBeDefined();
   expect(appCargo).toContain(
     `gpui = { git = "https://github.com/streetwriters/gpui-fast", rev = "${rev}" }`,
+  );
+});
+
+test('the app manifest gets the module crates in their own sections', () => {
+  const { projectRoot, configPath } = projectWithRustCrate(
+    `${CARGO_HEADER}rn-gpui-module = "0.1"\n`,
+  );
+  const appManifest = path.join(projectRoot, 'desktop/Cargo.toml');
+  fs.writeFileSync(
+    appManifest,
+    '[package]\nname = "app"\nversion = "0.0.1"\nedition = "2021"\n\n[build-dependencies]\nserde_json = "1"\n\n[dependencies]\n',
+  );
+  autolink({ projectRoot, configFile: configPath });
+  autolink({ projectRoot, configFile: configPath });
+  const appCargo = fs.readFileSync(appManifest, 'utf8');
+  const dependencies = appCargo.slice(
+    appCargo.indexOf('[dependencies]'),
+    appCargo.indexOf('[patch.crates-io]'),
+  );
+  const buildDependencies = appCargo.slice(
+    appCargo.indexOf('[build-dependencies]'),
+    appCargo.indexOf('[features]'),
+  );
+  expect(dependencies).toMatch(/^rn-gpui-module = \{ path = "[^"]+" \}$/mu);
+  expect(buildDependencies).toMatch(
+    /^rn-gpui-module-build = \{ path = "[^"]+" \}$/mu,
+  );
+  expect(appCargo.match(/^rn-gpui-module = /gmu)).toHaveLength(2);
+});
+
+test('a path to a crate of core through a symlink becomes the real path', () => {
+  const { projectRoot, configPath } = projectWithRustCrate(
+    `${CARGO_HEADER}rn-gpui-module = "0.1"\n`,
+  );
+  const appManifest = path.join(projectRoot, 'desktop/Cargo.toml');
+  fs.writeFileSync(
+    appManifest,
+    '[package]\nname = "app"\nversion = "0.0.1"\nedition = "2021"\n\n[build-dependencies]\nrn-gpui-module-build = { path = "../node_modules/core/rn-gpui-module-build" }\n\n[dependencies]\nrn-gpui-module = { path = "../node_modules/core/rn-gpui-module" }\n',
+  );
+  autolink({ projectRoot, configFile: configPath });
+  const appCargo = fs.readFileSync(appManifest, 'utf8');
+  expect(appCargo).not.toContain('node_modules/core');
+  expect(appCargo).toMatch(
+    /^rn-gpui-module = \{ path = "[^"]+ReactGpui\/rn-gpui-module" \}$/gmu,
   );
 });
 
@@ -570,13 +640,13 @@ test('declares each host component with its index and layout flags', () => {
   });
   const lib = generatedLib(project.projectRoot);
   expect(lib).toContain(
-    'declare_host_component(0, "FakeChart", react_native_gpui::host_component::HostComponentOptions { measured: false, native_surface: false, container: false });',
+    'declare_host_component(0, "FakeChart", react_native_gpui::host_component::HostComponentOptions { measured: false, native_surface: false, container: false, cpp: false, mask_children: false });',
   );
   expect(lib).toContain(
-    'declare_host_component(1, "FakeLabel", react_native_gpui::host_component::HostComponentOptions { measured: true, native_surface: false, container: false });',
+    'declare_host_component(1, "FakeLabel", react_native_gpui::host_component::HostComponentOptions { measured: true, native_surface: false, container: false, cpp: false, mask_children: false });',
   );
   expect(lib).toContain(
-    'declare_host_component(2, "FakeCard", react_native_gpui::host_component::HostComponentOptions { measured: false, native_surface: true, container: true });',
+    'declare_host_component(2, "FakeCard", react_native_gpui::host_component::HostComponentOptions { measured: false, native_surface: true, container: true, cpp: false, mask_children: false });',
   );
   // Declared before any package registers, then checked for code afterwards.
   expect(lib.indexOf('declare_host_components();')).toBeLessThan(
@@ -694,4 +764,129 @@ test('refuses a duplicate host component name across packages', () => {
       configFile: project.configPath,
     }),
   ).toThrow(/host component FakeChart is already declared by fake-host/u);
+});
+
+test('splits the specifications of a package between its C++ provider and its crate', () => {
+  const files = ['NativeCrypto.ts', 'NativeSubtle.ts'];
+  expect(specFilesFor(files, undefined, 'cpp')).toEqual(files);
+  expect(specFilesFor(files, undefined, 'rust')).toEqual(files);
+  expect(specFilesFor(files, ['NativeCrypto.ts'], 'cpp')).toEqual([
+    'NativeCrypto.ts',
+  ]);
+  expect(specFilesFor(files, ['NativeCrypto.ts'], 'rust')).toEqual([
+    'NativeSubtle.ts',
+  ]);
+  expect(() => specFilesFor(files, ['NativeMissing.ts'], 'cpp')).toThrow(
+    /NativeMissing.ts/u,
+  );
+  expect(() => specFilesFor(files, 'NativeCrypto.ts', 'cpp')).toThrow(/array/u);
+});
+
+const coreRev = () => {
+  const coreManifest = fs.readFileSync(
+    path.join(repoRoot, 'packages/core/ReactGpui/Cargo.toml'),
+    'utf8',
+  );
+  return /^gpui = \{[^}]*rev = "([^"]+)"/mu.exec(coreManifest)?.[1];
+};
+
+const KIT_NAMES = ['gpui-pre', 'gpui-pre-macros', 'gpui-pre-sum-tree'];
+
+test('a module crate that depends on GPUI Kit gets the gpui-pre crates patched to the pin of core', () => {
+  const { projectRoot, configPath } = projectWithRustCrate(
+    `${CARGO_HEADER}rn-gpui-module = "0.1"\ngpui-component = "=0.9.1"\n`,
+  );
+  autolink({ projectRoot, configFile: configPath });
+  const appCargo = fs.readFileSync(
+    path.join(projectRoot, 'desktop/Cargo.toml'),
+    'utf8',
+  );
+  const block = appCargo.slice(
+    appCargo.indexOf('# Managed by'),
+    appCargo.indexOf('# End managed'),
+  );
+  for (const name of KIT_NAMES) {
+    expect(block).toContain(
+      `${name} = { git = "https://github.com/streetwriters/gpui-fast", rev = "${coreRev()}" }`,
+    );
+  }
+  expect(block).not.toContain('gpui-pre-platform');
+  expect(block).not.toContain('gpui-pre-web');
+  expect(block).not.toContain('gpui-pre-reqwest-client');
+});
+
+test('an app without a GPUI Kit module gets no gpui-pre patches', () => {
+  const { projectRoot, configPath } = projectWithRustCrate(
+    `${CARGO_HEADER}rn-gpui-module = "0.1"\n`,
+  );
+  autolink({ projectRoot, configFile: configPath });
+  const appCargo = fs.readFileSync(
+    path.join(projectRoot, 'desktop/Cargo.toml'),
+    'utf8',
+  );
+  expect(appCargo).not.toContain('gpui-pre');
+});
+
+test('the gpui-pre patches follow the modules: they go when the kit does', () => {
+  const { projectRoot, configPath, crateRoot } = projectWithRustCrate(
+    `${CARGO_HEADER}rn-gpui-module = "0.1"\ngpui-base = "=0.9.1"\n`,
+  );
+  autolink({ projectRoot, configFile: configPath });
+  const manifest = path.join(projectRoot, 'desktop/Cargo.toml');
+  expect(fs.readFileSync(manifest, 'utf8')).toContain('gpui-pre-macros');
+  fs.writeFileSync(
+    path.join(crateRoot, 'desktop/Cargo.toml'),
+    `${CARGO_HEADER}rn-gpui-module = "0.1"\n`,
+  );
+  autolink({ projectRoot, configFile: configPath });
+  expect(fs.readFileSync(manifest, 'utf8')).not.toContain('gpui-pre');
+});
+
+test('a hand-written gpui-pre line beside the managed block is refused with the fix', () => {
+  const { projectRoot, configPath } = projectWithRustCrate(
+    `${CARGO_HEADER}rn-gpui-module = "0.1"\ngpui-component = "=0.9.1"\n`,
+  );
+  autolink({ projectRoot, configFile: configPath });
+  const manifest = path.join(projectRoot, 'desktop/Cargo.toml');
+  fs.writeFileSync(
+    manifest,
+    `${fs.readFileSync(manifest, 'utf8')}gpui-pre = { git = "https://github.com/streetwriters/gpui-fast", rev = "abc" }\n`,
+  );
+  expect(() => autolink({ projectRoot, configFile: configPath })).toThrow(
+    /already sets gpui-pre, which autolink owns; remove that line/u,
+  );
+});
+
+test('the optional gpui-pre crates are patched when a module names them or the lockfile has them', () => {
+  expect(
+    gpuiKitPatchNames([
+      '[dependencies]\ngpui-component = "=0.9.1"\ngpui-pre-web = "0.3"\n',
+    ]),
+  ).toEqual([...KIT_NAMES, 'gpui-pre-web']);
+  expect(
+    gpuiKitPatchNames(
+      ['[dependencies]\ngpui-component = "=0.9.1"\n'],
+      '[[package]]\nname = "gpui-pre-platform"\nversion = "0.3.12"\n',
+    ),
+  ).toEqual([...KIT_NAMES, 'gpui-pre-platform']);
+  expect(gpuiKitPatchNames(['[dependencies]\nserde = "1"\n'])).toEqual([]);
+});
+
+test('GPUI Kit is found by dependency name in any section and under a rename', () => {
+  expect(
+    manifestDependencyNames(
+      '[dependencies]\na = "1"\nkit = { package = "gpui-component", version = "1" }\n[target.\'cfg(unix)\'.dependencies]\nb = "1"\n[build-dependencies]\nc = "1"\n[dependencies.gpui-kit-assets]\nversion = "1"\n[dependencies.other]\npackage = "gpui-base"\n[features]\nd = []\n',
+    ),
+  ).toEqual(['a', 'gpui-component', 'b', 'c', 'gpui-kit-assets', 'gpui-base']);
+  expect(
+    gpuiKitPatchNames(['[dependencies.other]\npackage = "gpui-base"\n']),
+  ).toEqual(KIT_NAMES);
+});
+
+test('entries added to the managed block are refused if the user table sets them', () => {
+  const manifest =
+    '[package]\nname = "a"\n\n[patch.crates-io]\nfoo = { path = "x" }\n';
+  expect(() =>
+    applyPatchBlock(manifest, 'Cargo.toml', [['foo', '{ path = "y" }']]),
+  ).toThrow(/already sets foo/u);
 });

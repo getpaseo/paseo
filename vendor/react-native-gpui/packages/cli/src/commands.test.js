@@ -1,18 +1,28 @@
+import { Buffer } from 'node:buffer';
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import nodePath from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, expect, test } from 'vitest';
 import {
+  runBundleHooks,
+  assertReleaseExists,
   collectNodeAddons,
   copyDebugSymbols,
+  gpuiVersionRange,
+  reactNativeMinor,
   createLibrary,
   desktopLaunchConfig,
+  isTransientPackagerFailure,
   linuxBuildDependencyProblem,
   metroProjectRoot,
   metroTerminal,
+  runPackager,
   scanNodeAddonCalls,
   scaffoldDesktop,
+  signCollectedNodeAddons,
+  stageBundle,
 } from './commands.js';
 
 // The repository root by lookup, not by counting parents: this file sits at a
@@ -33,29 +43,6 @@ const repoRoot = (() => {
   }
 })();
 const temporaryRoots = [];
-
-test('packaging copies Cargo dSYM contents without retaining its build-tree symlink', () => {
-  fs.mkdirSync(nodePath.join(repoRoot, '.artifacts'), { recursive: true });
-  const root = fs.mkdtempSync(nodePath.join(repoRoot, '.artifacts/gpui-dsym-'));
-  temporaryRoots.push(root);
-  const crateDir = nodePath.join(root, 'desktop');
-  const release = nodePath.join(crateDir, 'target/release');
-  const symbols = nodePath.join(release, 'deps/app-hash.dSYM');
-  const dwarf = 'Contents/Resources/DWARF/app';
-  fs.mkdirSync(nodePath.dirname(nodePath.join(symbols, dwarf)), { recursive: true });
-  fs.writeFileSync(nodePath.join(symbols, dwarf), 'debug symbols');
-  const cargoLink = nodePath.join(release, 'app.dSYM');
-  fs.symlinkSync('deps/app-hash.dSYM', cargoLink);
-  const outDir = nodePath.join(root, 'dist');
-  fs.mkdirSync(outDir);
-
-  copyDebugSymbols({ crateDir, binaryName: 'app', outDir });
-
-  expect(fs.lstatSync(cargoLink).isSymbolicLink()).toBe(true);
-  expect(fs.lstatSync(nodePath.join(outDir, 'app.dSYM')).isSymbolicLink()).toBe(false);
-  fs.rmSync(release, { recursive: true });
-  expect(fs.readFileSync(nodePath.join(outDir, 'app.dSYM', dwarf), 'utf8')).toBe('debug symbols');
-});
 
 afterAll(() => {
   for (const root of temporaryRoots) {
@@ -224,6 +211,20 @@ test('collect-node-addons requires both arguments', () => {
 // The launch chain used to be built from `app.json`'s `desktop` key. It reads
 // `desktop/desktop.json` now, and these check that the generated `main.rs` is
 // the same for the same options.
+test('urlSchemes reach the launch chain and turn single instance on', () => {
+  const chain = desktopLaunchConfig(
+    { devMenu: true, urlSchemes: ['myapp', 'my-app'], singleInstance: true },
+    'desktop/desktop.json',
+  );
+  expect(chain).toContain('.url_schemes(&["myapp", "my-app"])');
+  expect(chain).toContain('.single_instance(true)');
+  const none = desktopLaunchConfig(
+    { devMenu: true, urlSchemes: [], singleInstance: false },
+    'desktop/desktop.json',
+  );
+  expect(none).not.toContain('.url_schemes(');
+});
+
 test('menuBar: false asks the host for no menu bar, and its absence does not', () => {
   const hidden = desktopLaunchConfig(
     { window: { menuBar: false }, devMenu: true },
@@ -239,6 +240,19 @@ test('menuBar: false asks the host for no menu bar, and its absence does not', (
     'desktop/desktop.json',
   );
   expect(shown).not.toContain('.menu_bar(');
+});
+
+test('windowControlsPosition: left reaches the launch chain, and right does not', () => {
+  const left = desktopLaunchConfig(
+    { window: { windowControlsPosition: 'left' }, devMenu: true },
+    'desktop/desktop.json',
+  );
+  expect(left).toContain('.window_controls_position("left")');
+  const right = desktopLaunchConfig(
+    { window: { windowControlsPosition: 'right' }, devMenu: true },
+    'desktop/desktop.json',
+  );
+  expect(right).not.toContain('.window_controls_position(');
 });
 
 test('a custom title bar and the traffic light position reach the launch chain', () => {
@@ -273,6 +287,54 @@ test('a custom title bar and the traffic light position reach the launch chain',
   );
   expect(plain).not.toContain('.title_bar(');
   expect(plain).not.toContain('.traffic_light_position(');
+});
+
+test('a window background reaches the launch chain, and opaque adds nothing', () => {
+  const blurred = desktopLaunchConfig(
+    { window: { background: 'blurred' }, devMenu: true },
+    'desktop/desktop.json',
+  );
+  expect(blurred).toContain(
+    '.background(react_native_gpui::WindowBackground::Blurred)',
+  );
+  const opaque = desktopLaunchConfig(
+    { window: { background: 'opaque' }, devMenu: true },
+    'desktop/desktop.json',
+  );
+  expect(opaque).not.toContain('.background(');
+  expect(() =>
+    desktopLaunchConfig(
+      { window: { background: 'glass' }, devMenu: true },
+      'desktop/desktop.json',
+    ),
+  ).toThrow(/window.background must be/u);
+});
+
+test('an accessory app reaches the launch chain, and a regular one adds nothing', () => {
+  expect(
+    desktopLaunchConfig(
+      { accessory: true, devMenu: true },
+      'desktop/desktop.json',
+    ),
+  ).toContain('.accessory(true)');
+  expect(
+    desktopLaunchConfig({ devMenu: true }, 'desktop/desktop.json'),
+  ).not.toContain('.accessory(');
+});
+
+test('hiding the window buttons and the shadow reaches the launch chain', () => {
+  const bare = desktopLaunchConfig(
+    { window: { windowButtons: false, shadow: false }, devMenu: true },
+    'desktop/desktop.json',
+  );
+  expect(bare).toContain('.window_buttons(false)');
+  expect(bare).toContain('.shadow(false)');
+  const plain = desktopLaunchConfig(
+    { window: { windowButtons: true, shadow: true }, devMenu: true },
+    'desktop/desktop.json',
+  );
+  expect(plain).not.toContain('.window_buttons(');
+  expect(plain).not.toContain('.shadow(');
 });
 
 test('a traffic light position without both coordinates is rejected', () => {
@@ -345,10 +407,10 @@ test('create-library writes version requirements, not crate paths', () => {
   const outer = fs.mkdtempSync(nodePath.join(repoRoot, '.local', 'scaffold-'));
   try {
     createLibrary({
-      libraryName: 'fs',
+      libraryName: 'example',
       type: 'rust',
       destination: outer,
-      packageName: '@react-native-gpui/fs',
+      packageName: '@react-native-gpui/example',
     });
     const manifest = fs.readFileSync(
       nodePath.join(outer, 'desktop/Cargo.toml'),
@@ -490,4 +552,310 @@ test('a tray icon in desktop.json is embedded in the launch chain', () => {
   expect(
     desktopLaunchConfig({ tray: { tooltip: 'Tray' }, devMenu: true }, 'x'),
   ).not.toContain('.icon_bytes(');
+});
+
+function stageFixture(content) {
+  const projectRoot = fs.mkdtempSync(
+    nodePath.join(os.tmpdir(), 'stage-bundle-'),
+  );
+  temporaryRoots.push(projectRoot);
+  const runtimeBundlePath = nodePath.join(projectRoot, 'compiled.bundle');
+  fs.writeFileSync(runtimeBundlePath, content);
+  return { projectRoot, build: { runtimeBundlePath } };
+}
+
+test('stageBundle accepts the bytecode magic the engine declares', () => {
+  const magic = Buffer.from([0x01, 0x02, 0x03, 0x04]);
+  const staged = stageBundle({
+    ...stageFixture(Buffer.concat([magic, Buffer.from('rest')])),
+    engine: { compile() {}, bytecodeMagic: magic },
+    engineName: 'other',
+  });
+  expect(fs.existsSync(staged)).toBe(true);
+});
+
+test('stageBundle names the engine when its output lacks the declared magic', () => {
+  expect(() =>
+    stageBundle({
+      ...stageFixture('console.log(1)'),
+      engine: { compile() {}, bytecodeMagic: Buffer.from([1, 2, 3, 4]) },
+      engineName: 'other',
+    }),
+  ).toThrow(/the other engine did not produce bytecode/u);
+});
+
+test('stageBundle trusts an engine that compiles but declares no magic', () => {
+  const staged = stageBundle({
+    ...stageFixture('opaque'),
+    engine: { compile() {} },
+    engineName: 'other',
+  });
+  expect(fs.readFileSync(staged, 'utf8')).toBe('opaque');
+});
+
+test('stageBundle ships JavaScript for an engine without a compiler', () => {
+  const staged = stageBundle({
+    ...stageFixture('console.log(1)'),
+    engine: {},
+    engineName: 'plain',
+  });
+  expect(fs.readFileSync(staged, 'utf8')).toBe('console.log(1)');
+});
+
+test('the React Native minor comes from an exact version or a range', () => {
+  expect(reactNativeMinor('0.87.1')).toBe(87);
+  expect(reactNativeMinor('^0.88.0')).toBe(88);
+  expect(reactNativeMinor('~0.87.2')).toBe(87);
+  expect(reactNativeMinor('latest')).toBeUndefined();
+  expect(reactNativeMinor(undefined)).toBeUndefined();
+});
+
+test("our packages are asked for at the app's React Native minor", () => {
+  expect(
+    gpuiVersionRange('/nowhere', {
+      dependencies: { 'react-native': '0.87.1' },
+    }),
+  ).toBe('~0.87.0-alpha.0');
+  expect(() => gpuiVersionRange('/nowhere', { dependencies: {} })).toThrow(
+    /Cannot tell which React Native version/,
+  );
+});
+
+test('scaffolding writes the matching range for every package it adds', () => {
+  const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'rn-gpui-scaffold-'));
+  try {
+    fs.writeFileSync(nodePath.join(root, 'app.json'), '{"name":"App"}');
+    const result = scaffoldDesktop(root, {
+      name: 'app',
+      dependencies: { 'react-native': '0.87.1' },
+    });
+    expect(result.dependencies['@react-native-gpui/core']).toBe(
+      '~0.87.0-alpha.0',
+    );
+    expect(result.dependencies['@react-native-gpui/hermes']).toBe(
+      '~0.87.0-alpha.0',
+    );
+    expect(result.devDependencies['@react-native-gpui/cli']).toBe(
+      '~0.87.0-alpha.0',
+    );
+    expect(result.scripts.desktop).toBe('react-native run-desktop');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('scaffolding adds the desktop module of a library the app uses', () => {
+  const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'rn-gpui-scaffold-'));
+  try {
+    fs.writeFileSync(nodePath.join(root, 'app.json'), '{"name":"App"}');
+    const result = scaffoldDesktop(root, {
+      name: 'app',
+      dependencies: {
+        'react-native': '0.87.1',
+        'react-native-safe-area-context': '^5.5.2',
+      },
+    });
+    expect(result.dependencies['react-native-safe-area-context']).toBe(
+      '~5.10.0',
+    );
+    expect(result.dependencies['@react-native-gpui/safe-area-context']).toBe(
+      '~5.10.0-alpha.0',
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a React Native minor without a release is refused with a clear message', () => {
+  const view = result => () => result;
+  expect(() =>
+    assertReleaseExists('~0.88.0-alpha.0', {
+      registryView: view({ status: 0, stdout: '' }),
+    }),
+  ).toThrow(/supports React Native 0\.88/);
+  expect(() =>
+    assertReleaseExists('~0.87.0-alpha.0', {
+      registryView: view({ status: 0, stdout: '"0.87.0-alpha.0"' }),
+    }),
+  ).not.toThrow();
+  expect(() =>
+    assertReleaseExists('~0.87.0-alpha.0', {
+      registryView: view({ status: 1, stderr: 'npm error code E404' }),
+    }),
+  ).toThrow(/not published/);
+  expect(() =>
+    assertReleaseExists('~0.87.0-alpha.0', {
+      registryView: view({ status: 1, stderr: 'ENOTFOUND' }),
+    }),
+  ).not.toThrow();
+});
+
+test('the tray popover position reaches the launch chain', () => {
+  const placed = desktopLaunchConfig(
+    {
+      tray: {
+        component: 'Panel',
+        popoverAnchor: 'top-left',
+        popoverOffset: { x: 4, y: -2 },
+      },
+      devMenu: true,
+    },
+    'desktop/desktop.json',
+  );
+  expect(placed).toContain('.popover_anchor_name("top-left")');
+  expect(placed).toContain('.popover_offset(4.0, -2.0)');
+
+  // 'auto' is the default, so no call is emitted for it.
+  const auto = desktopLaunchConfig(
+    { tray: { component: 'Panel', popoverAnchor: 'auto' }, devMenu: true },
+    'desktop/desktop.json',
+  );
+  expect(auto).not.toContain('popover_anchor_name');
+});
+
+test('a busy disk image and a failed download are told from a real failure', () => {
+  expect(
+    isTransientPackagerFailure(
+      'stderr: hdiutil: create failed - Resource busy',
+    ),
+  ).toBe(true);
+  expect(
+    isTransientPackagerFailure(
+      'ERROR https://github.com/x/NSIS.zip: status code 504',
+    ),
+  ).toBe(true);
+  expect(isTransientPackagerFailure('error: connection timed out')).toBe(true);
+  expect(
+    isTransientPackagerFailure('ERROR https://x/y.zip: status code 404'),
+  ).toBe(false);
+  expect(isTransientPackagerFailure('error[E0425]: cannot find value')).toBe(
+    false,
+  );
+});
+
+test.skipIf(process.platform === 'win32')(
+  'cargo-packager is run again when it fails in a passing way',
+  async () => {
+    const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'packager-'));
+    const counter = nodePath.join(dir, 'runs');
+    const cargo = nodePath.join(dir, 'cargo');
+    fs.writeFileSync(
+      cargo,
+      `#!/bin/sh\necho x >> "${counter}"\nif [ "$(wc -l < "${counter}")" -lt 3 ]; then echo 'ERROR https://x/NSIS.zip: status code 504' >&2; exit 1; fi\n`,
+      { mode: 0o755 },
+    );
+    const path = process.env.PATH;
+    process.env.PATH = `${dir}${nodePath.delimiter}${path}`;
+    const waits = [];
+    try {
+      await runPackager(['packager'], {
+        cwd: dir,
+        wait: ms => waits.push(ms),
+      });
+      expect(waits).toEqual([5000, 10000]);
+      expect(fs.readFileSync(counter, 'utf8').trim().split('\n')).toHaveLength(
+        3,
+      );
+      fs.rmSync(counter);
+      await expect(
+        runPackager(['packager'], { cwd: dir, attempts: 2, wait: () => {} }),
+      ).rejects.toThrow(/Command failed/u);
+    } finally {
+      process.env.PATH = path;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test('runs the bundle hook of each autolinked package and collects what it ships', async () => {
+  const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'bundle-hook-'));
+  try {
+    const hook = nodePath.join(root, 'hook.cjs');
+    fs.writeFileSync(
+      hook,
+      "module.exports = async context => [require('node:path').join(context.bundleDir, 'workers')];\n",
+    );
+    fs.mkdirSync(nodePath.join(root, 'desktop', 'autolink'), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      nodePath.join(root, 'desktop', 'autolink', 'autolink.json'),
+      JSON.stringify({ bundleHooks: [{ dependencyName: 'x', module: hook }] }),
+    );
+    const resources = await runBundleHooks({
+      projectRoot: root,
+      desktopRoot: nodePath.join(root, 'desktop'),
+      bundleDir: nodePath.join(root, 'desktop', 'build'),
+    });
+    expect(resources).toEqual([
+      nodePath.join(root, 'desktop', 'build', 'workers'),
+    ]);
+    expect(
+      await runBundleHooks({
+        projectRoot: root,
+        desktopRoot: nodePath.join(root, 'nothing'),
+        bundleDir: root,
+      }),
+    ).toEqual([]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('collected addons and their libraries are signed with the given identity on macOS only', () => {
+  const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'rn-gpui-sign-'));
+  temporaryRoots.push(root);
+  const lib = nodePath.join(root, 'node_modules', 'pkg', 'lib');
+  fs.mkdirSync(lib, { recursive: true });
+  fs.writeFileSync(nodePath.join(lib, 'a.node'), '');
+  fs.writeFileSync(nodePath.join(lib, 'libb.dylib'), '');
+  fs.writeFileSync(nodePath.join(lib, 'readme.txt'), '');
+  const calls = [];
+  const exec = (command, args) => calls.push([command, ...args]);
+  signCollectedNodeAddons({
+    directory: root,
+    identity: 'ID',
+    platform: 'darwin',
+    exec,
+  });
+  expect(calls.map(call => call.slice(0, 4))).toEqual([
+    ['codesign', '--force', '--sign', 'ID'],
+    ['codesign', '--force', '--sign', 'ID'],
+  ]);
+  expect(calls.map(call => nodePath.basename(call[4])).sort()).toEqual([
+    'a.node',
+    'libb.dylib',
+  ]);
+  calls.length = 0;
+  signCollectedNodeAddons({ directory: root, platform: 'darwin', exec });
+  signCollectedNodeAddons({
+    directory: root,
+    identity: 'ID',
+    platform: 'linux',
+    exec,
+  });
+  expect(calls).toEqual([]);
+});
+
+test('packaging copies Cargo dSYM contents without retaining its build-tree symlink', () => {
+  fs.mkdirSync(nodePath.join(repoRoot, '.artifacts'), { recursive: true });
+  const root = fs.mkdtempSync(nodePath.join(repoRoot, '.artifacts/gpui-dsym-'));
+  temporaryRoots.push(root);
+  const crateDir = nodePath.join(root, 'desktop');
+  const release = nodePath.join(crateDir, 'target/release');
+  const symbols = nodePath.join(release, 'deps/app-hash.dSYM');
+  const dwarf = 'Contents/Resources/DWARF/app';
+  fs.mkdirSync(nodePath.dirname(nodePath.join(symbols, dwarf)), { recursive: true });
+  fs.writeFileSync(nodePath.join(symbols, dwarf), 'debug symbols');
+  const cargoLink = nodePath.join(release, 'app.dSYM');
+  fs.symlinkSync('deps/app-hash.dSYM', cargoLink);
+  const outDir = nodePath.join(root, 'dist');
+  fs.mkdirSync(outDir);
+
+  copyDebugSymbols({ crateDir, binaryName: 'app', outDir });
+
+  expect(fs.lstatSync(cargoLink).isSymbolicLink()).toBe(true);
+  expect(fs.lstatSync(nodePath.join(outDir, 'app.dSYM')).isSymbolicLink()).toBe(false);
+  fs.rmSync(release, { recursive: true });
+  expect(fs.readFileSync(nodePath.join(outDir, 'app.dSYM', dwarf), 'utf8')).toBe('debug symbols');
 });

@@ -1,19 +1,40 @@
+pub mod app_dir;
 pub mod app_menu;
+pub mod app_state;
+pub mod background;
+pub mod button_layout;
 pub mod capabilities;
 pub mod client_frame;
 pub mod context_menu;
+pub mod deep_link;
 pub mod dev_menu;
+pub mod display;
 pub mod errors;
+pub mod frame_probe;
+pub mod global_shortcut;
 pub mod gpui_menu;
 pub mod icon;
+pub mod keyboard;
 pub mod keymap;
+pub mod memory_pressure;
 pub mod menu_events;
 pub mod menu_model;
 pub mod module;
+pub mod os_version;
 pub mod perf_monitor;
 pub mod platform_window;
+pub mod popover_placement;
+#[cfg(target_os = "linux")]
+pub mod portal_shortcuts;
+pub mod test_scale;
 pub mod tray;
+pub mod window_frame;
+pub mod window_icons;
+pub mod window_mirror;
 pub mod windows;
+#[cfg(target_os = "linux")]
+pub mod work_area;
+pub mod zoom;
 
 use gpui::App;
 use std::sync::OnceLock;

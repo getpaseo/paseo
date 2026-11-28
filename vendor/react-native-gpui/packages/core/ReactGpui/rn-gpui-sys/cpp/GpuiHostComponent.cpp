@@ -127,6 +127,35 @@ void releaseHostEmitterHandle(std::size_t handle) {
   delete reinterpret_cast<HostEmitterHandle*>(handle);
 }
 
+uint32_t hostComponentIndex(facebook::react::ComponentHandle handle) {
+  const auto* entry = hostComponentEntry(handle);
+  return entry ? entry->index : 0;
+}
+
+bool hostMeasure(
+    uint32_t index,
+    const void* props,
+    float minWidth,
+    float minHeight,
+    float maxWidth,
+    float maxHeight,
+    float* width,
+    float* height) {
+  const auto result = rn_gpui_host_measure(
+      index,
+      reinterpret_cast<std::size_t>(props),
+      minWidth,
+      minHeight,
+      maxWidth,
+      maxHeight);
+  if (!result.measured) {
+    return false;
+  }
+  *width = result.width;
+  *height = result.height;
+  return true;
+}
+
 void dispatchHostCommand(
     int32_t tag,
     uint32_t command,

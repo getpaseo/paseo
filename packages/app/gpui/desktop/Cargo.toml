@@ -35,6 +35,7 @@ serde_json = "1"
 [features]
 visual-capture = ["react-native-gpui/visual-capture"]
 test-driver = ["react-native-gpui/test-driver"]
+runtime-shaders = ["react-native-gpui/runtime-shaders"]
 
 [dependencies]
 serde_json = "1"
@@ -50,6 +51,6 @@ react-native-gpui = { path = "../node_modules/@react-native-gpui/core/ReactGpui/
 rn-gpui-sys = { path = "../node_modules/@react-native-gpui/core/ReactGpui/rn-gpui-sys" }
 rn-gpui-module = { path = "../node_modules/@react-native-gpui/core/ReactGpui/rn-gpui-module" }
 rn-gpui-module-build = { path = "../node_modules/@react-native-gpui/core/ReactGpui/rn-gpui-module-build" }
-gpui = { git = "https://github.com/streetwriters/gpui-fast", rev = "8da7d89" }
-gpui_platform = { git = "https://github.com/streetwriters/gpui-fast", rev = "8da7d89" }
+gpui = { git = "https://github.com/streetwriters/gpui-fast", rev = "1ad3cc3" }
+gpui_platform = { git = "https://github.com/streetwriters/gpui-fast", rev = "1ad3cc3" }
 # End managed by autolink.

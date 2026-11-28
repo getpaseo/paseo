@@ -12,7 +12,7 @@ mod imp {
     const FLOATING_WINDOW_LEVEL: i64 = 3;
     const NORMAL_WINDOW_LEVEL: i64 = 0;
 
-    fn ns_window(window: &gpui::Window) -> Result<id, String> {
+    pub(crate) fn ns_window(window: &gpui::Window) -> Result<id, String> {
         let handle = HasWindowHandle::window_handle(window)
             .map_err(|error| format!("no platform window handle: {error}"))?;
         match handle.as_raw() {
@@ -74,6 +74,33 @@ mod imp {
         Ok(())
     }
 
+    /// NSWindowCollectionBehavior bits. `FullScreenPrimary` and
+    /// `MoveToActiveSpace` each conflict with what is set here, and AppKit raises
+    /// an exception when they are combined.
+    const CAN_JOIN_ALL_SPACES: u64 = 1 << 0;
+    const MOVE_TO_ACTIVE_SPACE: u64 = 1 << 1;
+    const FULL_SCREEN_PRIMARY: u64 = 1 << 7;
+    const FULL_SCREEN_AUXILIARY: u64 = 1 << 8;
+
+    pub fn set_visible_on_all_workspaces(
+        window: &mut gpui::Window,
+        visible: bool,
+    ) -> Result<(), String> {
+        let native = ns_window(window)?;
+        // SAFETY: `native` is the live `NSWindow` from `ns_window`, and AppKit is only messaged from the main thread.
+        unsafe {
+            let current: u64 = msg_send![native, collectionBehavior];
+            let wanted = CAN_JOIN_ALL_SPACES | FULL_SCREEN_AUXILIARY;
+            let next = if visible {
+                (current & !(MOVE_TO_ACTIVE_SPACE | FULL_SCREEN_PRIMARY)) | wanted
+            } else {
+                current & !wanted
+            };
+            let _: () = msg_send![native, setCollectionBehavior: next];
+        }
+        Ok(())
+    }
+
     pub fn set_min_size(window: &mut gpui::Window, width: f32, height: f32) -> Result<(), String> {
         let native = ns_window(window)?;
         let size = NSSize::new(f64::from(width), f64::from(height));
@@ -117,7 +144,11 @@ mod imp {
         let native = ns_window(window)?;
         // SAFETY: `native` is the live `NSWindow` from `ns_window`, and AppKit is only messaged from the main thread.
         unsafe {
-            let _: () = msg_send![native, orderFront: std::ptr::null::<id>()];
+            if crate::desktop::background::enabled() {
+                let _: () = msg_send![native, orderBack: std::ptr::null::<id>()];
+            } else {
+                let _: () = msg_send![native, orderFront: std::ptr::null::<id>()];
+            }
         }
         Ok(())
     }
@@ -194,7 +225,7 @@ mod imp {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         IsIconic, IsWindowVisible, IsZoomed, SetWindowPos, ShowWindowAsync, HWND_NOTOPMOST,
         HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-        SW_HIDE, SW_SHOW,
+        SW_HIDE, SW_RESTORE, SW_SHOW,
     };
 
     const UNSUPPORTED_MIN_MAX: &str =
@@ -229,6 +260,13 @@ mod imp {
         } else {
             Ok(())
         }
+    }
+
+    pub fn set_visible_on_all_workspaces(
+        _window: &mut Window,
+        _visible: bool,
+    ) -> Result<(), String> {
+        Ok(())
     }
 
     pub fn set_always_on_top(window: &mut Window, on: bool) -> Result<(), String> {
@@ -299,7 +337,15 @@ mod imp {
     pub fn show(window: &mut Window) -> Result<(), String> {
         let hwnd = hwnd(window)?;
         // SAFETY: `hwnd` is the live window handle `hwnd()` just returned, used on the window's own thread.
-        unsafe { ShowWindowAsync(hwnd, SW_SHOW) };
+        unsafe {
+            // A window hidden while minimized stays minimized under SW_SHOW.
+            let command = if IsIconic(hwnd) != 0 {
+                SW_RESTORE
+            } else {
+                SW_SHOW
+            };
+            ShowWindowAsync(hwnd, command)
+        };
         Ok(())
     }
 
@@ -462,6 +508,32 @@ mod imp {
         with_display(|xlib, display| f(xlib, display, id as xlib::Window))
     }
 
+    /// Asks the window manager not to decorate the window: `_MOTIF_WM_HINTS` with
+    /// no decorations, which Openbox, Xfwm, Mutter, KWin and most others honour.
+    /// For a window that asked for no chrome at all where the window manager
+    /// cannot leave the drawing to the app (no `_GTK_FRAME_EXTENTS`), so it would
+    /// otherwise keep its title bar.
+    pub fn remove_server_frame(window: &Window) -> Result<(), String> {
+        // SAFETY: `display` is an open connection and `id` a window id for the whole closure; `with_display` closes the connection afterwards.
+        with_window(window, |xlib, display, id| unsafe {
+            let motif = (xlib.XInternAtom)(display, b"_MOTIF_WM_HINTS\0".as_ptr() as *const _, 0);
+            if motif != 0 {
+                let data: [u32; 5] = [1 << 1, 0, 0, 0, 0];
+                (xlib.XChangeProperty)(
+                    display,
+                    id,
+                    motif,
+                    motif,
+                    32,
+                    xlib::PropModeReplace,
+                    data.as_ptr() as *const std::os::raw::c_uchar,
+                    5,
+                );
+                (xlib.XFlush)(display);
+            }
+        })
+    }
+
     pub fn set_position(window: &mut Window, x: f32, y: f32) -> Result<(), String> {
         // SAFETY: `display` is an open connection and `id` a window id for the whole closure; `with_display` closes the connection afterwards.
         with_window(window, |xlib, display, id| unsafe {
@@ -470,17 +542,78 @@ mod imp {
         })
     }
 
-    /// Raising is the part of always-on-top X11 itself can do, so `on == true`
-    /// only raises the window once and `on == false` is a no-op.
-    ///
-    /// TODO: set the `_NET_WM_STATE_ABOVE` hint so the window stays above.
+    pub fn set_visible_on_all_workspaces(
+        _window: &mut Window,
+        _visible: bool,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
     pub fn set_always_on_top(window: &mut Window, on: bool) -> Result<(), String> {
         // SAFETY: `display` is an open connection and `id` a window id for the whole closure; `with_display` closes the connection afterwards.
         with_window(window, |xlib, display, id| unsafe {
+            let root = (xlib.XDefaultRootWindow)(display);
+            let state = (xlib.XInternAtom)(display, b"_NET_WM_STATE\0".as_ptr() as *const _, 0);
+            let above =
+                (xlib.XInternAtom)(display, b"_NET_WM_STATE_ABOVE\0".as_ptr() as *const _, 0);
+            let mut event: xlib::XEvent = std::mem::zeroed();
+            {
+                let message = &mut event.client_message;
+                message.type_ = xlib::ClientMessage;
+                message.display = display;
+                message.window = id;
+                message.message_type = state;
+                message.format = 32;
+                // data = [action (1 adds, 0 removes), property, 0, source indication]
+                message.data.set_long(0, i64::from(on));
+                message.data.set_long(1, above as i64);
+                message.data.set_long(3, 1);
+            }
+            (xlib.XSendEvent)(
+                display,
+                root,
+                0,
+                xlib::SubstructureRedirectMask | xlib::SubstructureNotifyMask,
+                &mut event,
+            );
             if on {
                 (xlib.XRaiseWindow)(display, id);
-                (xlib.XFlush)(display);
             }
+            (xlib.XFlush)(display);
+        })
+    }
+
+    /// Keeps a mapped window out of the taskbar and the pager.
+    pub fn skip_taskbar(window: &mut Window) -> Result<(), String> {
+        // SAFETY: `display` is an open connection and `id` a window id for the whole closure; `with_display` closes the connection afterwards.
+        with_window(window, |xlib, display, id| unsafe {
+            let root = (xlib.XDefaultRootWindow)(display);
+            let atom = |name: &[u8]| (xlib.XInternAtom)(display, name.as_ptr() as *const _, 0);
+            let mut event: xlib::XEvent = std::mem::zeroed();
+            {
+                let message = &mut event.client_message;
+                message.type_ = xlib::ClientMessage;
+                message.display = display;
+                message.window = id;
+                message.message_type = atom(b"_NET_WM_STATE\0");
+                message.format = 32;
+                message.data.set_long(0, 1);
+                message
+                    .data
+                    .set_long(1, atom(b"_NET_WM_STATE_SKIP_TASKBAR\0") as i64);
+                message
+                    .data
+                    .set_long(2, atom(b"_NET_WM_STATE_SKIP_PAGER\0") as i64);
+                message.data.set_long(3, 1);
+            }
+            (xlib.XSendEvent)(
+                display,
+                root,
+                0,
+                xlib::SubstructureRedirectMask | xlib::SubstructureNotifyMask,
+                &mut event,
+            );
+            (xlib.XFlush)(display);
         })
     }
 
@@ -545,9 +678,9 @@ mod imp {
         .unwrap_or(false)
     }
 
-    pub fn is_maximized(_window: &Window) -> bool {
-        // Only the window manager knows; it would need a `_NET_WM_STATE` read.
-        false
+    pub fn is_maximized(window: &Window) -> bool {
+        // GPUI keeps the window manager's `_NET_WM_STATE` as it reports it.
+        window.is_maximized()
     }
 
     /// Turns a just-created, still-unmapped window into a tray popover.
@@ -723,6 +856,12 @@ mod imp {
         Err(UNSUPPORTED.to_string())
     }
     pub fn set_always_on_top(_window: &mut Window, _on: bool) -> Result<(), String> {
+        Err(UNSUPPORTED.to_string())
+    }
+    pub fn set_visible_on_all_workspaces(
+        _window: &mut Window,
+        _visible: bool,
+    ) -> Result<(), String> {
         Err(UNSUPPORTED.to_string())
     }
     pub fn set_min_size(_window: &mut Window, _w: f32, _h: f32) -> Result<(), String> {
@@ -948,6 +1087,81 @@ pub fn style_as_popover(window: &mut gpui::Window) {
 #[cfg(not(target_os = "macos"))]
 pub fn style_as_popover(_window: &mut gpui::Window) {}
 
+/// The parts of a window's chrome AppKit draws itself: the traffic lights, the
+/// shadow and the line under the title bar. A window the app styles entirely
+/// draws its own.
+#[cfg(target_os = "macos")]
+pub fn style_window(
+    window: &mut gpui::Window,
+    buttons: bool,
+    shadow: bool,
+    title_bar: crate::bootstrap::WindowTitleBar,
+) {
+    use cocoa::base::{id, NO, YES};
+    use objc::{msg_send, sel, sel_impl};
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let custom_bar = title_bar.is_custom();
+    if buttons && shadow && !custom_bar {
+        return;
+    }
+    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+        return;
+    };
+    if let RawWindowHandle::AppKit(appkit) = handle.as_raw() {
+        // SAFETY: `ns_view` comes from the window's raw handle, which GPUI keeps valid while the window lives.
+        unsafe {
+            let ns_view = appkit.ns_view.as_ptr() as id;
+            let native: id = msg_send![ns_view, window];
+            if native.is_null() {
+                return;
+            }
+            if !shadow {
+                let _: () = msg_send![native, setHasShadow: NO];
+            }
+            if custom_bar {
+                // NSTitlebarSeparatorStyleNone: the app draws what is under the bar.
+                let _: () = msg_send![native, setTitlebarSeparatorStyle: 1i64];
+            }
+            if title_bar == crate::bootstrap::WindowTitleBar::Borderless {
+                // NSWindowStyleMaskBorderless: no title bar, border line or system
+                // corners. GPUI's window class still becomes key, so it takes input.
+                let _: () = msg_send![native, setStyleMask: 0u64];
+                // Changing the mask resets the first responder, and key events
+                // go to it.
+                let _: () = msg_send![native, makeFirstResponder: ns_view];
+            }
+            if !buttons {
+                // NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton.
+                for button in 0..3u64 {
+                    let button: id = msg_send![native, standardWindowButton: button];
+                    if !button.is_null() {
+                        let _: () = msg_send![button, setHidden: YES];
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn style_window(
+    _window: &mut gpui::Window,
+    _buttons: bool,
+    _shadow: bool,
+    _title_bar: crate::bootstrap::WindowTitleBar,
+) {
+    // A window that asked for no chrome whose frame the window manager kept
+    // anyway (it cannot leave the drawing to the app) is stripped of it.
+    #[cfg(target_os = "linux")]
+    if _title_bar == crate::bootstrap::WindowTitleBar::Borderless
+        && !crate::desktop::capabilities::is_wayland()
+        && matches!(_window.window_decorations(), gpui::Decorations::Server)
+    {
+        let _ = remove_server_frame(_window);
+    }
+}
+
 /// `tray-icon` reports physical pixels; windows and menus are placed in points.
 #[cfg(target_os = "macos")]
 pub fn primary_screen_scale() -> f32 {
@@ -1026,7 +1240,12 @@ pub fn work_area_at(x: f32, y: f32) -> Option<(f32, f32, f32, f32)> {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+pub fn work_area_at(_x: f32, _y: f32) -> Option<(f32, f32, f32, f32)> {
+    crate::desktop::work_area::read().map(|work| work.area)
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 pub fn work_area_at(_x: f32, _y: f32) -> Option<(f32, f32, f32, f32)> {
     None
 }
@@ -1065,4 +1284,195 @@ pub fn native_frame(window: &gpui::Window) -> Option<(i32, i32, i32, i32, bool)>
             IsWindowVisible(hwnd) != 0,
         ))
     }
+}
+
+/// Paints the window's own background, behind the content: `argb` is `0xAARRGGBB`.
+#[cfg(target_os = "macos")]
+pub fn set_background_color(window: &mut gpui::Window, argb: u32) -> Result<(), String> {
+    use cocoa::base::id;
+    use objc::{class, msg_send, sel, sel_impl};
+
+    let native = imp::ns_window(window)?;
+    let channel = |shift: u32| f64::from((argb >> shift) & 0xFF) / 255.0;
+    // SAFETY: `native` is the live `NSWindow` from `ns_window`, and AppKit is only messaged from the main thread.
+    unsafe {
+        let color: id = msg_send![
+            class!(NSColor),
+            colorWithSRGBRed: channel(16)
+            green: channel(8)
+            blue: channel(0)
+            alpha: channel(24)
+        ];
+        let _: () = msg_send![native, setBackgroundColor: color];
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_background_color(_window: &mut gpui::Window, _argb: u32) -> Result<(), String> {
+    Err("window background colors are not supported on this platform".to_string())
+}
+
+/// Gives the window's native chrome (title bar, traffic lights) a light or dark
+/// look, or `None` to follow the system.
+#[cfg(target_os = "macos")]
+pub fn set_chrome_appearance(window: &mut gpui::Window, dark: Option<bool>) -> Result<(), String> {
+    use cocoa::base::{id, nil};
+    use cocoa::foundation::NSString;
+    use objc::{class, msg_send, sel, sel_impl};
+
+    let native = imp::ns_window(window)?;
+    // SAFETY: `native` is the live `NSWindow` from `ns_window`, and AppKit is only messaged from the main thread.
+    unsafe {
+        let appearance: id = match dark {
+            None => nil,
+            Some(dark) => {
+                let name = if dark {
+                    "NSAppearanceNameDarkAqua"
+                } else {
+                    "NSAppearanceNameAqua"
+                };
+                msg_send![class!(NSAppearance), appearanceNamed: NSString::alloc(nil).init_str(name)]
+            }
+        };
+        let _: () = msg_send![native, setAppearance: appearance];
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_chrome_appearance(
+    _window: &mut gpui::Window,
+    _dark: Option<bool>,
+) -> Result<(), String> {
+    Err("a window's chrome appearance is not supported on this platform".to_string())
+}
+
+/// Prepares to show a window, returning what does it. The operating system
+/// reports activation and size changes while it shows a window, and those
+/// reach GPUI's window callbacks, which borrow the window; so the caller runs
+/// the returned action once its own borrow of the window has ended.
+#[cfg(target_os = "macos")]
+pub fn show_later(window: &mut gpui::Window) -> Result<Box<dyn FnOnce()>, String> {
+    use cocoa::base::{id, nil};
+    use objc::{msg_send, sel, sel_impl};
+
+    let native = imp::ns_window(window)? as usize;
+    Ok(Box::new(move || {
+        let native = native as id;
+        // SAFETY: `native` is the `NSWindow` of a window that is still open, and AppKit is only messaged from the main thread.
+        unsafe {
+            let miniaturized: bool = msg_send![native, isMiniaturized];
+            if miniaturized {
+                let _: () = msg_send![native, deminiaturize: nil];
+            }
+            if crate::desktop::background::enabled()
+                && !std::env::var("RN_GPUI_TEST_ON_TOP").is_ok_and(|value| value == "1")
+            {
+                let _: () = msg_send![native, orderBack: nil];
+            } else if crate::desktop::background::enabled() {
+                let visible: bool = msg_send![native, isVisible];
+                if !visible {
+                    let _: () = msg_send![native, setAlphaValue: 0.0f64];
+                }
+                let _: () = msg_send![native, orderFrontRegardless];
+            } else {
+                // A window that was hidden has drawn nothing yet: it is shown
+                // clear, and `reveal_window` makes it opaque once its first
+                // frame has had time to be presented.
+                let visible: bool = msg_send![native, isVisible];
+                if !visible {
+                    let _: () = msg_send![native, setAlphaValue: 0.0f64];
+                }
+                let _: () = msg_send![native, orderFront: nil];
+            }
+        }
+    }))
+}
+
+/// Makes a window opaque again after [`show_later`] showed it clear.
+#[cfg(target_os = "macos")]
+pub fn reveal_window(window: &mut gpui::Window) -> Result<(), String> {
+    use objc::{msg_send, sel, sel_impl};
+    let native = imp::ns_window(window)?;
+    // SAFETY: `native` is the live `NSWindow` from `ns_window`, and AppKit is only messaged from the main thread.
+    unsafe {
+        let _: () = msg_send![native, setAlphaValue: 1.0f64];
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn reveal_window(_window: &mut gpui::Window) -> Result<(), String> {
+    Ok(())
+}
+
+/// The window's opacity, where the platform says: 0 while it is being revealed.
+#[cfg(target_os = "macos")]
+pub fn window_alpha(window: &gpui::Window) -> Option<f32> {
+    use objc::{msg_send, sel, sel_impl};
+    let native = imp::ns_window(window).ok()?;
+    // SAFETY: `native` is the live `NSWindow` from `ns_window`, and AppKit is only messaged from the main thread.
+    let alpha: f64 = unsafe { msg_send![native, alphaValue] };
+    Some(alpha as f32)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn window_alpha(_window: &gpui::Window) -> Option<f32> {
+    // No other platform hides a window being revealed by making it transparent.
+    Some(1.0)
+}
+
+/// Shows a window behind every other window, without making it key. A window
+/// that other windows cover is occluded, and macOS stops presenting frames for
+/// it, so a test that reads the screen back asks for the window to go in front
+/// with `RN_GPUI_TEST_ON_TOP=1`: `orderFrontRegardless` does not activate the
+/// app or give the window focus.
+#[cfg(target_os = "macos")]
+pub fn show_behind(window: &mut gpui::Window) -> Result<(), String> {
+    use cocoa::base::id;
+    use objc::{msg_send, sel, sel_impl};
+    let native = imp::ns_window(window)?;
+    let on_top = std::env::var("RN_GPUI_TEST_ON_TOP").is_ok_and(|value| value == "1");
+    // SAFETY: `native` is the live `NSWindow` from `ns_window`, and AppKit is only messaged from the main thread.
+    unsafe {
+        if on_top {
+            let _: () = msg_send![native, orderFrontRegardless];
+        } else {
+            let _: () = msg_send![native, orderBack: std::ptr::null::<id>()];
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn show_behind(_window: &mut gpui::Window) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn show_later(window: &mut gpui::Window) -> Result<Box<dyn FnOnce()>, String> {
+    show(window)?;
+    Ok(Box::new(|| {}))
+}
+
+/// Prepares to hide a window; see [`show_later`].
+#[cfg(target_os = "macos")]
+pub fn hide_later(window: &mut gpui::Window) -> Result<Box<dyn FnOnce()>, String> {
+    use cocoa::base::{id, nil};
+    use objc::{msg_send, sel, sel_impl};
+
+    let native = imp::ns_window(window)? as usize;
+    Ok(Box::new(move || {
+        // SAFETY: `native` is the `NSWindow` of a window that is still open, and AppKit is only messaged from the main thread.
+        unsafe {
+            let _: () = msg_send![native as id, orderOut: nil];
+        }
+    }))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn hide_later(window: &mut gpui::Window) -> Result<Box<dyn FnOnce()>, String> {
+    hide(window)?;
+    Ok(Box::new(|| {}))
 }

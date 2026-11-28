@@ -15,7 +15,11 @@ export type WindowState = {
   isFullscreen: boolean;
   isFocused: boolean;
   isMinimized: boolean;
+  isVisible: boolean;
+  title: string;
+  zoomFactor: number;
   scaleFactor: number;
+  topInset: number;
 };
 
 export type WindowHandle = {
@@ -45,15 +49,20 @@ export type WindowOpenOptions = {
   x?: number;
   y?: number;
   titleBar?: string;
+  background?: string;
+  windowButtons?: boolean;
+  shadow?: boolean;
   trafficLightPosition?: WindowTrafficLights;
   resizable?: boolean;
   alwaysOnTop?: boolean;
+  visibleOnAllWorkspaces?: boolean;
 };
 
 export interface Spec extends TurboModule {
   windowOpen(options: WindowOpenOptions): Promise<WindowHandle>;
   windowList(): Promise<WindowList>;
   windowGetState(windowId: CodegenTypes.Int32): Promise<WindowState>;
+  windowGetStateSync(windowId: CodegenTypes.Int32): WindowState;
   windowClose(windowId: CodegenTypes.Int32, force: boolean): Promise<void>;
   windowFocus(windowId: CodegenTypes.Int32): Promise<void>;
   windowSetTitle(windowId: CodegenTypes.Int32, title: string): Promise<void>;
@@ -89,10 +98,30 @@ export interface Spec extends TurboModule {
     windowId: CodegenTypes.Int32,
     onTop: boolean,
   ): Promise<void>;
+  windowSetVisibleOnAllWorkspaces(
+    windowId: CodegenTypes.Int32,
+    visible: boolean,
+  ): Promise<void>;
   windowMinimize(windowId: CodegenTypes.Int32): Promise<void>;
+  windowMoveFocus(
+    windowId: CodegenTypes.Int32,
+    backwards: boolean,
+  ): Promise<void>;
   windowMaximize(windowId: CodegenTypes.Int32): Promise<void>;
   windowUnmaximize(windowId: CodegenTypes.Int32): Promise<void>;
   windowToggleMaximize(windowId: CodegenTypes.Int32): Promise<void>;
+  windowSetZoomFactor(
+    windowId: CodegenTypes.Int32,
+    factor: number,
+  ): Promise<void>;
+  windowSetBackgroundColor(
+    windowId: CodegenTypes.Int32,
+    color: number,
+  ): Promise<void>;
+  windowSetChromeAppearance(
+    windowId: CodegenTypes.Int32,
+    appearance: string,
+  ): Promise<void>;
   windowShow(windowId: CodegenTypes.Int32): Promise<void>;
   windowHide(windowId: CodegenTypes.Int32): Promise<void>;
   windowStartDragging(windowId: CodegenTypes.Int32): Promise<void>;

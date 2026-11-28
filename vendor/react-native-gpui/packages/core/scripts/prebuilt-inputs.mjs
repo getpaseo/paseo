@@ -24,7 +24,14 @@ const FILE_INPUTS = [
   'scripts/prebuilt-inputs.mjs',
   'ReactGpui/rn-gpui-sys/src/lib.rs',
 ];
+// The Loom runtime also depends on Loom's header variants and on the pinned
+// Loom the React Native tree is built from. The Fabric hash does not include
+// them, so Loom changes do not invalidate the Fabric runtime.
+const LOOM_TREE_INPUTS = ['ReactCommonOverrides.loom'];
+const LOOM_FILE_INPUTS = ['ReactGpui/loom-pin.json', 'overrides.json'];
 const REACT_NATIVE_INPUT = 'react-native/package.json';
+
+export const RENDERERS = ['fabric', 'loom'];
 
 const SKIP_DIRS = new Set(['build', 'node_modules', '.git', 'native-deps']);
 
@@ -55,9 +62,12 @@ function reactNativePackageJson() {
  * relative for this package's files, and `react-native/package.json` for the
  * React Native pin.
  */
-export function collectInputs() {
+export function collectInputs(renderer = 'fabric') {
+  const loom = renderer === 'loom';
   const files = new Map();
-  for (const rel of TREE_INPUTS) {
+  for (const rel of loom
+    ? [...TREE_INPUTS, ...LOOM_TREE_INPUTS]
+    : TREE_INPUTS) {
     const dir = path.join(packageDir, rel);
     if (!existsSync(dir)) continue;
     for (const full of walk(dir, [])) {
@@ -67,7 +77,9 @@ export function collectInputs() {
       );
     }
   }
-  for (const rel of FILE_INPUTS) {
+  for (const rel of loom
+    ? [...FILE_INPUTS, ...LOOM_FILE_INPUTS]
+    : FILE_INPUTS) {
     const full = path.join(packageDir, rel);
     if (existsSync(full)) files.set(rel, full);
   }
@@ -85,10 +97,10 @@ function contentSha256(file) {
   return createHash('sha256').update(text, 'latin1').digest('hex');
 }
 
-export function inputHash() {
+export function inputHash(renderer = 'fabric') {
   const hash = createHash('sha256');
   const perFile = [];
-  for (const { path: rel, file } of collectInputs()) {
+  for (const { path: rel, file } of collectInputs(renderer)) {
     const digest = contentSha256(file);
     perFile.push({ path: rel, sha256: digest });
     hash.update(`${rel}\0${digest}\n`);
@@ -108,9 +120,13 @@ export function inputHash() {
  *
  * `pin` is the parsed `prebuilt-binaries.json`; omit it to read the file.
  */
-export function runtimeChoice(pin) {
-  const pinned = pin ?? readPinFile();
-  const local = inputHash().hash;
+export function runtimeChoice(pin, renderer = 'fabric') {
+  const whole = pin ?? readPinFile();
+  const pinned =
+    renderer === 'loom'
+      ? { version: whole.version, inputHash: whole.loom?.inputHash }
+      : whole;
+  const local = inputHash(renderer).hash;
   if (local === pinned.inputHash) {
     return {
       kind: 'prebuilt',
@@ -140,15 +156,22 @@ const isEntry =
   process.argv[1] !== undefined &&
   fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 if (isEntry) {
+  const rendererIndex = process.argv.indexOf('--renderer');
+  const renderer =
+    rendererIndex === -1 ? 'fabric' : process.argv[rendererIndex + 1];
+  if (!RENDERERS.includes(renderer)) {
+    console.error(`unknown renderer ${renderer}`);
+    process.exit(2);
+  }
   if (process.argv.includes('--overrides-sha256')) {
-    console.log(overridesSha256());
+    console.log(overridesSha256(renderer));
     process.exit(0);
   }
   if (process.argv.includes('--runtime')) {
-    console.log(runtimeChoice().kind);
+    console.log(runtimeChoice(undefined, renderer).kind);
     process.exit(0);
   }
-  const { hash, files } = inputHash();
+  const { hash, files } = inputHash(renderer);
   if (process.argv.includes('--list')) {
     for (const f of files) console.log(`${f.sha256}  ${f.path}`);
     console.log(`${hash}  <inputHash>`);
@@ -160,16 +183,21 @@ if (isEntry) {
 // sha256 over the sorted "file\0sha256" lines of ReactCommonOverrides, joined
 // by "\n". build-prebuilt.mjs writes this into the manifest; the CMake prebuilt
 // branch receives it from build.rs and compares.
-export function overridesSha256() {
-  const dir = path.join(packageDir, 'ReactCommonOverrides');
-  const files = [];
-  walk(dir, files);
-  const lines = files
-    .map(f => path.relative(dir, f).split(path.sep).join('/'))
-    .sort()
-    .map(rel => {
-      const digest = contentSha256(path.join(dir, rel));
-      return `${rel}\0${digest}`;
-    });
+export function overridesSha256(renderer = 'fabric') {
+  const lines = [];
+  for (const [name, prefix] of [
+    ['ReactCommonOverrides', ''],
+    ...(renderer === 'loom' ? [['ReactCommonOverrides.loom', 'loom/']] : []),
+  ]) {
+    const dir = path.join(packageDir, name);
+    const files = [];
+    walk(dir, files);
+    lines.push(
+      ...files
+        .map(f => path.relative(dir, f).split(path.sep).join('/'))
+        .sort()
+        .map(rel => `${prefix}${rel}\0${contentSha256(path.join(dir, rel))}`),
+    );
+  }
   return createHash('sha256').update(lines.join('\n')).digest('hex');
 }

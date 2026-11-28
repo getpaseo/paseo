@@ -250,7 +250,10 @@ void ReactHost::createReactInstance() {
   scheduler_ =
       std::make_unique<Scheduler>(toolbox, nullptr, schedulerDelegate.get());
 
-  surfaceManager_ = std::make_unique<SurfaceManager>(*scheduler_);
+  {
+    std::lock_guard lock(surfaceManagerMutex_);
+    surfaceManager_ = std::make_unique<SurfaceManager>(*scheduler_);
+  }
   schedulerDelegate->setUIManager(scheduler_->getUIManager());
   schedulerDelegate_ = std::move(schedulerDelegate);
 
@@ -324,11 +327,16 @@ void ReactHost::destroyReactInstance() {
   if (inspector_ != nullptr) {
     reactInstance_->unregisterFromInspector();
   }
-  if (surfaceManager_) {
-    surfaceManager_->stopAllSurfaces();
+  std::unique_ptr<SurfaceManager> surfaceManager;
+  {
+    std::lock_guard lock(surfaceManagerMutex_);
+    surfaceManager = std::move(surfaceManager_);
+  }
+  if (surfaceManager) {
+    surfaceManager->stopAllSurfaces();
   }
   reactInstanceData_->messageQueueThread->quitSynchronous();
-  surfaceManager_ = nullptr;
+  surfaceManager = nullptr;
   scheduler_ = nullptr;
   schedulerDelegate_ = nullptr;
 
@@ -373,6 +381,14 @@ void ReactHost::reloadReactInstance() {
     createReactInstance();
     loadScript(lastBundlePath_, lastSourcePath_);
     for (auto& surfaceProp : surfaceProps) {
+      {
+        std::lock_guard lock(surfaceManagerMutex_);
+        if (auto latest = latestConstraints_.find(surfaceProp.surfaceId);
+            latest != latestConstraints_.end()) {
+          surfaceProp.layoutConstraints = latest->second.first;
+          surfaceProp.layoutContext = latest->second.second;
+        }
+      }
       startSurface(
           surfaceProp.surfaceId,
           surfaceProp.moduleName,
@@ -494,23 +510,38 @@ void ReactHost::setSurfaceConstraints(
     SurfaceId surfaceId,
     const LayoutConstraints& layoutConstraints,
     const LayoutContext& layoutContext) noexcept {
-  surfaceManager_->constraintSurfaceLayout(
-      surfaceId, layoutConstraints, layoutContext);
+  std::lock_guard lock(surfaceManagerMutex_);
+  latestConstraints_[surfaceId] = {layoutConstraints, layoutContext};
+  if (surfaceManager_) {
+    surfaceManager_->constraintSurfaceLayout(
+        surfaceId, layoutConstraints, layoutContext);
+  }
 }
 
 void ReactHost::stopSurface(SurfaceId surfaceId) noexcept {
-  surfaceManager_->stopSurface(surfaceId);
+  std::lock_guard lock(surfaceManagerMutex_);
+  if (surfaceManager_) {
+    surfaceManager_->stopSurface(surfaceId);
+  }
 }
 
 void ReactHost::stopAllSurfaces() noexcept {
-  surfaceManager_->stopAllSurfaces();
+  std::lock_guard lock(surfaceManagerMutex_);
+  if (surfaceManager_) {
+    surfaceManager_->stopAllSurfaces();
+  }
 }
 
 bool ReactHost::isSurfaceRunning(SurfaceId surfaceId) const noexcept {
-  return surfaceManager_->isSurfaceRunning(surfaceId);
+  std::lock_guard lock(surfaceManagerMutex_);
+  return surfaceManager_ && surfaceManager_->isSurfaceRunning(surfaceId);
 }
 
 std::unordered_set<SurfaceId> ReactHost::getRunningSurfaces() const noexcept {
+  std::lock_guard lock(surfaceManagerMutex_);
+  if (!surfaceManager_) {
+    return {};
+  }
   return surfaceManager_->getRunningSurfaces();
 }
 

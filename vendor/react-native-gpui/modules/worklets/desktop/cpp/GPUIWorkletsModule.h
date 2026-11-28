@@ -25,6 +25,9 @@ class Module final : public facebook::react::NativeWorkletsModuleSpec<Module> {
 
   void onFrame(double timestampMs);
   void requestAnimationFrame(std::function<void(double)> callback);
+  /// Runs after every frame's animation callbacks, as the display link's
+  /// handler does on iOS.
+  void setAfterFrame(std::function<void()> afterFrame);
   std::shared_ptr<worklets::WorkletRuntime> uiRuntime() const;
   std::shared_ptr<worklets::UIScheduler> uiScheduler() const;
 
@@ -45,6 +48,7 @@ class Module final : public facebook::react::NativeWorkletsModuleSpec<Module> {
   std::shared_ptr<worklets::WorkletsModuleProxy> proxy_;
   std::mutex callbacksMutex_;
   std::vector<std::function<void(double)>> frameCallbacks_;
+  std::function<void()> afterFrame_;
 };
 
 void onFrame(double timestampMs);

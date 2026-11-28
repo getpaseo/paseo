@@ -32,6 +32,45 @@ thread_local! {
 /// listener.
 pub(crate) fn begin_press_dispatch() {
     WINDOW_OWNS_PRESS.with(|owned| owned.set(false));
+    PRESS_CLAIMED.with(|claimed| claimed.set(false));
+}
+
+thread_local! {
+    static PRESS_CLAIMED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static NATIVE_PRESS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Clears the marks before a press reaches any node, including whether the
+/// press is over native content, which lasts until the next press so its moves
+/// and its release keep reaching the native elements.
+pub(crate) fn begin_press() {
+    begin_press_dispatch();
+    NATIVE_PRESS.with(|native| native.set(false));
+}
+
+/// Marks the press as over native content (a native root's tree), whose GPUI
+/// elements handle it too: a text selection that starts with a drag, or a
+/// click that clears one. React Native nodes it bubbles to still get their
+/// touch, but none stops it from reaching those elements.
+pub(crate) fn mark_native_press() {
+    NATIVE_PRESS.with(|native| native.set(true));
+}
+
+/// Whether the current press began over native content.
+pub(crate) fn native_press() -> bool {
+    NATIVE_PRESS.with(std::cell::Cell::get)
+}
+
+/// Marks the press as taken by a React Native node, for a node whose press must
+/// still reach the GPUI elements around it: the nodes it bubbles to read this
+/// instead of the press being stopped.
+pub(crate) fn claim_press() {
+    PRESS_CLAIMED.with(|claimed| claimed.set(true));
+}
+
+/// Whether a node nearer the pointer already took this press.
+pub(crate) fn press_claimed() -> bool {
+    PRESS_CLAIMED.with(std::cell::Cell::get)
 }
 
 /// Marks the press as the window's. The node under the pointer is the first to
@@ -43,6 +82,10 @@ pub(crate) fn hand_press_to_window() {
 /// Whether a node nearer the pointer already handed this press to the window.
 pub(crate) fn press_belongs_to_window() -> bool {
     WINDOW_OWNS_PRESS.with(std::cell::Cell::get)
+}
+
+thread_local! {
+    static RETARGETING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -71,8 +114,17 @@ pub fn now_ms() -> f64 {
 pub struct Target {
     pub tag: i32,
     pub origin: Point<Pixels>,
+    /// How far the window's pointer positions run ahead of the surface's: the
+    /// menu bar GPUI draws above it, when the surface's origin does not hold it.
+    window_offset: f32,
+    window_offset_x: f32,
+    /// The window's zoom factor: window pointer positions run ahead of the
+    /// surface's by this much.
+    zoom: f32,
     scale_x: f32,
     scale_y: f32,
+    /// Inverses of the matrices GPUI draws the target under, outermost first.
+    inverses: Vec<gpui::TransformationMatrix>,
     /// The target and its ancestors, innermost first: RN's hover path
     /// (`PointerHoverTracker::getEventPathTargets`), the surface root excluded.
     pub chain: Vec<i32>,
@@ -83,7 +135,31 @@ pub fn active_touch_target(cx: &App) -> Option<Target> {
 }
 
 impl Target {
-    fn local_position(&self, position: Point<Pixels>) -> Point<Pixels> {
+    /// A pointer position of the window in the surface's space, which is where
+    /// React's page coordinates and the node origins are.
+    pub(crate) fn page(&self, position: Point<Pixels>) -> Point<Pixels> {
+        point(
+            (position.x - px(self.window_offset_x)) / self.zoom,
+            (position.y - px(self.window_offset)) / self.zoom,
+        )
+    }
+
+    /// A position of the surface's space in the window, the inverse of `page`.
+    pub(crate) fn window_point(&self, page: Point<Pixels>) -> Point<Pixels> {
+        point(
+            page.x * self.zoom + px(self.window_offset_x),
+            page.y * self.zoom + px(self.window_offset),
+        )
+    }
+
+    pub(crate) fn zoom(&self) -> f32 {
+        self.zoom
+    }
+
+    pub(crate) fn local_position(&self, position: Point<Pixels>) -> Point<Pixels> {
+        let position = self.inverses.iter().fold(position, |position, inverse| {
+            inverse.transform_logical_point(position)
+        });
         point(
             px(f32::from(position.x - self.origin.x) / self.scale_x.max(0.0001)),
             px(f32::from(position.y - self.origin.y) / self.scale_y.max(0.0001)),
@@ -101,13 +177,41 @@ mod transform_tests {
         let target = Target {
             tag: 7,
             origin: point(px(30.0), px(40.0)),
+            window_offset: 0.0,
+            window_offset_x: 0.0,
+            zoom: 1.0,
             scale_x: 2.0,
             scale_y: 0.5,
+            inverses: Vec::new(),
             chain: vec![7],
         };
         let local = target.local_position(point(px(70.0), px(60.0)));
         assert_eq!(f32::from(local.x), 20.0);
         assert_eq!(f32::from(local.y), 40.0);
+    }
+
+    #[test]
+    fn pointer_location_undoes_the_matrices_a_target_is_drawn_under() {
+        use gpui::TransformationMatrix;
+        let quarter = TransformationMatrix {
+            rotation_scale: [[0.0, -1.0], [1.0, 0.0]],
+            translation: [0.0, 0.0],
+        };
+        let about = TransformationMatrix::about(50.0, 50.0, quarter);
+        let target = Target {
+            tag: 7,
+            origin: point(px(20.0), px(35.0)),
+            window_offset: 0.0,
+            window_offset_x: 0.0,
+            zoom: 1.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            inverses: vec![about.inverse().unwrap()],
+            chain: vec![7],
+        };
+        let local = target.local_position(about.transform_logical_point(point(px(30.0), px(50.0))));
+        assert!((f32::from(local.x) - 10.0).abs() < 0.001);
+        assert!((f32::from(local.y) - 15.0).abs() < 0.001);
     }
 }
 
@@ -180,7 +284,7 @@ fn node_wants_context_menu(cx: &App, node: &RNNodeView) -> bool {
     let Some(renderer) = crate::extensions::component_renderer(&node.component) else {
         return false;
     };
-    let component_node = node.component_node(cx);
+    let component_node = node.renderer_node(&*renderer, cx);
     renderer.input(&component_node).context_menu
 }
 
@@ -237,21 +341,45 @@ pub fn target(cx: &App, hit_node: &RNNodeView) -> Option<Target> {
         }
     }
     let index = chosen?;
-    let (origin, scale_x, scale_y) = if index == 0 {
+    let (origin, scale_x, scale_y, inverses) = if index == 0 {
         let (scale_x, scale_y) = hit_node.cumulative_scale(cx);
-        (hit_node.absolute_origin(cx), scale_x, scale_y)
+        (
+            hit_node.absolute_origin(cx),
+            scale_x,
+            scale_y,
+            hit_node.transform_inverses(cx),
+        )
     } else {
         let node = steps[index].entity.as_ref()?.upgrade()?;
         let node = node.read(cx);
         let (scale_x, scale_y) = node.cumulative_scale(cx);
-        (node.absolute_origin(cx), scale_x, scale_y)
+        (
+            node.absolute_origin(cx),
+            scale_x,
+            scale_y,
+            node.transform_inverses(cx),
+        )
     };
     let chain = steps[index..].iter().map(|step| step.tag).collect();
+    let placed = hit_node.surface_is_placed();
     Some(Target {
         tag: steps[index].tag,
         origin,
+        window_offset: if placed {
+            0.0
+        } else {
+            crate::desktop::gpui_menu::menu_bar_inset_for_window_id(hit_node.surface_id as u32)
+                + crate::desktop::window_frame::insets_of(hit_node.surface_id).top
+        },
+        window_offset_x: if placed {
+            0.0
+        } else {
+            crate::desktop::window_frame::insets_of(hit_node.surface_id).left
+        },
+        zoom: crate::desktop::zoom::get(hit_node.surface_id),
         scale_x,
         scale_y,
+        inverses,
         chain,
     })
 }
@@ -276,9 +404,21 @@ fn touch_json(tag: i32, page: Point<Pixels>, location: Point<Pixels>, timestamp:
 
 /// `touches` must be empty for `topTouchEnd`: `ResponderTouchHistoryStore`
 /// reads its length as the number of active touches.
-fn touch_payload(tag: i32, page: Point<Pixels>, location: Point<Pixels>, active: bool) -> Value {
+fn touch_payload(
+    tag: i32,
+    page: Point<Pixels>,
+    location: Point<Pixels>,
+    active: bool,
+    modifiers: ModifierState,
+) -> Value {
     let touch = touch_json(tag, page, location, now_ms());
     let mut payload = touch.as_object().cloned().unwrap_or_else(Map::new);
+    // A desktop extension: the keys held, as on the pointer events, so a press
+    // handler can tell a shift or meta click from a plain one.
+    payload.insert("shiftKey".into(), modifiers.shift.into());
+    payload.insert("ctrlKey".into(), modifiers.ctrl.into());
+    payload.insert("altKey".into(), modifiers.alt.into());
+    payload.insert("metaKey".into(), modifiers.meta.into());
     let list = |touch: &Value| Value::Array(if active { vec![touch.clone()] } else { vec![] });
     payload.insert("touches".into(), list(&touch));
     payload.insert("changedTouches".into(), Value::Array(vec![touch.clone()]));
@@ -312,7 +452,26 @@ pub fn send_pointer(
         (store.host.clone(), store.frame_hook.clone())
     };
     let tag = target.tag;
+    let position = target.page(position);
     let location = target.local_position(position);
+    let buttons = {
+        let store = store.read(cx);
+        let held = store.buttons_held.get();
+        let held = match phase {
+            Phase::Start => held | button.map_or(buttons, Button::mask),
+            Phase::End => held & !button.map_or(buttons, Button::mask),
+            Phase::Move => held,
+            Phase::Cancel => 0,
+        };
+        store.buttons_held.set(held);
+        match phase {
+            Phase::Start => *store.button_target.borrow_mut() = Some(target.clone()),
+            Phase::End if held == 0 => *store.button_target.borrow_mut() = None,
+            Phase::Cancel => *store.button_target.borrow_mut() = None,
+            _ => {}
+        }
+        held
+    };
     let (name, event) = match phase {
         Phase::Start => (
             "topPointerDown",
@@ -333,6 +492,74 @@ pub fn send_pointer(
     };
     host.dispatch_event(tag, name, &event);
     frame_hook.arm(window);
+}
+
+/// A move with a button held: it goes to the node the press started on, as
+/// touch events and pointer events for the left button and as pointer events
+/// alone for the others. Returns whether there was a press to follow.
+pub fn move_pressed(
+    window: &mut Window,
+    cx: &mut App,
+    fallback: Option<&Target>,
+    position: Point<Pixels>,
+    modifiers: ModifierState,
+) -> bool {
+    if let Some(target) = active_touch_target(cx) {
+        send(window, cx, &target, position, Phase::Move, None, modifiers);
+        return true;
+    }
+    let Some(store) = store_from(cx) else {
+        return false;
+    };
+    let (held, pressed) = {
+        let store = store.read(cx);
+        (
+            store.buttons_held.get(),
+            store.button_target.borrow().clone(),
+        )
+    };
+    if held == 0 {
+        return false;
+    }
+    let Some(target) = pressed.or_else(|| fallback.cloned()) else {
+        return false;
+    };
+    send_pointer(
+        window,
+        cx,
+        &target,
+        position,
+        Phase::Move,
+        None,
+        held,
+        modifiers,
+    );
+    true
+}
+
+/// A move with nothing held, for `onPointerMove` on the view under the pointer.
+pub fn move_hovered(
+    window: &mut Window,
+    cx: &mut App,
+    target: Option<&Target>,
+    position: Point<Pixels>,
+    modifiers: ModifierState,
+) {
+    if RETARGETING.with(std::cell::Cell::get) {
+        return;
+    }
+    if let Some(target) = target {
+        send_pointer(
+            window,
+            cx,
+            target,
+            position,
+            Phase::Move,
+            None,
+            0,
+            modifiers,
+        );
+    }
 }
 
 /// The W3C number for a mouse button.
@@ -465,6 +692,14 @@ pub fn send(
         let store = store.read(cx);
         (store.host.clone(), store.frame_hook.clone())
     };
+    if matches!(phase, Phase::Start) {
+        // What React measures on the press (its retention region) is where the
+        // node is now, scrolled as far as it has been.
+        let nodes: Vec<_> = store.read(cx).nodes.values().cloned().collect();
+        for node in nodes {
+            node.read(cx).flush_scroll_state(&host);
+        }
+    }
     match phase {
         Phase::Start => frame_hook.set_gesture_active(true, window),
         Phase::End | Phase::Cancel => frame_hook.set_gesture_active(false, window),
@@ -474,9 +709,29 @@ pub fn send(
         store.update(cx, |store, _| {
             store.active_touch_target = Some(target.clone())
         });
+        if matches!(button, None | Some(Button::Left)) {
+            crate::interaction::begin_press(&target.chain, cx);
+        }
     }
     let tag = target.tag;
+    let position = target.page(position);
     let location = target.local_position(position);
+    let buttons = {
+        let store = store.read(cx);
+        let held = store.buttons_held.get();
+        let left = button.map_or(Button::Left.mask(), Button::mask);
+        let held = match phase {
+            Phase::Start => held | left,
+            Phase::End => held & !left,
+            Phase::Move => held,
+            Phase::Cancel => 0,
+        };
+        store.buttons_held.set(held);
+        if held == 0 {
+            *store.button_target.borrow_mut() = None;
+        }
+        held
+    };
     log::debug!(
         "[events] {phase:?} tag={tag} position=({:.1},{:.1}) location=({:.1},{:.1})",
         f32::from(position.x),
@@ -501,71 +756,181 @@ pub fn send(
             host.dispatch_event(
                 tag,
                 "topTouchStart",
-                &touch_payload(tag, position, location, true),
+                &touch_payload(tag, position, location, true, modifiers),
             );
             host.dispatch_event(
                 tag,
                 "topPointerDown",
-                &pointer_payload(
-                    tag,
-                    position,
-                    location,
-                    button,
-                    button.map_or(0, Button::mask),
-                    modifiers,
-                ),
+                &pointer_payload(tag, position, location, button, buttons, modifiers),
             );
         }
         Phase::Move => {
             host.dispatch_event(
                 tag,
                 "topTouchMove",
-                &touch_payload(tag, position, location, true),
+                &touch_payload(tag, position, location, true, modifiers),
             );
             host.dispatch_event(
                 tag,
                 "topPointerMove",
-                &pointer_payload(
-                    tag,
-                    position,
-                    location,
-                    button,
-                    button.map_or(0, Button::mask),
-                    modifiers,
-                ),
+                &pointer_payload(tag, position, location, None, buttons, modifiers),
             );
         }
         Phase::End => {
             host.dispatch_event(
                 tag,
                 "topTouchEnd",
-                &touch_payload(tag, position, location, false),
+                &touch_payload(tag, position, location, false, modifiers),
             );
             host.dispatch_event(
                 tag,
                 "topPointerUp",
-                &pointer_payload(tag, position, location, button, 0, modifiers),
+                &pointer_payload(tag, position, location, button, buttons, modifiers),
             );
         }
         Phase::Cancel => {
             host.dispatch_event(
                 tag,
                 "topTouchCancel",
-                &touch_payload(tag, position, location, false),
+                &touch_payload(tag, position, location, false, modifiers),
             );
             host.dispatch_event(
                 tag,
                 "topPointerCancel",
-                &pointer_payload(tag, position, location, button, 0, modifiers),
+                &pointer_payload(tag, position, location, None, 0, modifiers),
             );
         }
     }
     if matches!(phase, Phase::End | Phase::Cancel) {
         store.update(cx, |store, _| store.active_touch_target = None);
+        crate::interaction::end_press(cx);
     }
     // dispatchEvent queues React work; the frame hook is what calls RN's
     // RunLoopObserverManager::onRender and lets the JS scheduler consume it.
     frame_hook.arm(window);
+}
+
+fn outside_window(window: &Window, position: Point<Pixels>) -> bool {
+    let size = window.viewport_size();
+    position.x < px(0.)
+        || position.y < px(0.)
+        || position.x > size.width
+        || position.y > size.height
+}
+
+/// Listens for the pointer moving and the button being released outside the
+/// window while a press is held. The root's own listeners only run while the
+/// pointer is over it, so without this a release outside the window never ends
+/// the press and the press keeps the app busy.
+pub fn outside_window_pointer() -> impl gpui::IntoElement {
+    use gpui::{ParentElement as _, Styled as _};
+    gpui::div().absolute().size_0().child(
+        gpui::canvas(
+            |_, _, _| (),
+            |_, _, window, _| {
+                crate::wheel::install(window);
+                window.on_mouse_event(|event: &gpui::MouseMoveEvent, phase, window, cx| {
+                    if phase != gpui::DispatchPhase::Capture
+                        || event.pressed_button.is_none()
+                        || !outside_window(window, event.position)
+                        || press_belongs_to_window()
+                        || crate::drag_drop::tracking()
+                    {
+                        return;
+                    }
+                    move_pressed(
+                        window,
+                        cx,
+                        None,
+                        event.position,
+                        crate::node_view::modifier_state(event.modifiers),
+                    );
+                });
+                window.on_mouse_event(|event: &gpui::MouseUpEvent, phase, window, cx| {
+                    if phase != gpui::DispatchPhase::Capture
+                        || event.button != gpui::MouseButton::Left
+                    {
+                        return;
+                    }
+                    // A press that began over native content ends here, before
+                    // the native element (a button's click) can swallow the
+                    // release the node's own listener waits for.
+                    let native_press = active_touch_target(cx)
+                        .and_then(|target| {
+                            store_from(cx)
+                                .and_then(|store| store.read(cx).nodes.get(&target.tag).cloned())
+                        })
+                        .is_some_and(|node| node.read(cx).shares_pointer_with_native(cx));
+                    if !outside_window(window, event.position) && !native_press {
+                        return;
+                    }
+                    if crate::drag_drop::tracking() {
+                        if crate::drag_drop::released(window, cx, None, event.position) {
+                            return;
+                        }
+                    }
+                    if press_belongs_to_window() {
+                        return;
+                    }
+                    if let Some(target) = active_touch_target(cx) {
+                        send(
+                            window,
+                            cx,
+                            &target,
+                            event.position,
+                            Phase::End,
+                            Some(Button::Left),
+                            crate::node_view::modifier_state(event.modifiers),
+                        );
+                    }
+                });
+            },
+        )
+        .size_0(),
+    )
+}
+
+/// The window stopped being active: every press still held ends with a cancel,
+/// as in a browser, and no button counts as held any more.
+pub fn cancel_presses(window: &mut Window, cx: &mut App) {
+    let Some(store) = store_from(cx) else {
+        return;
+    };
+    let (position, held, pressed) = {
+        let store = store.read(cx);
+        (
+            store.pointer.get(),
+            store.buttons_held.get(),
+            store.button_target.borrow().clone(),
+        )
+    };
+    if let Some(target) = active_touch_target(cx) {
+        send(
+            window,
+            cx,
+            &target,
+            position,
+            Phase::Cancel,
+            Some(Button::Left),
+            ModifierState::none(),
+        );
+    } else if held != 0 {
+        if let Some(target) = pressed {
+            send_pointer(
+                window,
+                cx,
+                &target,
+                position,
+                Phase::Cancel,
+                None,
+                0,
+                ModifierState::none(),
+            );
+        }
+    }
+    let store = store.read(cx);
+    store.buttons_held.set(0);
+    *store.button_target.borrow_mut() = None;
 }
 
 pub fn cancel_active_touch(window: &mut Window, cx: &mut App, position: Point<Pixels>) {
@@ -605,14 +970,17 @@ pub fn hover(window: &mut Window, cx: &mut App, target: Option<&Target>, positio
     // RN reuses the *target's* offset for every node in the hover path
     // (`handleIncomingPointerEventOnNode` re-dispatches the same PointerEvent),
     // so `offsetX/Y` of an ancestor's enter/leave is the target-relative offset.
+    store.read(cx).pointer_inside.set(true);
+    let page = target.map_or(position, |target| target.page(position));
     let location = target
-        .map(|target| target.local_position(position))
+        .map(|target| target.local_position(page))
         .unwrap_or_else(|| point(px(0.), px(0.)));
     let (host, previous) = {
         let store = store.read(cx);
         store.pointer.set(position);
         (store.host.clone(), store.hovered.replace(next.clone()))
     };
+    let position = page;
     let shared = shared_root_len(&previous, &next);
     log::trace!(
         "[events] hover at ({:.1},{:.1}) chain={next:?} was={previous:?}",
@@ -647,7 +1015,56 @@ pub fn hover(window: &mut Window, cx: &mut App, target: Option<&Target>, positio
     }
     if previous != next {
         store.read(cx).frame_hook.arm(window);
+        crate::interaction::set_hover(&next, cx);
     }
+    crate::tooltip::pointer_over(window, cx, target, position);
+}
+
+/// Runs the hover retarget a mount batch asked for, once its frame is drawn.
+pub fn flush_hover_retarget(window: &mut Window, cx: &mut App) {
+    let Some(store) = store_from(cx) else {
+        return;
+    };
+    if store.read(cx).hover_retarget_pending.replace(false) {
+        retarget_hover(window, cx);
+    }
+}
+
+/// Sends the pointer's last position again, so what it is over is worked out
+/// against the tree as it is now.
+pub fn retarget_hover(window: &mut Window, cx: &mut App) {
+    let Some(store) = store_from(cx) else {
+        return;
+    };
+    let (position, inside, pressed) = {
+        let store = store.read(cx);
+        (
+            store.pointer.get(),
+            store.pointer_inside.get(),
+            store.active_touch_target.is_some(),
+        )
+    };
+    // A drag in progress (a scrollbar thumb, say) owns the pointer.
+    if !inside || pressed || cx.has_active_drag() {
+        return;
+    }
+    if window.last_input_was_keyboard() {
+        let target = crate::wheel::target_at(cx, position);
+        hover(window, cx, target.as_ref(), position);
+        crate::interaction::refresh(cx);
+        return;
+    }
+    RETARGETING.with(|flag| flag.set(true));
+    window.dispatch_event(
+        gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+            position,
+            pressed_button: None,
+            modifiers: window.modifiers(),
+        }),
+        cx,
+    );
+    RETARGETING.with(|flag| flag.set(false));
+    crate::interaction::refresh(cx);
 }
 
 pub fn leave_root(window: &mut Window, cx: &mut App) {
@@ -662,6 +1079,8 @@ pub fn leave_root(window: &mut Window, cx: &mut App) {
             store.pointer.get(),
         )
     };
+    store.read(cx).pointer_inside.set(false);
+    crate::tooltip::dismiss(window, cx);
     for tag in previous.iter() {
         let location = store
             .read(cx)
@@ -672,8 +1091,12 @@ pub fn leave_root(window: &mut Window, cx: &mut App) {
                 Target {
                     tag: *tag,
                     origin: node.absolute_origin(cx),
+                    window_offset: 0.0,
+                    window_offset_x: 0.0,
+                    zoom: 1.0,
                     scale_x: node.cumulative_scale(cx).0,
                     scale_y: node.cumulative_scale(cx).1,
+                    inverses: node.transform_inverses(cx),
                     chain: Vec::new(),
                 }
                 .local_position(position)
@@ -692,6 +1115,7 @@ pub fn leave_root(window: &mut Window, cx: &mut App) {
     }
     if !previous.is_empty() {
         store.read(cx).frame_hook.arm(window);
+        crate::interaction::set_hover(&[], cx);
     }
 }
 

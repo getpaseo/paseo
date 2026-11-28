@@ -23,6 +23,7 @@ impl NativeGpuiDesktopSpec for GpuiDesktopModule {
     }
 
     fn capabilities(&self) -> Result<DesktopCapabilities, ModuleError> {
+        capabilities::wait_for_window_decorations();
         Ok(DesktopCapabilities {
             native_app_menu: capabilities::native_app_menu(),
             native_context_menu: capabilities::native_context_menu(),
@@ -30,6 +31,7 @@ impl NativeGpuiDesktopSpec for GpuiDesktopModule {
             tray_popover_anchored: capabilities::tray_popover_anchored(),
             window_position: capabilities::window_position(),
             always_on_top: capabilities::always_on_top(),
+            visible_on_all_workspaces: capabilities::visible_on_all_workspaces(),
             transparent_titlebar: capabilities::transparent_titlebar(),
             menu_bar_in_window: capabilities::menu_bar_in_window(),
             client_decorations: capabilities::client_decorations(),
@@ -38,6 +40,21 @@ impl NativeGpuiDesktopSpec for GpuiDesktopModule {
 
     fn platform(&self) -> Result<String, ModuleError> {
         Ok(super::snapshot_platform())
+    }
+
+    fn window_button_layout(&self) -> Result<String, ModuleError> {
+        Ok(super::button_layout::button_layout())
+    }
+
+    fn window_button_icon(&self, action: String, color: String) -> Result<String, ModuleError> {
+        Ok(super::window_icons::window_icon(&action, &color).unwrap_or_default())
+    }
+
+    fn platform_constants(&self) -> Result<PlatformConstants, ModuleError> {
+        Ok(PlatformConstants {
+            os_version: super::os_version::os_version(),
+            is_testing: super::os_version::is_testing(),
+        })
     }
 
     fn app_id(&self) -> Result<String, ModuleError> {

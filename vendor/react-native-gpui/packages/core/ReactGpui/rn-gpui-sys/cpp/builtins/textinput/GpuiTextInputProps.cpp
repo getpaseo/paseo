@@ -6,6 +6,7 @@
 #include <folly/json.h>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <string>
 
 #include "GpuiModules.h"
@@ -36,6 +37,28 @@ std::string textInputPropsJson(
     object["placeholder"] = props->placeholder;
     object["selectionColor"] = static_cast<double>(argb(props->selectionColor));
     object["multiline"] = props->multiline;
+    object["placeholderTextColor"] =
+        static_cast<double>(argb(props->placeholderTextColor));
+    switch (props->submitBehavior) {
+      case facebook::react::SubmitBehavior::Submit:
+        object["submitBehavior"] = "submit";
+        break;
+      case facebook::react::SubmitBehavior::BlurAndSubmit:
+        object["submitBehavior"] = "blurAndSubmit";
+        break;
+      case facebook::react::SubmitBehavior::Newline:
+        object["submitBehavior"] = "newline";
+        break;
+      default:
+        object["submitBehavior"] = "default";
+        break;
+    }
+    if (props->maxLength != std::numeric_limits<int>::max()) {
+      object["maxLength"] = props->maxLength;
+    }
+    object["contextMenuHidden"] = props->traits.contextMenuHidden;
+    object["caretHidden"] = props->traits.caretHidden;
+    object["selectTextOnFocus"] = props->traits.selectTextOnFocus;
     object["editable"] = props->editable && !props->readOnly;
     object["secure"] = props->traits.secureTextEntry;
     object["eventCount"] = props->mostRecentEventCount;

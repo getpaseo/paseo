@@ -10,7 +10,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "test-driver")]
 static DISABLED: AtomicBool = AtomicBool::new(false);
 
-pub(crate) fn animations_disabled() -> bool {
+/// Whether the test driver turned platform transitions off. A component library
+/// with transitions of its own follows it, as it follows the system's reduce-motion
+/// setting, so a test sees the end state at once.
+pub fn animations_disabled() -> bool {
     #[cfg(feature = "test-driver")]
     {
         return DISABLED.load(Ordering::Relaxed);

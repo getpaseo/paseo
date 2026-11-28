@@ -107,6 +107,14 @@ class Module final
         methods,
         false);
     *proxyHolder = proxy_;
+    // The platform runs the registries' pending updates after each frame's
+    // animation callbacks, which is what applies a CSS transition or animation.
+    worklets->setAfterFrame(
+        [weak = std::weak_ptr<ReanimatedModuleProxy>(proxy_)] {
+          if (auto proxy = weak.lock()) {
+            proxy->performOperations();
+          }
+        });
     proxy_->init(methods);
     proxy_->initializeFabric(uiManager);
     LOG(INFO) << "[gpui-reanimated] module proxy initialized";

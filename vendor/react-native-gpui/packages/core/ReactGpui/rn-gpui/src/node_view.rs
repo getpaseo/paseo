@@ -1,15 +1,16 @@
 //! One GPUI view per Fabric node. No flex property is ever set: every frame
 //! comes from RN's Yoga pass.
 
-use crate::pointer_area::{pointer_area, PointerHandlers};
+use crate::pointer_area::{Node, PointerArea, PointerHandlers};
 use crate::style;
+use crate::view_props::ViewProps;
 use gpui::{
-    div, point, prelude::*, px, AnyElement, App, Context, Display, Entity, Fill, FocusHandle,
+    div, point, prelude::*, px, size, AnyElement, App, Context, Display, Entity, Fill, FocusHandle,
     IntoElement, KeyDownEvent, KeyUpEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, Position, Role, StyleRefinement, Subscription, Task, WeakEntity,
+    MouseUpEvent, Pixels, Point, Position, Refineable, Role, Subscription, Task, WeakEntity,
     Window,
 };
-use rn_gpui_sys::ffi::{MountOp, ParagraphFlat, RectF, ViewPropsFlat};
+use rn_gpui_sys::ffi::{MountOp, ParagraphFlat, RectF};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -52,23 +53,35 @@ pub struct RNNodeView {
     /// paint, so a component would be told it was entered repeatedly and never
     /// told the pointer left.
     hovered: bool,
+    /// The pointer listeners built for this node and what they were built
+    /// from. See [`RNNodeView::pointer_handlers`].
+    pointer_handlers: Option<(PointerHandlersKey, Rc<PointerHandlers>)>,
     pub surface_id: i32,
-    pub component: String,
-    pub native_view_name: String,
-    pub native_view_props: String,
+    pub component: gpui::SharedString,
     /// Whether this node's own content is composited by the OS rather than
     /// painted by GPUI. Decided once, when the node is created, from its
-    /// registry entry; only a `NativeViewHost` can change it later, when an
-    /// update gives it a factory name.
+    /// registry entry.
     pub(crate) renders_native_surface: bool,
     /// How many nodes in this subtree render a native surface, this node
     /// included.
     pub(crate) native_surface_descendants: u32,
     /// Whether this node's contribution has been added to its ancestors.
     pub(crate) native_surface_counted: bool,
-    extension_props_json: String,
-    extension_props: std::sync::Arc<serde_json::Value>,
-    native_view_host: Option<std::rc::Rc<crate::native_surface::NativeSurface>>,
+    /// How many nodes in this subtree are painted as a group of their own
+    /// (see `forms_effect_group`), this node included. A scroll container
+    /// holding one does not cache its content as a layer.
+    pub(crate) effect_group_descendants: u32,
+    /// Whether this node counts itself in `effect_group_descendants`.
+    forms_effect_group: bool,
+    pub(crate) extension_props: std::sync::Arc<serde_json::Value>,
+    /// The hash of the JSON `extension_props` was parsed from.
+    extension_props_hash: u64,
+    /// A native slot's content is painted where its placeholder is, not where
+    /// layout put it; this is the difference, kept up to date by the placeholder.
+    pub(crate) slot_shift: Option<Rc<Cell<Point<f32>>>>,
+    /// The composition surface hosting the OS view of a `nativeSurface`
+    /// component, created when the node is first painted.
+    native_surface: Option<std::rc::Rc<crate::native_surface::NativeSurface>>,
     /// The host component rendering this node, when its op carried a registry
     /// index. Created on the main thread when the node is mounted, and the only
     /// thing about the component this node ever looks up: from here on it is a
@@ -80,6 +93,8 @@ pub struct RNNodeView {
     /// Whether the host component is a container: core paints its React children
     /// between its chrome and its overlay.
     host_container: bool,
+    /// Whether the first child masks the others (`maskChildren`).
+    mask_children: bool,
     /// The intrinsic size this node's host component last reported. Exposed to
     /// the test driver and to diagnostics; Yoga has the authoritative copy, in
     /// the shadow node's state.
@@ -92,43 +107,41 @@ pub struct RNNodeView {
     surface_origin: crate::surface::SurfaceOrigin,
     pub frame: RectF,
     pub(crate) parent_tag_cache: std::rc::Rc<std::cell::Cell<Option<i32>>>,
-    pub view: ViewPropsFlat,
-    animated_transform: Option<[f32; 16]>,
+    pub view: ViewProps,
+    animated_transform: Option<Box<[f32; 16]>>,
     animated_background_color: Option<u32>,
+    gradient_cache: Option<Box<GradientCache>>,
     animated_text_color: Option<u32>,
+    animated_opacity: bool,
+    focused: Cell<bool>,
+    focus_visible: Cell<bool>,
+    /// The text color a state style gives this node's text: its own, or the
+    /// nearest ancestor's.
+    state_text_color: Option<u32>,
+    own_state_color: Option<u32>,
+    state_styles: Option<Rc<style::StateStyles>>,
     pub paragraph: Option<ParagraphFlat>,
-    pub input_text: String,
-    pub input_placeholder: String,
-    pub(crate) input_placeholder_mode: bool,
-    pub(crate) input_text_color: u32,
-    pub(crate) input_selection_color: u32,
-    pub input_multiline: bool,
-    pub input_editable: bool,
-    pub(crate) input_secure_text: bool,
-    pub input_selection: std::ops::Range<usize>,
-    pub(crate) input_scroll_x: f32,
-    pub(crate) input_selection_anchor: Option<usize>,
-    pub input_marked: Option<std::ops::Range<usize>>,
-    pub input_event_count: i32,
-    pub(crate) caret_visible: bool,
+    /// A `TextInput`'s own state; other nodes have none.
+    text_input: Option<Box<crate::builtins::textinput::input::TextInputState>>,
+    /// The paragraph shaped off the main thread, valid while the paragraph is
+    /// the one it was shaped from.
+    pub(crate) prepared_paragraph: Option<crate::text::PreparedParagraph>,
+    pub(crate) text_selection: std::ops::Range<usize>,
+    pub(crate) text_selection_anchor: Option<usize>,
     pub(crate) caret_blink_task: Task<()>,
     pub(crate) transition: Option<(crate::extensions::Transition, Instant)>,
     pub(crate) transition_forward: bool,
     transition_progress_sent: Option<(Instant, f32)>,
     transition_end_refreshed: Option<Instant>,
-    /// Outside the entity so a scroll can move it without updating this view:
-    /// gpui-fast rebuilds every view that read an updated entity.
-    scroll_position: Rc<Cell<Point<f32>>>,
-    pub(crate) scroll: Option<crate::extensions::ScrollSpec>,
-    scroll_indicator: Option<Entity<crate::scroll_indicator::ScrollIndicator>>,
-    scroll_sync_generation: Rc<Cell<u64>>,
-    scroll_handle: gpui::ScrollHandle,
-    scroll_handle_stale: bool,
+    pub(crate) scroll: Option<Box<crate::extensions::ScrollSpec>>,
+    /// The state of a scroll view, which other nodes go without.
+    scroll_parts: Option<Box<ScrollParts>>,
+    /// The mode `onModeChange` last reported, for a `VirtualView`.
+    pub(crate) virtual_view_mode: Cell<Option<i32>>,
     pub focusable: bool,
     pub(crate) pending_text_input_focus: Option<bool>,
     pub children: Vec<(i32, Entity<RNNodeView>)>,
     pub parent: Option<WeakEntity<RNNodeView>>,
-    cached_style: StyleRefinement,
     pub(crate) renderer_frame: Option<RectF>,
     pub(crate) renderer_decoration: Option<crate::extensions::Decoration>,
     pub(crate) inherited: Inherited,
@@ -142,7 +155,7 @@ static A11Y_TREE_DUMP_COMPLETE: AtomicBool = AtomicBool::new(false);
 static A11Y_TREE_DUMP_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
 
 /// The DOM view of the modifiers held during an event.
-fn modifier_state(modifiers: gpui::Modifiers) -> crate::events::ModifierState {
+pub(crate) fn modifier_state(modifiers: gpui::Modifiers) -> crate::events::ModifierState {
     crate::events::ModifierState::from_gpui(&modifiers)
 }
 
@@ -177,10 +190,24 @@ fn run_component_hook(
     let Some(renderer) = crate::extensions::component_renderer(&component) else {
         return;
     };
-    let frame = captured.frame;
+    let (origin, window_offset) = {
+        let node = node.read(cx);
+        let offset = if node.surface_is_placed() {
+            0.0
+        } else {
+            crate::desktop::gpui_menu::menu_bar_inset_for_window_id(node.surface_id as u32)
+                + crate::desktop::window_frame::insets_of(node.surface_id).top
+        };
+        (node.absolute_origin(cx), offset)
+    };
+    let offset_x = if node.read(cx).surface_is_placed() {
+        0.0
+    } else {
+        crate::desktop::window_frame::insets_of(node.read(cx).surface_id).left
+    };
     let local = gpui::point(
-        position.x - gpui::px(frame.x),
-        position.y - gpui::px(frame.y),
+        position.x - origin.x - gpui::px(offset_x),
+        position.y - origin.y - gpui::px(window_offset),
     );
     let event = crate::extensions::input::MouseEvent {
         position,
@@ -222,6 +249,9 @@ fn dispatch_right_press(
     let Some(entity) = node.upgrade() else {
         return;
     };
+    if right_press_seen(event) {
+        return;
+    }
     let (owner, target) = {
         let this = entity.read(cx);
         (
@@ -242,6 +272,7 @@ fn dispatch_right_press(
         );
     }
     let modifiers = modifier_state(event.modifiers);
+    let claimed = owner.is_some();
     if crate::events::mouse_context_menu_trigger(
         crate::events::Button::Right,
         modifiers,
@@ -249,6 +280,13 @@ fn dispatch_right_press(
     )
     .is_some()
     {
+        let shown =
+            crate::builtins::textinput::input::show_text_menu(&entity, event.position, window, cx)
+                || crate::builtins::text_select::show_menu(&entity, event.position, window, cx);
+        if shown {
+            cx.stop_propagation();
+            return;
+        }
         if let Some(owner) = owner {
             // A component that asked for context menus owns the press and renders
             // its own; a `View` with the prop dispatches to JS. The hook has to be
@@ -267,7 +305,46 @@ fn dispatch_right_press(
             }
         }
     }
+    if !claimed && inside_extension_component(&entity, cx) {
+        // Nothing in the React tree claims the press, so the extension
+        // component around this node may handle it natively.
+        return;
+    }
     cx.stop_propagation();
+}
+
+thread_local! {
+    static LAST_RIGHT_PRESS: std::cell::Cell<Option<(gpui::Point<gpui::Pixels>, std::time::Instant)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Whether an enclosing node already dispatched this press. One press reaches
+/// every node it bubbles through within a few microseconds.
+fn right_press_seen(event: &MouseDownEvent) -> bool {
+    let now = std::time::Instant::now();
+    LAST_RIGHT_PRESS.with(|last| {
+        let seen = last.get().is_some_and(|(position, at)| {
+            position == event.position
+                && now.duration_since(at) < std::time::Duration::from_millis(5)
+        });
+        if !seen {
+            last.set(Some((event.position, now)));
+        }
+        seen
+    })
+}
+
+fn inside_extension_component(entity: &gpui::Entity<RNNodeView>, cx: &gpui::App) -> bool {
+    let mut parent = entity.read(cx).parent.clone();
+    while let Some(node) = parent.and_then(|weak| weak.upgrade()) {
+        let node = node.read(cx);
+        if node.host_index >= 0 || crate::extensions::component_renderer(&node.component).is_some()
+        {
+            return true;
+        }
+        parent = node.parent.clone();
+    }
+    false
 }
 
 /// Runs a component's `on_context_menu` hook, if the owner is a component.
@@ -292,10 +369,7 @@ fn run_component_context_menu(
     let Some(renderer) = crate::extensions::component_renderer(&component) else {
         return false;
     };
-    let component_node = {
-        let this = node.read(cx);
-        this.component_node(cx)
-    };
+    let component_node = node.read(cx).renderer_node(&*renderer, cx);
     if !renderer.input(&component_node).context_menu {
         return false;
     }
@@ -331,6 +405,53 @@ fn run_component_context_menu(
 ///
 /// Shared by the middle and right listeners so the two cannot diverge; the
 /// button's mask is the only thing that differs.
+/// Opens the context menu a Ctrl + left press asks for, as a right press would,
+/// returning whether it did (and stopped the press there).
+fn ctrl_click_context_menu(
+    node: &WeakEntity<RNNodeView>,
+    event: &MouseDownEvent,
+    os_owns_press: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> bool {
+    if os_owns_press || crate::events::press_belongs_to_window() {
+        return false;
+    }
+    let modifiers = modifier_state(event.modifiers);
+    if crate::events::mouse_context_menu_trigger(
+        crate::events::Button::Left,
+        modifiers,
+        std::env::consts::OS,
+    )
+    .is_none()
+    {
+        return false;
+    }
+    let Some(entity) = node.upgrade() else {
+        return false;
+    };
+    let owner = {
+        let this = entity.read(cx);
+        crate::events::context_menu_owner(cx, this)
+    };
+    let Some(owner) = owner else {
+        return false;
+    };
+    if !run_component_context_menu(&owner, event.position, false, modifiers, window, cx) {
+        dispatch_context_menu(
+            owner.tag,
+            event.position,
+            crate::events::Button::Left,
+            modifiers,
+            "mouse",
+            window,
+            cx,
+        );
+    }
+    cx.stop_propagation();
+    true
+}
+
 fn dispatch_pointer_button(
     node: &gpui::WeakEntity<RNNodeView>,
     event: &MouseDownEvent,
@@ -354,6 +475,44 @@ fn dispatch_pointer_button(
         &target,
         event.position,
         crate::events::Phase::Start,
+        Some(button),
+        button.mask(),
+        modifier_state(event.modifiers),
+    );
+    cx.stop_propagation();
+}
+
+fn dispatch_pointer_release(
+    node: &gpui::WeakEntity<RNNodeView>,
+    event: &MouseUpEvent,
+    button: crate::events::Button,
+    window: &mut gpui::Window,
+    cx: &mut gpui::App,
+) {
+    let Some(node) = node.upgrade() else {
+        return;
+    };
+    let Some(store) = crate::store::store_from(cx) else {
+        return;
+    };
+    let pressed = store.read(cx).button_target.borrow().clone();
+    let held = store.read(cx).buttons_held.get() & button.mask() != 0;
+    if !held {
+        return;
+    }
+    let target = pressed.or_else(|| {
+        let this = node.read(cx);
+        crate::events::target(cx, this)
+    });
+    let Some(target) = target else {
+        return;
+    };
+    crate::events::send_pointer(
+        window,
+        cx,
+        &target,
+        event.position,
+        crate::events::Phase::End,
         Some(button),
         button.mask(),
         modifier_state(event.modifiers),
@@ -408,9 +567,6 @@ fn dispatch_context_menu(
 
 /// Whether a newly created node's own content is composited by the OS.
 fn renders_native_surface_for_op(op: &MountOp) -> bool {
-    if op.component == "NativeViewHost" {
-        return !op.native_view_name.is_empty();
-    }
     if op.host_index >= 0 && crate::host_component::renders_native_surface(op.host_index as u32) {
         return true;
     }
@@ -418,7 +574,31 @@ fn renders_native_surface_for_op(op: &MountOp) -> bool {
         && crate::extensions::component_renders_native_surface(&op.component)
 }
 
+static NO_TEXT_INPUT: crate::builtins::textinput::input::TextInputState =
+    crate::builtins::textinput::input::TextInputState::EMPTY;
+
+/// The op's paragraph without the handle of its prepared layout, which the node
+/// takes.
+fn paragraph_of(op: &MountOp) -> ParagraphFlat {
+    let mut paragraph = op.paragraph.clone();
+    paragraph.prepared = 0;
+    paragraph
+}
+
 impl RNNodeView {
+    /// The node's text input state: its own for a `TextInput`, an empty one
+    /// for every other node.
+    pub(crate) fn input(&self) -> &crate::builtins::textinput::input::TextInputState {
+        self.text_input.as_deref().unwrap_or(&NO_TEXT_INPUT)
+    }
+
+    /// The node's text input state, made for a node that has none.
+    pub(crate) fn input_mut(&mut self) -> &mut crate::builtins::textinput::input::TextInputState {
+        self.text_input.get_or_insert_with(|| {
+            Box::new(crate::builtins::textinput::input::TextInputState::EMPTY)
+        })
+    }
+
     pub(crate) fn accessibility_focus_handle(&self) -> Option<FocusHandle> {
         self.focus_handle.clone()
     }
@@ -451,16 +631,14 @@ impl RNNodeView {
         }
     }
 
+    /// `ref.focus()` and `ref.blur()` on a text input or a focusable view.
     pub fn apply_text_input_focus_command(
         &mut self,
         focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.component != "TextInput" {
-            return;
-        }
-        if focus && !self.input_editable {
+        if self.component != "TextInput" && !self.takes_focus() {
             return;
         }
         let Some(handle) = self.focus_handle.as_ref().cloned() else {
@@ -478,12 +656,187 @@ impl RNNodeView {
     }
 
     pub fn set_animated_opacity(&mut self, opacity: f32) {
+        self.animated_opacity = true;
         self.view.opacity = opacity.clamp(0.0, 1.0);
-        self.cached_style = style::to_refinement(&self.view);
+    }
+
+    /// What this view's state styles amount to right now, the later layer
+    /// winning a property: focus, focus visible, group hover, hover, group
+    /// active, active. The pointer states come from the hit path (see
+    /// `interaction`), focus from what the node last reported, so a state
+    /// change repaints without JS and without React rendering again.
+    pub(crate) fn resolved_state(&self) -> Option<style::StateStyle> {
+        let mut resolved: Option<style::StateStyle> = None;
+        for (_, layer, applies) in self.state_layers() {
+            if let (Some(layer), true) = (layer, applies) {
+                resolved.get_or_insert_with(Default::default).merge(layer);
+            }
+        }
+        resolved
+    }
+
+    /// The names of the state styles that hold right now, in the order they
+    /// are layered.
+    #[cfg(feature = "test-driver")]
+    pub(crate) fn active_state_names(&self) -> Vec<&'static str> {
+        self.state_layers()
+            .into_iter()
+            .filter(|(_, layer, applies)| layer.is_some() && *applies)
+            .map(|(name, _, _)| name)
+            .collect()
+    }
+
+    fn state_layers(&self) -> [(&'static str, Option<&style::StateStyle>, bool); 7] {
+        let none = [("", None, false); 7];
+        let Some(styles) = self.state_styles.as_ref() else {
+            return none;
+        };
+        // `none` and `box-none` views are not pointer targets themselves.
+        let targeted = !matches!(self.view.pointer_events, 1 | 2);
+        let tag = self.tag;
+        let focused = self.focused.get();
+        [
+            ("focus", styles.focus.as_ref(), focused),
+            (
+                "focusVisible",
+                styles.focus_visible.as_ref(),
+                focused && self.focus_visible.get(),
+            ),
+            (
+                "groupHover",
+                styles.group_hover.as_ref().map(|grouped| &grouped.style),
+                crate::interaction::group_hovered(tag),
+            ),
+            (
+                "hover",
+                styles.hover.as_ref(),
+                targeted && crate::interaction::node_hovered(tag),
+            ),
+            (
+                "dragOver",
+                styles.drag_over.as_ref(),
+                crate::interaction::node_dragged_over(tag),
+            ),
+            (
+                "groupActive",
+                styles.group_active.as_ref().map(|grouped| &grouped.style),
+                crate::interaction::group_pressed(tag),
+            ),
+            (
+                "active",
+                styles.active.as_ref(),
+                targeted && crate::interaction::node_pressed(tag),
+            ),
+        ]
+    }
+
+    /// The matrix a state style asks for, unless an animation owns it.
+    fn effective_transform(&self) -> Option<[f32; 16]> {
+        if let Some(animated) = self.animated_transform.as_deref() {
+            return Some(*animated);
+        }
+        if let Some(state) = self.resolved_state().and_then(|state| state.transform()) {
+            return Some(state);
+        }
+        self.view.has_transform.then_some(self.view.transform)
+    }
+
+    /// The color a state style gives this view's own text.
+    pub(crate) fn own_text_color(&self) -> Option<u32> {
+        self.resolved_state()?.text_color()
+    }
+
+    pub(crate) fn has_text_color_style(&self) -> bool {
+        self.state_styles
+            .as_ref()
+            .is_some_and(|styles| styles.sets_color())
+    }
+
+    pub(crate) fn set_state_text_color(
+        &mut self,
+        own: Option<u32>,
+        inherited: Option<u32>,
+    ) -> bool {
+        let before = self.state_text_color;
+        self.own_state_color = own;
+        self.state_text_color = own.or(inherited);
+        before != self.state_text_color
+    }
+
+    pub(crate) fn state_text_color(&self) -> Option<u32> {
+        self.state_text_color
+    }
+
+    pub(crate) fn own_state_color(&self) -> Option<u32> {
+        self.own_state_color
+    }
+
+    /// Reads whether the node has focus, which a state style depends on. Reading
+    /// it while rendering is what has gpui-fast render the node again when
+    /// focus moves.
+    fn sync_focus(&self, window: &Window, cx: &mut Context<Self>) {
+        let Some(handle) = &self.focus_handle else {
+            return;
+        };
+        let focused = handle.is_focused(window);
+        if self.focused.replace(focused) == focused {
+            return;
+        }
+        self.focus_visible
+            .set(focused && window.last_input_was_keyboard());
+        if self.has_text_color_style() {
+            cx.defer(crate::interaction::refresh_text_colors);
+        }
+    }
+
+    pub(crate) fn group_name(&self) -> Option<gpui::SharedString> {
+        self.state_styles.as_ref()?.group.clone()
+    }
+
+    /// Whether this node has a hover style, or a press style when `press`.
+    pub(crate) fn has_pointer_style(&self, kind: crate::interaction::Kind) -> bool {
+        use crate::interaction::Kind;
+        self.state_styles.as_ref().is_some_and(|styles| match kind {
+            Kind::Press => styles.active.is_some() || styles.group_active.is_some(),
+            Kind::Hover => styles.hover.is_some() || styles.group_hover.is_some(),
+            Kind::Drag => styles.drag_over.is_some(),
+        })
+    }
+
+    /// The group this node's hover (or press) style follows.
+    pub(crate) fn pointer_style_group(
+        &self,
+        kind: crate::interaction::Kind,
+    ) -> Option<gpui::SharedString> {
+        use crate::interaction::Kind;
+        let styles = self.state_styles.as_ref()?;
+        let grouped = match kind {
+            Kind::Press => styles.group_active.as_ref(),
+            Kind::Hover => styles.group_hover.as_ref(),
+            Kind::Drag => None,
+        };
+        Some(grouped?.group.clone())
+    }
+
+    /// Whether this view takes files dropped from the operating system.
+    pub(crate) fn accepts_files(&self) -> bool {
+        self.view.accepts_files
+    }
+
+    pub(crate) fn tooltip(&self) -> &str {
+        &self.view.tooltip
+    }
+
+    pub(crate) fn draggable(&self) -> bool {
+        self.view.draggable
+    }
+
+    pub(crate) fn droppable(&self) -> bool {
+        self.view.droppable
     }
 
     pub fn set_animated_transform(&mut self, transform: Option<[f32; 16]>) {
-        self.animated_transform = transform;
+        self.animated_transform = transform.map(Box::new);
     }
 
     pub fn set_animated_background_color(&mut self, color: u32) {
@@ -498,14 +851,14 @@ impl RNNodeView {
         if self.component != "TextInput" {
             return;
         }
-        self.caret_visible = true;
+        self.input_mut().caret_visible = true;
         self.caret_blink_task = cx.spawn(async move |this, cx| loop {
             cx.background_executor()
                 .timer(Duration::from_millis(530))
                 .await;
             if this
                 .update(cx, |view, cx| {
-                    view.caret_visible = !view.caret_visible;
+                    view.input_mut().caret_visible = !view.input().caret_visible;
                     cx.notify();
                 })
                 .is_err()
@@ -516,7 +869,9 @@ impl RNNodeView {
     }
 
     fn stop_caret_blink(&mut self) {
-        self.caret_visible = false;
+        if let Some(input) = self.text_input.as_deref_mut() {
+            input.caret_visible = false;
+        }
         self.caret_blink_task = Task::ready(());
     }
 
@@ -738,9 +1093,9 @@ impl RNNodeView {
             };
         }
         if self.component == "TextInput" && self.view.accessibility_role.is_empty() {
-            return Some(if self.input_secure_text {
+            return Some(if self.input().secure_text {
                 Role::PasswordInput
-            } else if self.input_multiline {
+            } else if self.input().multiline {
                 Role::MultilineTextInput
             } else {
                 Role::TextInput
@@ -783,15 +1138,149 @@ impl RNNodeView {
         self.render_count
     }
 
-    pub(crate) fn nearest_focus_handle(&self, cx: &App) -> Option<FocusHandle> {
+    /// The node's focus handle, created with its focus and blur subscriptions
+    /// the first time it is needed.
+    pub(crate) fn ensure_focus_handle(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> FocusHandle {
         if let Some(handle) = &self.focus_handle {
-            return Some(handle.clone());
+            return handle.clone();
+        }
+        let handle = cx
+            .focus_handle()
+            .tab_stop(self.focusable || self.view.accessibility_has_escape_listener)
+            .tab_index(if self.inherited.in_native_slot {
+                0
+            } else {
+                self.tag as isize
+            });
+        if let Some(store) = cx.try_global::<crate::store::StoreGlobal>() {
+            let host = store.0.read(cx).host.clone();
+            let tag = self.tag;
+            let is_text_input = self.component == "TextInput";
+            let focused_host = host.clone();
+            self.focus_subscriptions
+                .push(cx.on_focus(&handle, window, move |this, window, cx| {
+                    if is_text_input {
+                        this.start_caret_blink(cx);
+                        if this.input().select_on_focus {
+                            this.input_mut().select_all_until = Some(
+                                std::time::Instant::now() + std::time::Duration::from_millis(300),
+                            );
+                            cx.defer_in(window, |this, window, cx| {
+                                crate::builtins::textinput::input::select_all(this, window, cx);
+                            });
+                        }
+                    }
+                    focused_host.dispatch_event(
+                        tag,
+                        if is_text_input { "topFocus" } else { "focus" },
+                        &serde_json::json!({
+                            "focusVisible": window.last_input_was_keyboard(),
+                        }),
+                    );
+                    if let Some(store) = cx.try_global::<crate::store::StoreGlobal>() {
+                        store.0.read(cx).frame_hook.arm(window);
+                    }
+                }));
+            self.focus_subscriptions
+                .push(cx.on_blur(&handle, window, move |this, window, cx| {
+                    if is_text_input {
+                        this.stop_caret_blink();
+                        cx.notify();
+                    }
+                    if is_text_input {
+                        host.dispatch_event(
+                            tag,
+                            "topEndEditing",
+                            &serde_json::json!({
+                                "text": this.input().text,
+                                "eventCount": this.input().event_count,
+                            }),
+                        );
+                    }
+                    host.dispatch_event(
+                        tag,
+                        if is_text_input { "topBlur" } else { "blur" },
+                        &serde_json::json!({}),
+                    );
+                    if let Some(store) = cx.try_global::<crate::store::StoreGlobal>() {
+                        store.0.read(cx).frame_hook.arm(window);
+                    }
+                }));
+        }
+        self.focus_handle = Some(handle.clone());
+        handle
+    }
+
+    /// Whether this node's handle exists only for accessibility and can wait
+    /// until something focuses it: a leaf such as a `Text` that takes no
+    /// focus of its own. It is never on the focus path to another node.
+    fn defers_focus_handle(&self) -> bool {
+        !self.takes_focus() && self.children.is_empty()
+    }
+
+    /// The handle a press on `node` focuses, creating the node's own deferred
+    /// accessibility handle when no focusable node is around it.
+    pub(crate) fn press_focus_handle(
+        node: &Entity<Self>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<FocusHandle> {
+        let (focusable, defers) = {
+            let this = node.read(cx);
+            (
+                this.nearest_focus_handle_where(cx, true),
+                this.focus_handle.is_none()
+                    && this.defers_focus_handle()
+                    && this.has_accessibility_focus_target(),
+            )
+        };
+        if focusable.is_some() {
+            return focusable;
+        }
+        if defers {
+            return Some(node.update(cx, |this, cx| {
+                let handle = this.ensure_focus_handle(window, cx);
+                cx.notify();
+                handle
+            }));
+        }
+        node.read(cx).nearest_focus_handle(cx)
+    }
+
+    fn has_accessibility_focus_target(&self) -> bool {
+        self.view.accessible || self.accessibility_role().is_some()
+    }
+
+    fn takes_focus(&self) -> bool {
+        self.focusable || self.view.accessibility_has_escape_listener
+    }
+
+    /// The handle a press focuses: the nearest focusable node's, or failing
+    /// that the nearest node's that only has one for accessibility.
+    pub(crate) fn nearest_focus_handle(&self, cx: &App) -> Option<FocusHandle> {
+        self.nearest_focus_handle_where(cx, true)
+            .or_else(|| self.nearest_focus_handle_where(cx, false))
+    }
+
+    fn nearest_focus_handle_where(&self, cx: &App, focusable_only: bool) -> Option<FocusHandle> {
+        let usable = |node: &Self| {
+            node.focus_handle
+                .as_ref()
+                .filter(|_| !focusable_only || node.takes_focus())
+                .cloned()
+        };
+        if let Some(handle) = usable(self) {
+            return Some(handle);
         }
         let mut parent = self.parent.clone();
         while let Some(node) = parent.and_then(|node| node.upgrade()) {
             let node = node.read(cx);
-            if let Some(handle) = &node.focus_handle {
-                return Some(handle.clone());
+            if let Some(handle) = usable(node) {
+                return Some(handle);
             }
             parent = node.parent.clone();
         }
@@ -802,46 +1291,47 @@ impl RNNodeView {
         op: &MountOp,
         surface_id: i32,
         host_reports: crate::store::HostReportQueue,
+        app: Option<&mut gpui::App>,
     ) -> Self {
         let renders_native_surface = renders_native_surface_for_op(op);
         // `core-private:` TextInput reads its own props out of the module JSON.
         let text_input =
             crate::builtins::textinput::input::TextInputProps::from_json(&op.extension_props_json);
+        let extension_props = crate::extensions::parse_extension_props(&op.extension_props_json);
         // `core-private:` a scrolling component's starting offset comes from the
-        let scroll_initial = crate::extensions::component_scroll(
-            &op.component,
-            &crate::extensions::parse_extension_props(&op.extension_props_json),
-        )
-        .map(|scroll| scroll.offset)
-        .unwrap_or((0.0, 0.0));
-        let (host_component, host_container) = Self::create_host_component(op, &host_reports);
+        // module JSON as well.
+        let scroll = crate::extensions::component_scroll(&op.component, &extension_props);
+        let scroll_parts = scroll
+            .as_ref()
+            .map(|scroll| Box::new(ScrollParts::at(point(scroll.offset.0, scroll.offset.1))));
+        let (host_component, host_container, mask_children) =
+            Self::create_host_component(op, &host_reports, surface_id, app);
         let mut view = Self {
             tag: op.tag,
             render_count: 0,
             hovered: false,
+            pointer_handlers: None,
             surface_id,
-            component: op.component.clone(),
-            native_view_name: op.native_view_name.clone(),
-            native_view_props: op.native_view_props.clone(),
-            extension_props_json: op.extension_props_json.clone(),
-            extension_props: std::sync::Arc::new(crate::extensions::parse_extension_props(
-                &op.extension_props_json,
-            )),
-            native_view_host: None,
+            component: intern_component(&op.component),
+            slot_shift: (op.component == crate::builtins::native_slot::COMPONENT).then(|| {
+                crate::builtins::native_slot::register_host(&extension_props, op.tag);
+                Rc::new(Cell::new(point(0.0, 0.0)))
+            }),
+            extension_props_hash: json_hash(&op.extension_props_json),
+            native_surface: None,
             renders_native_surface,
             native_surface_descendants: u32::from(renders_native_surface),
             native_surface_counted: false,
+            effect_group_descendants: 0,
+            forms_effect_group: false,
             host_component,
             host_index: op.host_index,
             host_container,
+            mask_children,
             intrinsic_size: None,
             host_reports,
             surface_origin: crate::surface::SurfaceOrigin::default(),
-            frame: if crate::extensions::component_portal(
-                &op.component,
-                &crate::extensions::parse_extension_props(&op.extension_props_json),
-            )
-            .is_some()
+            frame: if crate::extensions::component_portal(&op.component, &extension_props).is_some()
             {
                 rn_gpui_sys::ffi::RectF {
                     x: 0.0,
@@ -852,182 +1342,321 @@ impl RNNodeView {
                 op.frame
             },
             parent_tag_cache: std::rc::Rc::new(std::cell::Cell::new(None)),
-            view: op.view.clone(),
+            view: ViewProps::from(&op.view),
             animated_transform: None,
             animated_background_color: None,
+            gradient_cache: None,
             animated_text_color: None,
-            paragraph: op.has_paragraph.then(|| op.paragraph.clone()),
+            animated_opacity: false,
+            focused: Cell::new(false),
+            focus_visible: Cell::new(false),
+            state_text_color: None,
+            own_state_color: None,
+            state_styles: None,
+            paragraph: op.has_paragraph.then(|| paragraph_of(op)),
+            prepared_paragraph: op
+                .has_paragraph
+                .then(|| {
+                    crate::text::take_prepared(op.paragraph.prepared, op.paragraph.prepared_width)
+                })
+                .flatten(),
             // `core-private:` the text-input fields come from the module's own
-            input_text: text_input.text.clone(),
-            input_placeholder: text_input.placeholder.clone(),
-            input_placeholder_mode: text_input.text.is_empty(),
-            input_selection_color: text_input.selection_color,
-            input_text_color: op
-                .paragraph
-                .fragments
-                .first()
-                .map(|fragment| fragment.color)
-                .filter(|color| *color != 0)
-                .unwrap_or(0xff000000),
-            input_multiline: text_input.multiline,
-            input_editable: text_input.editable,
-            input_secure_text: text_input.secure,
-            input_selection: 0..0,
-            input_scroll_x: 0.0,
-            input_selection_anchor: None,
-            input_marked: None,
-            input_event_count: 0,
-            caret_visible: false,
+            text_input: (op.component == "TextInput").then(|| {
+                Box::new(crate::builtins::textinput::input::TextInputState {
+                    text: text_input.text.clone(),
+                    placeholder: text_input.placeholder.clone(),
+                    placeholder_mode: text_input.text.is_empty(),
+                    selection_color: text_input.selection_color,
+                    text_color: op
+                        .paragraph
+                        .fragments
+                        .first()
+                        .map(|fragment| fragment.color)
+                        .filter(|color| *color != 0)
+                        .unwrap_or(0xff000000),
+                    multiline: text_input.multiline,
+                    editable: text_input.editable,
+                    placeholder_color: crate::builtins::textinput::input::placeholder_color(
+                        text_input.placeholder_color,
+                    ),
+                    caret_hidden: text_input.caret_hidden,
+                    select_on_focus: text_input.select_on_focus,
+                    submit_behavior: text_input.submit_behavior,
+                    max_length: text_input.max_length,
+                    context_menu_hidden: text_input.context_menu_hidden,
+                    secure_text: text_input.secure,
+                    ..crate::builtins::textinput::input::TextInputState::EMPTY
+                })
+            }),
+            text_selection: 0..0,
+            text_selection_anchor: None,
             caret_blink_task: Task::ready(()),
             transition: None,
             transition_forward: false,
             transition_progress_sent: None,
             transition_end_refreshed: None,
             // `core-private:` a scroll view starts at the offset the module's
-            scroll_position: Rc::new(Cell::new(point(scroll_initial.0, scroll_initial.1))),
-            scroll: crate::extensions::component_scroll(
-                &op.component,
-                &crate::extensions::parse_extension_props(&op.extension_props_json),
-            ),
-            scroll_indicator: None,
-            scroll_sync_generation: Rc::new(Cell::new(0)),
-            scroll_handle: gpui::ScrollHandle::new(),
-            scroll_handle_stale: true,
+            scroll: scroll.map(Box::new),
+            virtual_view_mode: Cell::new(None),
+            scroll_parts,
             focusable: op.view.focusable || op.component == "TextInput",
             pending_text_input_focus: None,
             children: Vec::new(),
             parent: None,
-            cached_style: StyleRefinement::default(),
             renderer_frame: None,
             renderer_decoration: None,
             inherited: Inherited::default(),
             focus_handle: None,
             focus_subscriptions: Vec::new(),
+            extension_props: shared_extension_props(extension_props),
         };
         if view.component == "TextInput" {
-            view.input_selection = crate::builtins::textinput::input::reconcile_selection(
-                &view.input_text,
+            view.input_mut().selection = crate::builtins::textinput::input::reconcile_selection(
+                &view.input().text,
                 0..0,
                 text_input.selection,
                 true,
             );
             view.sync_input_paragraph();
         }
-        view.cached_style = style::to_refinement(&view.view);
+        view.apply_switch_state();
+        view.state_styles = style::StateStyles::from_flat(&view.view);
+        view.sync_effect_group();
         view
     }
 
-    pub fn update_from_op(&mut self, op: &MountOp) {
-        if self.native_view_name != op.native_view_name
-            || self.native_view_props != op.native_view_props
-        {
-            self.native_view_name.clone_from(&op.native_view_name);
-            self.native_view_props.clone_from(&op.native_view_props);
-            self.native_view_host = None;
+    /// The gradients of `backgroundImage`, painted in the node's box.
+    fn gradient_element(&mut self, frame: RectF, scale: (f32, f32)) -> Option<AnyElement> {
+        let json = &self.view.background_json;
+        if json.is_empty() {
+            self.gradient_cache = None;
+            return None;
         }
-        if self.component == "NativeViewHost" {
-            let renders = !self.native_view_name.is_empty();
-            if renders != self.renders_native_surface {
-                self.renders_native_surface = renders;
-                self.native_surface_descendants = self
-                    .native_surface_descendants
-                    .saturating_add_signed(if renders { 1 } else { -1 });
-            }
+        let size = (
+            (frame.w * 10.0).round() as u32,
+            (frame.h * 10.0).round() as u32,
+        );
+        let stale = self
+            .gradient_cache
+            .as_ref()
+            .is_none_or(|cache| cache.json != *json || cache.size != size);
+        if stale {
+            let image = crate::gradient::Background::parse(json).map(|background| {
+                let (width, height, mut bytes) =
+                    background.render(frame.w, frame.h, GRADIENT_RASTER_LIMIT);
+                for pixel in bytes.chunks_exact_mut(4) {
+                    pixel.swap(0, 2);
+                }
+                let buffer = image::RgbaImage::from_raw(width, height, bytes);
+                buffer.map(|buffer| {
+                    std::sync::Arc::new(gpui::RenderImage::new(vec![image::Frame::new(buffer)]))
+                })
+            });
+            self.gradient_cache = Some(Box::new(GradientCache {
+                json: json.clone(),
+                size,
+                image: image.flatten(),
+            }));
         }
-        self.frame = if crate::extensions::component_portal(
-            &op.component,
-            &crate::extensions::parse_extension_props(&op.extension_props_json),
-        )
-        .is_some()
-        {
-            rn_gpui_sys::ffi::RectF {
-                x: 0.0,
-                y: 0.0,
-                ..op.frame
-            }
-        } else {
-            op.frame
+        let image = self.gradient_cache.as_ref()?.image.clone()?;
+        let radii = self.view.border_radii;
+        let corners = gpui::Corners {
+            top_left: px(radii.tl * scale.0),
+            top_right: px(radii.tr * scale.0),
+            bottom_right: px(radii.br * scale.0),
+            bottom_left: px(radii.bl * scale.0),
         };
+        Some(
+            gpui::canvas(
+                |_, _, _| (),
+                move |bounds, (), window, _cx| {
+                    let _ = window.paint_image(bounds, bounds, corners, image.clone(), 0, false);
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .into_any_element(),
+        )
+    }
+
+    /// A switch reports whether it is on, which RN's `Switch` does not put in
+    /// `accessibilityState` on iOS and so on desktop.
+    fn apply_switch_state(&mut self) {
+        if self.component != "Switch" {
+            return;
+        }
+        let on = self
+            .extension_props
+            .get("value")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        self.view.accessibility_checked = if on { 2 } else { 1 };
+    }
+
+    /// Applies the groups of an op's view that layout changed, leaving the rest
+    /// of the node's view as it is.
+    fn patch_layout_view(&mut self, op: &MountOp) {
+        let patch = op.layout_patch;
+        if patch & 1 != 0 {
+            self.view.content_insets = op.view.content_insets;
+            self.view.display_none = op.view.display_none;
+        }
+        if patch & 2 != 0 {
+            self.view.border_widths = op.view.border_widths;
+        }
+        if patch & 4 != 0 {
+            self.view.border_radii = op.view.border_radii;
+        }
+        if patch & 8 != 0 {
+            self.view.transform = op.view.transform;
+            self.view.has_transform = op.view.has_transform;
+            self.view.transform_origin_set = op.view.transform_origin_set;
+        }
+    }
+
+    /// The first frame and layout groups an insert carries for a view created
+    /// before its layout was known.
+    pub fn apply_insert_layout(&mut self, op: &MountOp) {
+        self.frame = op.frame;
+        if op.layout_patch & 15 != 0 {
+            self.patch_layout_view(op);
+        }
+    }
+
+    pub fn update_from_op(&mut self, op: &MountOp, app: Option<&mut gpui::App>) {
+        let extension_props = crate::extensions::parse_extension_props(&op.extension_props_json);
+        self.frame =
+            if crate::extensions::component_portal(&op.component, &extension_props).is_some() {
+                rn_gpui_sys::ffi::RectF {
+                    x: 0.0,
+                    y: 0.0,
+                    ..op.frame
+                }
+            } else {
+                op.frame
+            };
         if op.props_changed {
-            self.view = op.view.clone();
-            self.focusable = op.view.focusable || self.component == "TextInput";
+            self.view = ViewProps::from(&op.view);
+            self.focusable = op.view.focusable
+                || self.component == "TextInput"
+                || crate::extensions::component_renderer(&self.component)
+                    .is_some_and(|renderer| renderer.focusable_by_default());
             if !self.focusable {
                 self.focus_handle = None;
                 self.focus_subscriptions.clear();
             }
-            self.cached_style = style::to_refinement(&self.view);
+            self.state_styles = style::StateStyles::from_flat(&self.view);
+            self.animated_opacity = false;
+            if self.component == "TextInput" {
+                crate::builtins::textinput::input::apply_update(self, op);
+            }
+        }
+        if !op.props_changed && op.layout_patch & 15 != 0 {
+            self.patch_layout_view(op);
+        }
+        if op.layout_patch & 16 != 0 {
+            if let Some(paragraph) = self.paragraph.as_mut() {
+                paragraph.selectable = op.paragraph.selectable;
+            }
+        }
+        if op.layout_patch & 32 != 0 && !op.props_changed {
+            self.extension_props_hash = json_hash(&op.extension_props_json);
+            self.extension_props = shared_extension_props(extension_props.clone());
             if self.component == "TextInput" {
                 crate::builtins::textinput::input::apply_update(self, op);
             }
         }
         if op.has_paragraph {
-            self.paragraph = Some(op.paragraph.clone());
-            if let Some(fragment) = op.paragraph.fragments.first() {
-                if fragment.color != 0 && !self.input_placeholder_mode {
-                    self.input_text_color = fragment.color;
+            self.prepared_paragraph =
+                crate::text::take_prepared(op.paragraph.prepared, op.paragraph.prepared_width);
+            self.paragraph = Some(paragraph_of(op));
+            if let (Some(fragment), Some(input)) = (
+                op.paragraph.fragments.first(),
+                self.text_input.as_deref_mut(),
+            ) {
+                if fragment.color != 0 && !input.placeholder_mode {
+                    input.text_color = fragment.color;
                 }
             }
         }
         if self.component == "TextInput" {
             self.sync_input_paragraph();
         }
-        if let Some(next) = crate::extensions::component_scroll(
-            &op.component,
-            &crate::extensions::parse_extension_props(&op.extension_props_json),
-        ) {
+        if let Some(next) = crate::extensions::component_scroll(&op.component, &extension_props) {
             if let Some(previous) = &mut self.scroll {
                 previous.content_size = next.content_size;
                 previous.horizontal = next.horizontal;
                 previous.enabled = next.enabled;
                 previous.indicator = next.indicator;
+                previous.snap = next.snap;
             } else {
-                self.scroll = Some(next);
+                self.scroll = Some(Box::new(next));
             }
-            self.scroll_handle_stale = true;
+            self.parts_mut().handle_stale = true;
         }
-        self.update_host_component(op);
+        if self.host_component.is_none() && op.host_emitter_handle != 0 {
+            // The component was mounted before its emitter existed.
+            let (component, container, mask_children) =
+                Self::create_host_component(op, &self.host_reports, self.surface_id, app);
+            self.host_component = component;
+            self.host_container = container;
+            self.mask_children = mask_children;
+        } else {
+            self.update_host_component(op, app);
+        }
         if op.props_changed {
-            self.extension_props_json
-                .clone_from(&op.extension_props_json);
-            self.extension_props = std::sync::Arc::new(crate::extensions::parse_extension_props(
-                &self.extension_props_json,
-            ));
+            self.extension_props = shared_extension_props(extension_props);
+            self.extension_props_hash = json_hash(&op.extension_props_json);
         }
+        self.apply_switch_state();
     }
 
     /// Creates the host component an op names by registry index, if it names
-    /// one. Returns it with whether it is a container.
+    /// one. Returns it with whether it is a container and whether it masks its
+    /// children.
     fn create_host_component(
         op: &MountOp,
         host_reports: &crate::store::HostReportQueue,
-    ) -> (Option<Box<dyn crate::host_component::HostObject>>, bool) {
+        surface_id: i32,
+        app: Option<&mut gpui::App>,
+    ) -> (
+        Option<Box<dyn crate::host_component::HostObject>>,
+        bool,
+        bool,
+    ) {
         // SAFETY: C++ made these handles for this op and gave them to Rust; this
         let (props, emitter) = unsafe { Self::claim_host_handles(op) };
         let Some(entry) = (op.host_index >= 0)
             .then(|| crate::host_component::entry(op.host_index as u32))
             .flatten()
         else {
-            return (None, false);
+            return (None, false, false);
         };
+        let missing_props = props.is_none();
         let (Some(props), Some(emitter)) = (props, emitter) else {
-            if entry.is_registered() {
+            // Without an emitter the node mounts empty; its update brings it.
+            if missing_props && entry.is_registered() {
                 log::error!(
                     "[host-component] {} (tag {}) was created without its props or emitter",
                     entry.name,
                     op.tag
                 );
             }
-            return (None, entry.options.container);
+            return (None, entry.options.container, entry.options.mask_children);
         };
-        let cx = crate::host_component::HostContext::queued(op.tag, host_reports.clone());
+        let cx = crate::host_component::HostContext::queued(op.tag, host_reports.clone())
+            .on_surface(surface_id);
+        let (cx, _scope) = cx.enter_with(app);
         let object = entry.create(props, emitter, cx);
-        if object.is_none() {
+        if object.is_none() && !entry.options.mask_children {
             log::error!(
                 "[host-component] {} is declared but no package registered it; the node renders nothing",
                 entry.name
             );
         }
-        (object, entry.options.container)
+        (object, entry.options.container, entry.options.mask_children)
     }
 
     /// Takes ownership of the handles an op carried, so they are released when
@@ -1050,21 +1679,65 @@ impl RNNodeView {
     }
 
     /// Hands the component its new props, when C++ found its own props changed.
-    fn update_host_component(&mut self, op: &MountOp) {
+    fn update_host_component(&mut self, op: &MountOp, mut app: Option<&mut gpui::App>) {
         if op.host_props_handle == 0 {
             return;
         }
         // SAFETY: as in `create_host_component`; an `Update` op's props handle is
         let props = unsafe { crate::host_component::PropsHandle::from_raw(op.host_props_handle) };
+        let (cx, view_cx) = (self.host_context(), self.host_context());
         let Some(component) = self.host_component.as_mut() else {
             return;
         };
         let mut changed = Vec::with_capacity(1 + op.host_changed_more.len());
         changed.push(op.host_changed);
         changed.extend_from_slice(&op.host_changed_more);
-        let cx = crate::host_component::HostContext::queued(self.tag, self.host_reports.clone());
         crate::counters::bump(crate::counters::Counter::HostUpdateCalls);
-        component.update(props, &changed, cx);
+        {
+            let (cx, _scope) = cx.enter_with(app.as_deref_mut());
+            component.update(props, &changed, cx);
+        }
+        if let Some(surface) = &self.native_surface {
+            let (cx, _scope) = view_cx.enter_with(app);
+            component.update_view(surface.view(), &changed, cx);
+        }
+    }
+
+    /// Creates the OS view of a `nativeSurface` component the first time the
+    /// node is painted, and shows or hides its composition surface with the node.
+    fn show_native_surface(&mut self, visible: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.renders_native_surface {
+            return;
+        }
+        if self.native_surface.is_none() && visible {
+            let host_cx = self.host_context();
+            let Some(component) = self.host_component.as_mut() else {
+                return;
+            };
+            let created =
+                crate::native_surface::NativeSurface::new(window, cx).and_then(|surface| {
+                    let (host_cx, _scope) = host_cx.enter(&mut *cx);
+                    let view = component.create_view(&surface.parent(), window, host_cx)?;
+                    surface.attach(view)?;
+                    Ok(surface)
+                });
+            match created {
+                Ok(surface) => {
+                    self.native_surface = Some(std::rc::Rc::new(surface));
+                    self.notify_ancestors(cx);
+                }
+                Err(error) => log::error!(
+                    "[native-view] tag {} ({}) initialization failed: {error:#}",
+                    self.tag,
+                    self.component
+                ),
+            }
+        }
+        if let Some(surface) = &self.native_surface {
+            if let Err(error) = surface.set_visible(visible) {
+                log::error!("[native-view] tag {} visibility: {error:#}", self.tag);
+            }
+        }
     }
 
     pub(crate) fn set_parent(&mut self, parent: Option<WeakEntity<RNNodeView>>, tag: Option<i32>) {
@@ -1083,6 +1756,201 @@ impl RNNodeView {
 
     /// Whether any node in this subtree, this one included, renders a native
     /// surface.
+    /// A native slot's content is sized by the tree that places it, so the node
+    /// that shows the tree repaints when the slot's frame changes.
+    pub(crate) fn notify_slot_owner(&self, cx: &mut Context<Self>) {
+        if self.component != crate::builtins::native_slot::COMPONENT {
+            return;
+        }
+        if let Some(parent) = self.parent.as_ref().and_then(|parent| parent.upgrade()) {
+            parent.update(cx, |_, cx| cx.notify());
+        }
+    }
+
+    /// Asks every ancestor to render again, so that what they paint after this
+    /// node reads its new composition surface.
+    fn notify_ancestors(&self, cx: &mut Context<Self>) {
+        let mut parent = self.parent.as_ref().and_then(|parent| parent.upgrade());
+        while let Some(entity) = parent {
+            entity.update(cx, |_, cx| cx.notify());
+            parent = entity
+                .read(cx)
+                .parent
+                .as_ref()
+                .and_then(|parent| parent.upgrade());
+        }
+    }
+
+    /// The GPUI surface that what is painted after this subtree belongs on, when
+    /// the subtree hosts a native view: the surface above its last one.
+    fn surface_after(&self, cx: &App) -> Option<gpui::CompositionSurfaceId> {
+        if let Some(surface) = &self.native_surface {
+            return Some(surface.above());
+        }
+        if self.native_surface_descendants == 0 {
+            return None;
+        }
+        self.children
+            .iter()
+            .rev()
+            .find_map(|(_, child)| child.read(cx).surface_after(cx))
+    }
+
+    /// The children as elements, those painted after a native view moved onto
+    /// the surface above it so that they cover it.
+    fn child_elements(
+        children: &[(i32, Entity<RNNodeView>)],
+        has_native: bool,
+        cx: &App,
+    ) -> Vec<AnyElement> {
+        let mut above = None;
+        children
+            .iter()
+            .filter(|(_, child)| {
+                child.read(cx).component != crate::builtins::native_slot::COMPONENT
+            })
+            .map(|(_, child)| {
+                let element = child.clone().into_any_element();
+                let element = match above {
+                    Some(surface) => {
+                        crate::native_surface::OnSurface::new(element, surface).into_any_element()
+                    }
+                    None => element,
+                };
+                if has_native {
+                    above = child.read(cx).surface_after(cx).or(above);
+                }
+                element
+            })
+            .collect()
+    }
+
+    /// The composition surface hosting this node's OS view, once painted.
+    #[cfg(feature = "test-driver")]
+    pub(crate) fn native_surface(&self) -> Option<&crate::native_surface::NativeSurface> {
+        self.native_surface.as_deref()
+    }
+
+    /// Whether a scroll container holding this node cannot cache its content
+    /// as a layer: the node is painted as a group of its own, which a layer's
+    /// tiles do not draw.
+    pub(crate) fn subtree_forms_effect_group(&self) -> bool {
+        self.effect_group_descendants > 0
+    }
+
+    /// Whether this node's props make its content a group of its own: a
+    /// translucent view, a blur or drop shadow, a blend mode or isolation.
+    fn props_form_effect_group(&self) -> bool {
+        self.view.opacity < 1.0
+            || self.view.mix_blend_mode != 0
+            || self.view.isolate
+            || self.mask_children
+            || self.view.filter_json.contains("\"blur\"")
+            || self.view.filter_json.contains("\"dropShadow\"")
+    }
+
+    /// Brings this node's own count in line with its props, and returns the
+    /// change in the subtree's count.
+    pub(crate) fn sync_effect_group(&mut self) -> i64 {
+        let forms = self.props_form_effect_group();
+        if forms == self.forms_effect_group {
+            return 0;
+        }
+        self.forms_effect_group = forms;
+        if forms {
+            self.effect_group_descendants += 1;
+            1
+        } else {
+            self.effect_group_descendants = self.effect_group_descendants.saturating_sub(1);
+            -1
+        }
+    }
+
+    pub(crate) fn add_effect_group_descendants(&mut self, delta: u32) -> bool {
+        let before = self.effect_group_descendants;
+        self.effect_group_descendants = before.saturating_add(delta);
+        before == 0 && self.effect_group_descendants != 0
+    }
+
+    pub(crate) fn sub_effect_group_descendants(&mut self, delta: u32) -> bool {
+        let before = self.effect_group_descendants;
+        self.effect_group_descendants = before.saturating_sub(delta);
+        before != 0 && self.effect_group_descendants == 0
+    }
+
+    /// Hands Fabric the scroll offset it has not been given yet, so that a
+    /// measurement taken now is in the window's coordinates.
+    pub(crate) fn flush_scroll_state(&self, host: &crate::host::Host) {
+        let Some(parts) = &self.scroll_parts else {
+            return;
+        };
+        if parts.sync_pending.replace(false) {
+            let offset = parts.position.get();
+            host.set_scroll_offset(self.tag, offset.x, offset.y);
+        }
+    }
+
+    /// Whether a host component that holds React children, such as a container
+    /// with its own GPUI chrome, is among this node's ancestors.
+    /// Whether native content (a `NativeRoot`'s tree, or a host component's)
+    /// lies under this node's pointer area.
+    pub(crate) fn shares_pointer_with_native(&self, cx: &App) -> bool {
+        self.component == crate::builtins::native_root::COMPONENT || self.in_host_container(cx)
+    }
+
+    pub(crate) fn in_host_container(&self, cx: &App) -> bool {
+        let mut parent = self.parent.clone();
+        while let Some(weak) = parent {
+            let Some(node) = weak.upgrade() else {
+                return false;
+            };
+            let node = node.read(cx);
+            if node.host_container && node.host_component.is_some() {
+                return true;
+            }
+            parent = node.parent.clone();
+        }
+        false
+    }
+
+    /// Where this view lies in the content of the scroll view around it, that
+    /// scroll view's viewport in the same space, and whether it scrolls
+    /// sideways; `None` when no scroll view is around it.
+    pub(crate) fn virtual_view_geometry(
+        &self,
+        cx: &App,
+    ) -> Option<(crate::virtual_view::Rect, crate::virtual_view::Rect, bool)> {
+        let mut parent = self.parent.clone();
+        while let Some(weak) = parent {
+            let node = weak.upgrade()?;
+            let node = node.read(cx);
+            if let Some(scroll) = &node.scroll {
+                let offset = node.scroll_offset();
+                let (x, y) = (
+                    self.inherited.origin_unscrolled.0 - node.inherited.origin_unscrolled.0,
+                    self.inherited.origin_unscrolled.1 - node.inherited.origin_unscrolled.1,
+                );
+                return Some((
+                    crate::virtual_view::Rect {
+                        x,
+                        y,
+                        w: self.frame.w,
+                        h: self.frame.h,
+                    },
+                    crate::virtual_view::Rect {
+                        x: offset.x,
+                        y: offset.y,
+                        w: node.frame.w,
+                        h: node.frame.h,
+                    },
+                    scroll.horizontal,
+                ));
+            }
+            parent = node.parent.clone();
+        }
+        None
+    }
+
     pub(crate) fn subtree_renders_native_surface(&self) -> bool {
         self.native_surface_descendants > 0
     }
@@ -1119,18 +1987,43 @@ impl RNNodeView {
     }
 
     fn local_transform(&self) -> (f32, f32, f32, f32) {
-        if self.animated_transform.is_none() && !self.view.has_transform {
+        if self.effective_transform().is_none() {
             return (1.0, 1.0, 0.0, 0.0);
         }
-        let m = self.animated_transform.unwrap_or(self.view.transform);
-        let (scale_x, scale_y, translate_x, translate_y) = axis_aligned_transform(&m);
-        if has_unsupported_subtree_transform(&m) {
-            log::trace!(
-                "[transform] tag={} has rotation/skew/perspective; GPUI subtree transform spike is not supported",
+        // GPUI draws the node's subtree under its matrix, so layout, borders,
+        // text and scroll offsets below it stay in unscaled units.
+        (1.0, 1.0, 0.0, 0.0)
+    }
+
+    /// `backfaceVisibility: 'hidden'` while the node is turned to face away.
+    fn backface_hidden(&self) -> bool {
+        self.view.backface_hidden
+            && self
+                .effective_transform()
+                .is_some_and(|matrix| crate::transform::faces_away(&matrix))
+    }
+
+    /// The matrix GPUI draws this node's subtree under.
+    fn gpui_transform(&self, scale: (f32, f32)) -> Option<gpui::TransformationMatrix> {
+        let m = self.effective_transform()?;
+        if crate::transform::is_three_dimensional(&m) {
+            log::debug!(
+                "[transform] tag={} has perspective or a turn about x or y; drawn flat",
                 self.tag
             );
         }
-        (scale_x, scale_y, translate_x, translate_y)
+        let mut matrix = crate::transform::affine(&m)?;
+        matrix.translation[0] *= scale.0;
+        matrix.translation[1] *= scale.1;
+        if !self.view.transform_origin_set {
+            // Without a `transformOrigin` a view turns about its centre.
+            matrix = gpui::TransformationMatrix::about(
+                self.frame.w * scale.0 / 2.0,
+                self.frame.h * scale.1 / 2.0,
+                matrix,
+            );
+        }
+        Some(matrix)
     }
 
     pub(crate) fn stable_paint_tree<'a>(&'a self, cx: &'a App) -> crate::extensions::TreeView<'a> {
@@ -1150,8 +2043,20 @@ impl RNNodeView {
     }
 
     fn origin_frame(&self, cx: &App) -> (f32, f32) {
-        let stable = self.stable_paint_tree(cx);
-        self.origin_frame_with_tree(&stable)
+        let frame = self.own_layout_frame(cx);
+        (frame.x, frame.y)
+    }
+
+    /// [`Self::layout_frame`] against a tree of this node alone, which is
+    /// built only when a component renderer may place the node.
+    fn own_layout_frame(&self, cx: &App) -> RectF {
+        match self.renderer_frame {
+            Some(frame) => frame,
+            None if crate::extensions::component_renderer(&self.component).is_some() => {
+                self.layout_frame(&self.stable_paint_tree(cx))
+            }
+            None => self.frame,
+        }
     }
 
     /// `refresh_inherited` runs while `ViewStore` is being updated, so the inset
@@ -1203,6 +2108,30 @@ impl RNNodeView {
             .unwrap_or(self.frame)
     }
 
+    /// Whether this node is the first child of a masked view, which only
+    /// shapes what its siblings show.
+    fn is_mask(&self, cx: &App) -> bool {
+        self.parent
+            .as_ref()
+            .and_then(|parent| parent.upgrade())
+            .is_some_and(|parent| {
+                let parent = parent.read(cx);
+                parent.mask_children
+                    && parent
+                        .children
+                        .first()
+                        .is_some_and(|(tag, _)| *tag == self.tag)
+            })
+    }
+
+    fn is_mask_in(&self, tree: &crate::extensions::TreeView) -> bool {
+        self.parent_tag_cache.get().is_some_and(|parent| {
+            tree.nodes.get(&parent).is_some_and(|parent| {
+                parent.mask_children && parent.children.first() == Some(&self.tag)
+            })
+        })
+    }
+
     pub(crate) fn hides_subtree(&self, tree: &crate::extensions::TreeView) -> bool {
         crate::extensions::component_renderer(&self.component)
             .is_some_and(|renderer| renderer.hides_subtree(&self.component_node_shallow(), tree))
@@ -1217,17 +2146,36 @@ impl RNNodeView {
         InheritInput {
             origin_frame: self.origin_frame_with_tree(tree),
             transform: self.local_transform(),
-            border: (self.view.border_widths.left, self.view.border_widths.top),
-            scroll: self.scroll.is_some().then(|| self.scroll_position.clone()),
+            scroll: self
+                .scroll
+                .as_ref()
+                .and(self.scroll_parts.as_ref())
+                .map(|parts| parts.position.clone()),
+            slot_shift: self.slot_shift.clone(),
             accessible: self.view.accessible,
             hides_descendants: self.view.accessibility_hidden
                 || self.view.accessibility_important == 3
-                || self.view.display_none,
+                || self.view.display_none
+                || self.is_mask_in(tree),
             hides_subtree: self.hides_subtree(tree),
             other_modal_child: false,
             focusable_or_accessible: self.focusable || self.view.accessible,
             window_control: self.window_control_role(),
         }
+    }
+
+    /// How far the window's own coordinates are from this node's: the menu bar
+    /// and the frame the window draws around its content.
+    pub(crate) fn window_offset(&self) -> (f32, f32) {
+        if self.surface_is_placed() {
+            return (0.0, 0.0);
+        }
+        let insets = crate::desktop::window_frame::insets_of(self.surface_id);
+        (
+            insets.left,
+            crate::desktop::gpui_menu::menu_bar_inset_for_window_id(self.surface_id as u32)
+                + insets.top,
+        )
     }
 
     pub fn absolute_origin(&self, _cx: &App) -> Point<Pixels> {
@@ -1277,6 +2225,69 @@ impl RNNodeView {
         let (x, y) = accumulate_origin(&chain);
         let (surface_x, surface_y) = self.surface_origin.get();
         point(px(x + surface_x), px(y + surface_y))
+    }
+
+    /// The inverse of every matrix GPUI draws this node under, outermost
+    /// first, each about its node's origin. Applying them in order maps a point
+    /// of the window into the space the layout (and `absolute_origin`) uses.
+    pub(crate) fn transform_inverses(&self, cx: &App) -> Vec<gpui::TransformationMatrix> {
+        let mut inverses = Vec::new();
+        let mut push = |node: &RNNodeView| {
+            if let Some(matrix) = node.gpui_transform(node.inherited.parent_scale) {
+                let origin = node.absolute_origin(cx);
+                let about = gpui::TransformationMatrix::about(
+                    f32::from(origin.x),
+                    f32::from(origin.y),
+                    matrix,
+                );
+                if let Some(inverse) = about.inverse() {
+                    inverses.push(inverse);
+                }
+            }
+        };
+        push(self);
+        let mut parent = self.parent.clone();
+        while let Some(weak) = parent {
+            let Some(node) = weak.upgrade() else { break };
+            let node = node.read(cx);
+            push(node);
+            parent = node.parent.clone();
+        }
+        inverses.reverse();
+        inverses
+    }
+
+    /// Where the window shows `rect` (in layout space): the bounds of its
+    /// corners under every matrix GPUI draws this node under.
+    pub(crate) fn transformed_bounds(
+        &self,
+        cx: &App,
+        rect: (f32, f32, f32, f32),
+    ) -> (f32, f32, f32, f32) {
+        let inverses = self.transform_inverses(cx);
+        if inverses.is_empty() {
+            return rect;
+        }
+        let forwards: Vec<_> = inverses
+            .iter()
+            .rev()
+            .filter_map(|inverse| inverse.inverse())
+            .collect();
+        let (x, y, w, h) = rect;
+        let corners = [(x, y), (x + w, y), (x, y + h), (x + w, y + h)].map(|(cx_, cy)| {
+            forwards
+                .iter()
+                .fold(point(px(cx_), px(cy)), |p, m| m.transform_logical_point(p))
+        });
+        let xs = corners.map(|p| f32::from(p.x));
+        let ys = corners.map(|p| f32::from(p.y));
+        let (min_x, max_x) = xs
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+        let (min_y, max_y) = ys
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+        (min_x, min_y, max_x - min_x, max_y - min_y)
     }
 
     pub(crate) fn cumulative_scale(&self, _cx: &App) -> (f32, f32) {
@@ -1363,7 +2374,7 @@ fn verify_inherited_enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var_os("RN_GPUI_VERIFY_INHERITED").is_some())
 }
 
-fn role_for_accessibility_role(role: &str, accessible: bool) -> Option<Role> {
+pub(crate) fn role_for_accessibility_role(role: &str, accessible: bool) -> Option<Role> {
     Some(match role {
         "none" | "presentation" => return None,
         "button" | "imagebutton" | "togglebutton" => Role::Button,
@@ -1618,6 +2629,57 @@ pub(crate) struct ScrollLink {
     pub(crate) scale: (f32, f32),
 }
 
+fn json_hash(json: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    json.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// The component name `name`, shared with every node of that component.
+fn intern_component(name: &str) -> gpui::SharedString {
+    thread_local! {
+        static NAMES: std::cell::RefCell<std::collections::HashSet<gpui::SharedString>> =
+            std::cell::RefCell::default();
+    }
+    NAMES.with_borrow_mut(|names| {
+        if let Some(name) = names.get(name) {
+            return name.clone();
+        }
+        let name = gpui::SharedString::from(name.to_string());
+        names.insert(name.clone());
+        name
+    })
+}
+
+/// A node's parsed extension props, every node without any sharing one `null`.
+fn shared_extension_props(props: serde_json::Value) -> std::sync::Arc<serde_json::Value> {
+    static NULL: std::sync::LazyLock<std::sync::Arc<serde_json::Value>> =
+        std::sync::LazyLock::new(|| std::sync::Arc::new(serde_json::Value::Null));
+    if props.is_null() {
+        NULL.clone()
+    } else {
+        std::sync::Arc::new(props)
+    }
+}
+
+thread_local! {
+    /// The listeners of nodes without a component renderer, one set for each
+    /// key: they take the node they run for, so nodes alike share them.
+    static SHARED_POINTER_HANDLERS: std::cell::RefCell<Vec<(PointerHandlersKey, Rc<PointerHandlers>)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// What a node's pointer listeners are built from, besides the node itself.
+#[derive(Clone, Copy, PartialEq)]
+struct PointerHandlersKey {
+    role: WindowControlRole,
+    inherited_area: Option<gpui::WindowControlArea>,
+    pointer_events: u8,
+    drags: bool,
+    os_owns_press: bool,
+}
+
 /// What a node does with a press, as far as the window's own controls go.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WindowControlRole {
@@ -1639,13 +2701,14 @@ pub(crate) struct Inherited {
     pub(crate) parent_scale: (f32, f32),
     pub(crate) scale: (f32, f32),
     pub(crate) origin_unscrolled: (f32, f32),
-    pub(crate) parent_border: (f32, f32),
     pub(crate) scrollers: Rc<[ScrollLink]>,
     pub(crate) accessible_ancestor: bool,
     pub(crate) hidden_by_accessible_ancestor: bool,
     pub(crate) hidden_by_hidden_ancestor: bool,
     pub(crate) hidden_by_modal_sibling: bool,
     pub(crate) hidden_by_hiding_ancestor: bool,
+    /// Whether the node is inside the content of a native slot.
+    pub(crate) in_native_slot: bool,
 }
 
 impl Default for Inherited {
@@ -1656,13 +2719,13 @@ impl Default for Inherited {
             parent_scale: (1.0, 1.0),
             scale: (1.0, 1.0),
             origin_unscrolled: (0.0, 0.0),
-            parent_border: (0.0, 0.0),
             scrollers: Rc::from(Vec::new()),
             accessible_ancestor: false,
             hidden_by_accessible_ancestor: false,
             hidden_by_hidden_ancestor: false,
             hidden_by_modal_sibling: false,
             hidden_by_hiding_ancestor: false,
+            in_native_slot: false,
             hides_subtree_self: false,
         }
     }
@@ -1686,7 +2749,6 @@ impl Inherited {
         self.window_control_area == other.window_control_area
             && self.parent_scale == other.parent_scale
             && self.scale == other.scale
-            && self.parent_border == other.parent_border
             && self.accessible_ancestor == other.accessible_ancestor
             && self.hidden_by_accessible_ancestor == other.hidden_by_accessible_ancestor
             && self.hidden_by_hidden_ancestor == other.hidden_by_hidden_ancestor
@@ -1699,8 +2761,9 @@ impl Inherited {
 pub(crate) struct InheritInput {
     pub(crate) origin_frame: (f32, f32),
     pub(crate) transform: (f32, f32, f32, f32),
-    pub(crate) border: (f32, f32),
     pub(crate) scroll: Option<Rc<Cell<Point<f32>>>>,
+    /// For a native slot: how far its content is moved from where layout put it.
+    pub(crate) slot_shift: Option<Rc<Cell<Point<f32>>>>,
     pub(crate) accessible: bool,
     pub(crate) hides_descendants: bool,
     pub(crate) hides_subtree: bool,
@@ -1727,7 +2790,6 @@ pub(crate) fn inherit(
                 parent.origin_unscrolled.1
                     + inherited.parent_scale.1 * (own.origin_frame.1 + own.transform.3),
             );
-            inherited.parent_border = input.border;
             inherited.scrollers = match &input.scroll {
                 Some(position) => {
                     let mut links = parent.scrollers.to_vec();
@@ -1739,6 +2801,15 @@ pub(crate) fn inherit(
                 }
                 None => parent.scrollers.clone(),
             };
+            inherited.in_native_slot = parent.in_native_slot || own.slot_shift.is_some();
+            if let Some(shift) = &own.slot_shift {
+                let mut links = inherited.scrollers.to_vec();
+                links.push(ScrollLink {
+                    position: shift.clone(),
+                    scale: inherited.parent_scale,
+                });
+                inherited.scrollers = Rc::from(links);
+            }
             inherited.accessible_ancestor = parent.accessible_ancestor || input.accessible;
             inherited.hidden_by_hidden_ancestor =
                 parent.hidden_by_hidden_ancestor || input.hides_descendants;
@@ -1794,27 +2865,6 @@ fn accumulate_origin(chain: &[OriginStep]) -> (f32, f32) {
     (x, y)
 }
 
-fn axis_aligned_transform(matrix: &[f32; 16]) -> (f32, f32, f32, f32) {
-    if matrix.iter().any(|value| !value.is_finite()) {
-        return (1.0, 1.0, 0.0, 0.0);
-    }
-    (matrix[0], matrix[5], matrix[12], matrix[13])
-}
-
-fn has_unsupported_subtree_transform(matrix: &[f32; 16]) -> bool {
-    matrix.iter().any(|value| !value.is_finite())
-        || [
-            matrix[1], matrix[2], matrix[3], matrix[4], matrix[6], matrix[7], matrix[8], matrix[9],
-            matrix[11], matrix[14],
-        ]
-        .into_iter()
-        .any(|value| value.abs() > 0.0001)
-        || matrix[0] < 0.0
-        || matrix[5] < 0.0
-        || (matrix[10] - 1.0).abs() > 0.0001
-        || (matrix[15] - 1.0).abs() > 0.0001
-}
-
 thread_local! {
     /// How many node copies a `TreeView` has taken, for the test that guards
     /// against copying the whole tree once per mount operation.
@@ -1836,59 +2886,7 @@ pub(crate) fn snapshot_count() -> usize {
 
 #[cfg(test)]
 mod transform_matrix_tests {
-    use super::{
-        accumulate_origin, axis_aligned_transform, has_unsupported_subtree_transform, OriginStep,
-    };
-
-    fn identity() -> [f32; 16] {
-        [
-            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-        ]
-    }
-
-    #[test]
-    fn axis_aligned_matrix_keeps_translation_and_nonuniform_scale() {
-        let mut matrix = identity();
-        matrix[0] = 1.5;
-        matrix[5] = 0.75;
-        matrix[12] = 12.0;
-        matrix[13] = -3.0;
-
-        assert_eq!(axis_aligned_transform(&matrix), (1.5, 0.75, 12.0, -3.0));
-        assert!(!has_unsupported_subtree_transform(&matrix));
-    }
-
-    #[test]
-    fn rotation_is_flagged_for_the_documented_gpui_spike() {
-        let mut matrix = identity();
-        matrix[0] = 0.0;
-        matrix[1] = 1.0;
-        matrix[4] = -1.0;
-        matrix[5] = 0.0;
-
-        assert!(has_unsupported_subtree_transform(&matrix));
-    }
-
-    #[test]
-    fn reflection_and_perspective_are_flagged() {
-        let mut reflection = identity();
-        reflection[0] = -1.0;
-        assert!(has_unsupported_subtree_transform(&reflection));
-
-        for perspective_index in [14, 15] {
-            let mut perspective = identity();
-            perspective[perspective_index] = if perspective_index == 15 { 0.5 } else { 0.01 };
-            assert!(has_unsupported_subtree_transform(&perspective));
-        }
-    }
-
-    #[test]
-    fn nonfinite_transform_is_flagged() {
-        let mut matrix = identity();
-        matrix[12] = f32::NAN;
-        assert!(has_unsupported_subtree_transform(&matrix));
-        assert_eq!(axis_aligned_transform(&matrix), (1.0, 1.0, 0.0, 0.0));
-    }
+    use super::{accumulate_origin, OriginStep};
 
     #[test]
     fn nested_scaled_origins_apply_parent_scroll_and_translation() {
@@ -1920,16 +2918,12 @@ mod inherited_tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
-    fn node(
-        origin_frame: (f32, f32),
-        transform: (f32, f32, f32, f32),
-        border: (f32, f32),
-    ) -> InheritInput {
+    fn node(origin_frame: (f32, f32), transform: (f32, f32, f32, f32)) -> InheritInput {
         InheritInput {
             origin_frame,
             transform,
-            border,
             scroll: None,
+            slot_shift: None,
             accessible: false,
             hides_descendants: false,
             hides_subtree: false,
@@ -1987,7 +2981,7 @@ mod inherited_tests {
     }
 
     fn plain() -> InheritInput {
-        node((0.0, 0.0), (1.0, 1.0, 0.0, 0.0), (0.0, 0.0))
+        node((0.0, 0.0), (1.0, 1.0, 0.0, 0.0))
     }
 
     fn scrolling(
@@ -1997,7 +2991,7 @@ mod inherited_tests {
     ) -> InheritInput {
         InheritInput {
             scroll: Some(Rc::new(Cell::new(point(offset.0, offset.1)))),
-            ..node(origin_frame, transform, (0.0, 0.0))
+            ..node(origin_frame, transform)
         }
     }
 
@@ -2054,8 +3048,8 @@ mod inherited_tests {
     #[test]
     fn plain_nesting_accumulates_origins() {
         let chain = [
-            node((10.0, 20.0), (1.0, 1.0, 0.0, 0.0), (0.0, 0.0)),
-            node((5.0, 7.0), (1.0, 1.0, 0.0, 0.0), (0.0, 0.0)),
+            node((10.0, 20.0), (1.0, 1.0, 0.0, 0.0)),
+            node((5.0, 7.0), (1.0, 1.0, 0.0, 0.0)),
         ];
         assert_same_origin(&chain);
         assert_eq!(inherited(&chain).origin_unscrolled, (15.0, 27.0));
@@ -2065,8 +3059,8 @@ mod inherited_tests {
     #[test]
     fn a_scaled_parent_scales_its_children() {
         let chain = [
-            node((100.0, 0.0), (2.0, 2.0, 0.0, 0.0), (0.0, 0.0)),
-            node((10.0, 20.0), (1.0, 1.0, 3.0, 4.0), (0.0, 0.0)),
+            node((100.0, 0.0), (2.0, 2.0, 0.0, 0.0)),
+            node((10.0, 20.0), (1.0, 1.0, 3.0, 4.0)),
         ];
         assert_same_origin(&chain);
         assert_eq!(inherited(&chain).origin_unscrolled, (126.0, 48.0));
@@ -2077,7 +3071,7 @@ mod inherited_tests {
     fn a_scrollview_offset_moves_only_its_descendants() {
         let chain = [
             scrolling((0.0, 0.0), (1.0, 1.0, 0.0, 0.0), (0.0, 100.0)),
-            node((10.0, 20.0), (1.0, 1.0, 0.0, 0.0), (0.0, 0.0)),
+            node((10.0, 20.0), (1.0, 1.0, 0.0, 0.0)),
         ];
         assert_same_origin(&chain);
         assert_eq!(cached_origin(&chain), (10.0, -80.0));
@@ -2087,9 +3081,9 @@ mod inherited_tests {
     #[test]
     fn a_scrollview_inside_a_scaled_parent_scrolls_at_that_scale() {
         let chain = [
-            node((0.0, 0.0), (2.0, 2.0, 0.0, 0.0), (0.0, 0.0)),
+            node((0.0, 0.0), (2.0, 2.0, 0.0, 0.0)),
             scrolling((0.0, 0.0), (1.0, 1.0, 0.0, 0.0), (0.0, 50.0)),
-            node((0.0, 10.0), (1.0, 1.0, 0.0, 0.0), (0.0, 0.0)),
+            node((0.0, 10.0), (1.0, 1.0, 0.0, 0.0)),
         ];
         assert_same_origin(&chain);
         let inherited = inherited(&chain);
@@ -2102,9 +3096,9 @@ mod inherited_tests {
     fn nested_scrollviews_keep_both_offsets_outermost_first() {
         let chain = [
             scrolling((0.0, 0.0), (1.0, 1.0, 0.0, 0.0), (0.0, 10.0)),
-            node((0.0, 0.0), (2.0, 2.0, 0.0, 0.0), (0.0, 0.0)),
+            node((0.0, 0.0), (2.0, 2.0, 0.0, 0.0)),
             scrolling((0.0, 0.0), (1.0, 1.0, 0.0, 0.0), (0.0, 20.0)),
-            node((0.0, 5.0), (1.0, 1.0, 0.0, 0.0), (0.0, 0.0)),
+            node((0.0, 5.0), (1.0, 1.0, 0.0, 0.0)),
         ];
         assert_same_origin(&chain);
         let inherited = inherited(&chain);
@@ -2126,13 +3120,6 @@ mod inherited_tests {
         let after = inherited(&[root.clone(), child.clone()]);
         assert!(before.same(&after));
         assert_eq!(cached_origin(&[root, child]), (0.0, -40.0));
-    }
-
-    #[test]
-    fn a_parent_border_is_remembered_unscaled() {
-        let root = node((0.0, 0.0), (2.0, 2.0, 0.0, 0.0), (3.0, 4.0));
-        assert_eq!(inherited(&[root, plain()]).parent_border, (3.0, 4.0));
-        assert_eq!(inherited(&[plain()]).parent_border, (0.0, 0.0));
     }
 
     #[test]
@@ -2185,11 +3172,14 @@ mod inherited_tests {
 
 impl RNNodeView {
     pub(crate) fn sync_input_paragraph(&mut self) {
-        let show_placeholder = self.input_text.is_empty();
+        let Some(input) = self.text_input.as_deref_mut() else {
+            return;
+        };
+        let show_placeholder = input.text.is_empty();
         let visible = if show_placeholder {
-            &self.input_placeholder
+            &input.placeholder
         } else {
-            &self.input_text
+            &input.text
         };
         let Some(paragraph) = self.paragraph.as_mut() else {
             return;
@@ -2207,30 +3197,33 @@ impl RNNodeView {
                     font_weight: 400,
                     italic: false,
                     color: if show_placeholder {
-                        0xff8e8e93
+                        input.placeholder_color
                     } else {
-                        self.input_text_color
+                        input.text_color
                     },
                     line_height: 0.0,
                     letter_spacing: 0.0,
                     underline: false,
                     strikethrough: false,
+                    text_transform: 0,
+                    font_variant: 0,
+                    background_color: 0,
                 });
         } else {
             paragraph.fragments[0].text.clone_from(visible);
-            if show_placeholder && !self.input_placeholder_mode {
-                self.input_text_color = paragraph.fragments[0].color;
+            if show_placeholder && !input.placeholder_mode {
+                input.text_color = paragraph.fragments[0].color;
             }
             paragraph.fragments[0].color = if show_placeholder {
-                0xff8e8e93
-            } else if self.input_placeholder_mode {
-                self.input_text_color
+                input.placeholder_color
+            } else if input.placeholder_mode {
+                input.text_color
             } else {
                 paragraph.fragments[0].color
             };
             paragraph.fragments.truncate(1);
         }
-        self.input_placeholder_mode = show_placeholder;
+        input.placeholder_mode = show_placeholder;
     }
 }
 
@@ -2295,10 +3288,62 @@ fn schedule_frame_host_report_flush(
     });
 }
 
+impl RNNodeView {
+    /// A `ScrollBar` styles the nearest scroll view above it. It renders when it
+    /// mounts and when its props change, which is when the scroll view needs to
+    /// hear about it.
+    fn hand_scrollbar_to_scroll_view(&self, cx: &mut Context<Self>) {
+        let spec = crate::scroll_indicator::ScrollbarSpec::from_props(&self.extension_props);
+        let (bar, tag) = (cx.entity(), self.tag);
+        let mut ancestor = self.parent.clone();
+        while let Some(node) = ancestor.and_then(|weak| weak.upgrade()) {
+            if node.read(cx).scroll.is_some() {
+                node.update(cx, |scroll_view, cx| {
+                    scroll_view.take_scrollbar(spec, &bar, tag, cx)
+                });
+                return;
+            }
+            ancestor = node.read(cx).parent.clone();
+        }
+    }
+
+    fn take_scrollbar(
+        &mut self,
+        spec: crate::scroll_indicator::ScrollbarSpec,
+        bar: &Entity<RNNodeView>,
+        tag: i32,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .parts_mut()
+            .scrollbar_release
+            .as_ref()
+            .map(|(id, _)| *id)
+            != Some(bar.entity_id())
+        {
+            let release = cx.observe_release(bar, |scroll_view, _, cx| {
+                scroll_view.parts_mut().scrollbar = Default::default();
+                scroll_view.parts_mut().scrollbar_tag = None;
+                scroll_view.parts_mut().scrollbar_release = None;
+                cx.notify();
+            });
+            self.parts_mut().scrollbar_release = Some((bar.entity_id(), release));
+        }
+        if self.parts_mut().scrollbar != spec || self.parts_mut().scrollbar_tag != Some(tag) {
+            self.parts_mut().scrollbar = spec;
+            self.parts_mut().scrollbar_tag = Some(tag);
+            cx.notify();
+        }
+    }
+}
+
 impl Render for RNNodeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         RENDER_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.render_count += 1;
+        if self.component == crate::builtins::desktop_scroll_bar::COMPONENT {
+            self.hand_scrollbar_to_scroll_view(cx);
+        }
         let accessibility_active = window.is_a11y_active();
         let was_initialized = ACCESSIBILITY_ACTIVE_INITIALIZED.swap(true, Ordering::Relaxed);
         let previous_accessibility_active =
@@ -2356,46 +3401,26 @@ impl Render for RNNodeView {
                 self.render_count
             );
         }
-        let hidden_portal = crate::extensions::component_portal(
-            &self.component,
-            &crate::extensions::parse_extension_props(&self.extension_props_json),
-        )
-        .is_some_and(|portal| !portal.visible);
-        if self.view.display_none || hidden_portal {
+        let hidden_portal =
+            crate::extensions::component_portal(&self.component, &self.extension_props)
+                .is_some_and(|portal| !portal.visible);
+        let hidden = self.view.display_none || hidden_portal || self.backface_hidden();
+        self.show_native_surface(!hidden, window, cx);
+        if hidden {
             return div().id(self.tag).size_0().into_any_element();
         }
-        if self.component == "NativeViewHost" && !self.native_view_name.is_empty() {
-            if self.native_view_host.is_none() {
-                match crate::native_surface::NativeSurface::create(
-                    crate::native_surface::NativeSurfaceContent::Factory {
-                        name: self.native_view_name.clone(),
-                        props: self.native_view_props.clone(),
-                    },
-                    window,
-                    cx,
-                ) {
-                    Ok(host) => self.native_view_host = Some(std::rc::Rc::new(host)),
-                    Err(error) => log::error!(
-                        "[native-view] tag {} ({}) initialization failed: {error:#}",
-                        self.tag,
-                        self.native_view_name
-                    ),
-                }
-            }
-        }
-        let frame = self.layout_frame(&self.stable_paint_tree(cx));
+        let frame = self.own_layout_frame(cx);
         let (scale_x, scale_y) = self.cumulative_scale(cx);
-        // Yoga's child frames already include the parent's border inset, and GPUI
-        // positions absolute children inside that border as well.
+        // Yoga's child frames are relative to the parent's border box, and the
+        // element has no GPUI border widths of its own (borders are painted as
+        // rules), so GPUI's origin for absolute children is that box as well.
         let (parent_scale_x, parent_scale_y) = self.inherited.parent_scale;
-        let (origin_x, origin_y) = self.origin_frame(cx);
+        let (origin_x, origin_y) = (frame.x, frame.y);
         let (_, _, translate_x, translate_y) = self.local_transform();
         // No parent scroll offset here: the ScrollView moves all its children at once
         // through its content wrapper.
-        let base_left = parent_scale_x * (origin_x + translate_x)
-            - self.inherited.parent_border.0 * parent_scale_x.abs();
-        let base_top = parent_scale_y * (origin_y + translate_y)
-            - self.inherited.parent_border.1 * parent_scale_y.abs();
+        let base_left = parent_scale_x * (origin_x + translate_x);
+        let base_top = parent_scale_y * (origin_y + translate_y);
         #[cfg(debug_assertions)]
         if verify_inherited_enabled() {
             self.verify_inherited(cx);
@@ -2443,16 +3468,20 @@ impl Render for RNNodeView {
         let scroll = self.scroll.clone();
         let is_scroll = scroll.is_some();
         let ordered_children = self.children.clone();
+        let has_native = self.native_surface_descendants > 0;
         if let Some(renderer) = crate::extensions::component_renderer(&self.component) {
-            let node = self.component_node(cx);
-            if let Some(painted) = renderer.render(&node, window, cx) {
+            let node = self.renderer_node(&*renderer, cx);
+            let handle = crate::extensions::NodeHandle::new(cx.entity().downgrade());
+            let painted =
+                crate::extensions::render_with_node(handle, || renderer.render(&node, window, cx));
+            if let Some(painted) = painted {
                 // The renderer paints the node's whole appearance, but core still
                 // owns where the node is: without this box the element is an
                 // unpositioned flow child of the parent, and a `size_full()`
                 // image fills the parent instead of the node's frame.
                 let mut placed = div().id(self.tag);
                 *placed.style() = {
-                    let mut style = self.cached_style.clone();
+                    let mut style = style::to_refinement(&self.view);
                     style.position = Some(Position::Absolute);
                     style.inset.left = Some(px(base_left).into());
                     style.inset.top = Some(px(base_top).into());
@@ -2555,7 +3584,9 @@ impl Render for RNNodeView {
         if !self.view.accessibility_label.is_empty() {
             element = element.aria_label(self.view.accessibility_label.clone());
         }
-        if !self.view.accessibility_hint.is_empty() {
+        if self.view.accessibility_hint.is_empty() && !self.view.tooltip.is_empty() {
+            element = element.aria_description(self.view.tooltip.clone());
+        } else if !self.view.accessibility_hint.is_empty() {
             element = element.aria_description(self.view.accessibility_hint.clone());
         }
         if self.view.accessibility_label.is_empty() {
@@ -2600,15 +3631,17 @@ impl Render for RNNodeView {
             element = element.aria_numeric_value(f64::from(self.view.accessibility_value_now));
         }
         if self.component == "TextInput" {
-            if !self.input_placeholder.is_empty() {
-                element = element.aria_placeholder(self.input_placeholder.clone());
+            if !self.input().placeholder.is_empty() {
+                element = element.aria_placeholder(self.input().placeholder.clone());
             }
-            if !self.input_secure_text && !self.input_text.is_empty() {
-                element = element.aria_value(self.input_text.clone());
+            if !self.input().secure_text && !self.input().text.is_empty() {
+                element = element.aria_value(self.input().text.clone());
             }
         }
         if let Some(role) = self.accessibility_role() {
             element = element.role(role);
+        } else if accessibility_active && !self.view.tooltip.is_empty() {
+            element = element.role(Role::Group);
         }
         if accessibility_active && self.accessibility_role() == Some(Role::ListItem) {
             if let Some(parent) = self.parent.as_ref().and_then(|parent| parent.upgrade()) {
@@ -2642,16 +3675,16 @@ impl Render for RNNodeView {
         let hidden_by_modal_sibling = self.inherited.hidden_by_modal_sibling;
         let hidden_by_active_modal = crate::accessibility::hidden_by_active_modal(self.tag, cx);
         let hidden_by_hiding_ancestor = self.inherited.hidden_by_hiding_ancestor;
-        let hidden_by_decoration = decoration.a11y_hidden;
+        let hidden_by_decoration = decoration.a11y_hidden || self.is_mask(cx);
         let hidden_display_none = self.view.display_none;
         let accessibility = self.view.clone();
         #[cfg(feature = "visual-capture")]
         let accessibility_tag = self.tag;
-        let input_editable = self.input_editable;
-        let input_secure_text = self.input_secure_text;
+        let input_editable = self.input().editable;
+        let input_secure_text = self.input().secure_text;
         let is_text_input = self.component == "TextInput";
-        let input_text = self.input_text.clone();
-        let input_placeholder = self.input_placeholder.clone();
+        let input_text = self.input().text.clone();
+        let input_placeholder = self.input().placeholder.clone();
         element = element.a11y_synthetic_children(move |builder| {
             let node = builder.parent_node();
             if accessibility.accessibility_important == 3
@@ -2775,63 +3808,16 @@ impl Render for RNNodeView {
                 }
             }
         });
-        let has_accessibility_focus_target =
-            self.view.accessible || self.accessibility_role().is_some();
+        let has_accessibility_focus_target = self.has_accessibility_focus_target();
+        let deferred_focus =
+            self.focus_handle.is_none() && !accessibility_active && self.defers_focus_handle();
         let mut focus_child = None;
-        if self.focusable
+        if (self.focusable
             || self.view.accessibility_has_escape_listener
-            || has_accessibility_focus_target
+            || has_accessibility_focus_target)
+            && !deferred_focus
         {
-            if self.focus_handle.is_none() {
-                let handle = cx
-                    .focus_handle()
-                    .tab_stop(self.focusable || self.view.accessibility_has_escape_listener)
-                    .tab_index(self.tag as isize);
-                if let Some(store) = cx.try_global::<crate::store::StoreGlobal>() {
-                    let host = store.0.read(cx).host.clone();
-                    let tag = self.tag;
-                    let is_text_input = self.component == "TextInput";
-                    let focused_host = host.clone();
-                    self.focus_subscriptions.push(cx.on_focus(
-                        &handle,
-                        window,
-                        move |this, window, cx| {
-                            if is_text_input {
-                                this.start_caret_blink(cx);
-                            }
-                            focused_host.dispatch_event(
-                                tag,
-                                if is_text_input { "topFocus" } else { "focus" },
-                                &serde_json::json!({
-                                    "focusVisible": window.last_input_was_keyboard(),
-                                }),
-                            );
-                            if let Some(store) = cx.try_global::<crate::store::StoreGlobal>() {
-                                store.0.read(cx).frame_hook.arm(window);
-                            }
-                        },
-                    ));
-                    self.focus_subscriptions.push(cx.on_blur(
-                        &handle,
-                        window,
-                        move |this, window, cx| {
-                            if is_text_input {
-                                this.stop_caret_blink();
-                                cx.notify();
-                            }
-                            host.dispatch_event(
-                                tag,
-                                if is_text_input { "topBlur" } else { "blur" },
-                                &serde_json::json!({}),
-                            );
-                            if let Some(store) = cx.try_global::<crate::store::StoreGlobal>() {
-                                store.0.read(cx).frame_hook.arm(window);
-                            }
-                        },
-                    ));
-                }
-                self.focus_handle = Some(handle);
-            }
+            self.ensure_focus_handle(window, cx);
             self.set_accessibility_tab_stop_allowed(
                 !hidden_by_active_modal
                     && !hidden_by_modal_sibling
@@ -2840,7 +3826,7 @@ impl Render for RNNodeView {
                     && !self.inherited.hidden_by_accessible_ancestor,
             );
             if let Some(handle) = &self.focus_handle {
-                if accessibility_active || is_scroll {
+                if accessibility_active || is_scroll || self.component == "TextInput" {
                     // The accessibility tree needs the role, the label and the focus on one
                     // element.
                     element = element.track_focus(handle);
@@ -2852,7 +3838,25 @@ impl Render for RNNodeView {
             }
             element = element
                 .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                    dispatch_key(this.tag, "topKeyDown", &event.keystroke, event.is_held, cx);
+                    // gpui offers a key to every focusable node on the path to the
+                    // focused one; React bubbles the event from the target itself,
+                    // so only the focused node sends it.
+                    let is_target = this
+                        .focus_handle
+                        .as_ref()
+                        .is_some_and(|handle| handle.is_focused(window));
+                    if is_target {
+                        dispatch_key(this.tag, "topKeyDown", &event.keystroke, event.is_held, cx);
+                        if this.component == "TextInput" {
+                            dispatch_key(
+                                this.tag,
+                                "topKeyPress",
+                                &event.keystroke,
+                                event.is_held,
+                                cx,
+                            );
+                        }
+                    }
                     if !event.is_held
                         && focus_adjacent_semantic_sibling(this, &event.keystroke.key, window, cx)
                     {
@@ -2861,25 +3865,42 @@ impl Render for RNNodeView {
                     if !event.is_held
                         && matches!(event.keystroke.key.as_str(), "enter" | "space")
                         && this.component != "TextInput"
-                        && matches!(
-                            this.accessibility_role(),
-                            Some(
-                                Role::Button
-                                    | Role::DefaultButton
-                                    | Role::CheckBox
-                                    | Role::RadioButton
-                                    | Role::Switch
-                                    | Role::Link
-                            )
-                        )
+                        && (this.view.accessible
+                            || matches!(
+                                this.accessibility_role(),
+                                Some(
+                                    Role::Button
+                                        | Role::DefaultButton
+                                        | Role::CheckBox
+                                        | Role::RadioButton
+                                        | Role::Switch
+                                        | Role::Link
+                                )
+                            ))
                     {
-                        dispatch_accessibility_event(
-                            this.tag,
-                            "click",
-                            &serde_json::json!({}),
-                            window,
-                            cx,
-                        );
+                        let activated = crate::extensions::component_renderer(&this.component)
+                            .zip(
+                                cx.try_global::<crate::store::StoreGlobal>()
+                                    .map(|s| s.0.clone()),
+                            )
+                            .is_some_and(|(renderer, store)| {
+                                let handle = crate::extensions::StoreHandle::new(store.downgrade());
+                                renderer.activate(
+                                    &this.component_node_shallow(),
+                                    &handle,
+                                    window,
+                                    cx,
+                                )
+                            });
+                        if !activated {
+                            dispatch_accessibility_event(
+                                this.tag,
+                                "click",
+                                &serde_json::json!({}),
+                                window,
+                                cx,
+                            );
+                        }
                         cx.stop_propagation();
                     }
                     if event.keystroke.key == "escape" {
@@ -2937,7 +3958,13 @@ impl Render for RNNodeView {
                     }
                 }))
                 .on_key_up(cx.listener(|this, event: &KeyUpEvent, window, cx| {
-                    dispatch_key(this.tag, "topKeyUp", &event.keystroke, false, cx);
+                    if this
+                        .focus_handle
+                        .as_ref()
+                        .is_some_and(|handle| handle.is_focused(window))
+                    {
+                        dispatch_key(this.tag, "topKeyUp", &event.keystroke, false, cx);
+                    }
                     if let Some(store) = cx.try_global::<crate::store::StoreGlobal>() {
                         store.0.read(cx).frame_hook.arm(window);
                     }
@@ -3059,12 +4086,10 @@ impl Render for RNNodeView {
                 );
             }
         }
-        if let Some(close_event) = crate::extensions::component_portal(
-            &self.component,
-            &crate::extensions::parse_extension_props(&self.extension_props_json),
-        )
-        .filter(|portal| portal.visible)
-        .and_then(|portal| portal.close_request_event)
+        if let Some(close_event) =
+            crate::extensions::component_portal(&self.component, &self.extension_props)
+                .filter(|portal| portal.visible)
+                .and_then(|portal| portal.close_request_event)
         {
             element =
                 element.on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
@@ -3139,8 +4164,11 @@ impl Render for RNNodeView {
                 }
             }));
         }
+        let mut group_opacity = None;
+        let mut blend = gpui::BlendMode::Normal;
+        let mut isolated = false;
         *element.style() = {
-            let mut style = self.cached_style.clone();
+            let mut style = style::to_refinement(&self.view);
             if let Some(color) = self.animated_background_color {
                 style.background = Some(Fill::from(style::color(color)));
             }
@@ -3179,13 +4207,34 @@ impl Render for RNNodeView {
             style.inset.top = Some(px(base_top).into());
             style.size.width = Some(px(frame.w * scale_x).into());
             style.size.height = Some(px(frame.h * scale_y).into());
+            // Content under a translucent node fades as one picture, not
+            // primitive by primitive.
+            if !self.children.is_empty() {
+                group_opacity = style.opacity.take().filter(|opacity| *opacity < 1.0);
+            }
+            // A blend mode combines the node's picture with what is beneath
+            // it; isolation keeps its content's blend modes to itself.
+            blend = crate::filter::blend_mode(self.view.mix_blend_mode);
+            isolated = self.view.isolate;
             style
         };
-        // The listeners live on a `pointer_area` child, not on the node's own div: a
-        // div with a hitbox records a hover read while painting, which makes a scroll
-        // under a still pointer rebuild every row. It is the first child so its
-        // hitbox and handlers keep the order the node's own div would give them.
-        let mut handlers = PointerHandlers::default();
+        if self.state_styles.is_some() {
+            self.sync_focus(window, cx);
+        }
+        let resolved = self.resolved_state();
+        if let Some(state) = &resolved {
+            let animating = style::Animating {
+                background: self.animated_background_color.is_some(),
+                opacity: self.animated_opacity,
+            };
+            element
+                .style()
+                .refine(&state.refinement((scale_x, scale_y), animating));
+        }
+        // The listeners live on a `PointerArea` around the node's div, not on the div
+        // itself: a div with a hitbox records a hover read while painting, which makes
+        // a scroll under a still pointer rebuild every row. It shares the div's layout
+        // node and inserts its hitbox before the div's children insert theirs.
         // The window-control area a press here lands in: the bar of a title bar,
         // or one of its caption buttons. On Windows a left press there belongs to
         // the OS: the hit-test answered `HTCAPTION` (or a caption button), and
@@ -3194,392 +4243,9 @@ impl Render for RNNodeView {
         // the app leaves the press unhandled. So nothing here may consume it.
         let control_area = self.window_control_area(cx);
         let os_owns_press = cfg!(target_os = "windows") && control_area.is_some();
-        // A component renderer that asked for input gets it through the same
-        // handlers the View props use, so ordering with RN's touch handling and
-        // the scroll-container case stays as it was.
-        let input_spec = crate::extensions::component_renderer(&self.component).map(|renderer| {
-            let node = self.component_node(cx);
-            let spec = renderer.input(&node);
-            (spec, node)
-        });
-        if let Some((spec, node)) = input_spec {
-            for button in [
-                crate::events::Button::Left,
-                crate::events::Button::Middle,
-                crate::events::Button::Right,
-                crate::events::Button::Back,
-                crate::events::Button::Forward,
-            ] {
-                if !spec.mouse_buttons.contains(button) {
-                    continue;
-                }
-                let down_node = cx.entity().downgrade();
-                let down_component = node.clone();
-                let handler: crate::pointer_area::PointerHandler<MouseDownEvent> =
-                    Rc::new(move |event: &MouseDownEvent, window, cx| {
-                        run_component_hook(
-                            &down_node,
-                            &down_component,
-                            window,
-                            cx,
-                            event.position,
-                            button,
-                            event.click_count,
-                            event.modifiers,
-                            ComponentHook::Down,
-                        );
-                    });
-                match button {
-                    crate::events::Button::Left => handlers.left_down.push(handler),
-                    crate::events::Button::Middle => handlers.middle_down.push(handler),
-                    crate::events::Button::Right => handlers.right_down.push(handler),
-                    crate::events::Button::Back => handlers.back_down.push(handler),
-                    crate::events::Button::Forward => handlers.forward_down.push(handler),
-                }
-                let up_node = cx.entity().downgrade();
-                let up_component = node.clone();
-                let handler: crate::pointer_area::PointerHandler<MouseUpEvent> =
-                    Rc::new(move |event: &MouseUpEvent, window, cx| {
-                        run_component_hook(
-                            &up_node,
-                            &up_component,
-                            window,
-                            cx,
-                            event.position,
-                            button,
-                            event.click_count,
-                            event.modifiers,
-                            ComponentHook::Up,
-                        );
-                    });
-                match button {
-                    crate::events::Button::Left => handlers.left_up.push(handler),
-                    crate::events::Button::Middle => handlers.middle_up.push(handler),
-                    crate::events::Button::Right => handlers.right_up.push(handler),
-                    crate::events::Button::Back => handlers.back_up.push(handler),
-                    crate::events::Button::Forward => handlers.forward_up.push(handler),
-                }
-            }
-            if spec.hover {
-                // The edge is decided here, on the entity, because the listener
-                // that reports the sample is rebuilt on every paint.
-                let hover_node = cx.entity().downgrade();
-                let hover_component = node;
-                handlers
-                    .hover
-                    .push(Rc::new(move |hovered: bool, window, cx| {
-                        let Some(entity) = hover_node.upgrade() else {
-                            return;
-                        };
-                        let component = entity.read(cx).component.clone();
-                        let Some(renderer) = crate::extensions::component_renderer(&component)
-                        else {
-                            return;
-                        };
-                        let changed = entity.update(cx, |this, _| {
-                            if this.hovered == hovered {
-                                return false;
-                            }
-                            this.hovered = hovered;
-                            true
-                        });
-                        if !changed {
-                            return;
-                        }
-                        let mut context = crate::extensions::input::InputContext {
-                            node: &hover_component,
-                            window,
-                            cx,
-                            captured: false,
-                        };
-                        renderer.on_hover(&hover_component, hovered, &mut context);
-                    }));
-            }
-        }
-        // A box-none portal overlay must not install a hit area of its own.
-        // Its children still dispatch through their ancestor chain; installing
-        // handlers here redirects empty overlay space to its parent and blocks
-        // sibling content underneath (for example Paseo's entire sidebar).
-        if !matches!(self.view.pointer_events,
-            crate::events::POINTER_EVENTS_NONE | crate::events::POINTER_EVENTS_BOX_NONE
-        ) {
-            let node = cx.entity().downgrade();
-            let down_node = node.clone();
-            handlers
-                .left_down
-                .push(Rc::new(move |event: &MouseDownEvent, window, cx| {
-                    // No touch either: the release never comes back once the OS
-                    // has taken the press into its move loop. The ancestors this
-                    // press bubbles to are told, so none of them starts one.
-                    if os_owns_press {
-                        crate::events::hand_press_to_window();
-                        return;
-                    }
-                    if crate::events::press_belongs_to_window() {
-                        return;
-                    }
-                    let Some(node) = down_node.upgrade() else {
-                        return;
-                    };
-                    let (target, focus_handle, is_text_input) = {
-                        let this = node.read(cx);
-                        (
-                            crate::events::target(cx, this),
-                            this.nearest_focus_handle(cx),
-                            this.component == "TextInput",
-                        )
-                    };
-                    let Some(target) = target else {
-                        return;
-                    };
-                    if let Some(handle) = focus_handle {
-                        window.focus(&handle, cx);
-                    }
-                    if is_text_input {
-                        node.update(cx, |this, cx| {
-                            if event.click_count >= 2 {
-                                crate::builtins::textinput::input::select_all(this, window, cx);
-                            } else {
-                                crate::builtins::textinput::input::select_at_point(
-                                    this,
-                                    event.position,
-                                    false,
-                                    window,
-                                    cx,
-                                );
-                            }
-                        });
-                    }
-                    crate::events::send(
-                        window,
-                        cx,
-                        &target,
-                        event.position,
-                        crate::events::Phase::Start,
-                        Some(crate::events::Button::Left),
-                        modifier_state(event.modifiers),
-                    );
-                    cx.stop_propagation();
-                }));
-            // Every other button reports the DOM pointer events only, with no
-            // touch or responder involvement, so `Pressable` never fires for a
-            // middle or right click. The right button is only wired here when the
-            // view has no `onContextMenu`, since that handler owns the press
-            // otherwise and stopping there would hide the pointer event too.
-            let middle_node = node.clone();
-            handlers
-                .middle_down
-                .push(Rc::new(move |event: &MouseDownEvent, window, cx| {
-                    dispatch_pointer_button(
-                        &middle_node,
-                        event,
-                        crate::events::Button::Middle,
-                        window,
-                        cx,
-                    );
-                }));
-            // Every node that takes pointer input handles the right button, whether
-            // or not it owns a context menu. One press must do both jobs: report
-            // `topPointerDown` for the innermost node, and open the nearest
-            // ancestor's menu. Splitting them across two nodes is what broke a
-            // right click on a `Text` inside a view with `onContextMenu` — the
-            // text's listener stopped the press before the parent's ran.
-            let right_node = node.clone();
-            handlers
-                .right_down
-                .push(Rc::new(move |event: &MouseDownEvent, window, cx| {
-                    dispatch_right_press(&right_node, event, window, cx);
-                }));
-            // Ctrl + click is the macOS equivalent of a right click. It is a left
-            // press, so it must not also start a touch, or a `Pressable` would
-            // fire; the check happens before any touch dispatch.
-            let ctrl_node = node.clone();
-            handlers
-                .left_down
-                .push(Rc::new(move |event: &MouseDownEvent, window, cx| {
-                    if os_owns_press || crate::events::press_belongs_to_window() {
-                        return;
-                    }
-                    let modifiers = modifier_state(event.modifiers);
-                    if crate::events::mouse_context_menu_trigger(
-                        crate::events::Button::Left,
-                        modifiers,
-                        std::env::consts::OS,
-                    )
-                    .is_none()
-                    {
-                        return;
-                    }
-                    let Some(entity) = ctrl_node.upgrade() else {
-                        return;
-                    };
-                    let owner = {
-                        let this = entity.read(cx);
-                        crate::events::context_menu_owner(cx, this)
-                    };
-                    let Some(owner) = owner else {
-                        return;
-                    };
-                    if !run_component_context_menu(
-                        &owner,
-                        event.position,
-                        false,
-                        modifiers,
-                        window,
-                        cx,
-                    ) {
-                        dispatch_context_menu(
-                            owner.tag,
-                            event.position,
-                            crate::events::Button::Left,
-                            modifiers,
-                            "mouse",
-                            window,
-                            cx,
-                        );
-                    }
-                    cx.stop_propagation();
-                }));
-            // Not `cx.listener`: a listener updates its entity every time it runs, and
-            // gpui-fast rebuilds any view that read an updated entity.
-            let move_node = node.clone();
-            handlers
-                .mouse_move
-                .push(Rc::new(move |event: &MouseMoveEvent, window, cx| {
-                    let Some(node) = move_node.upgrade() else {
-                        return;
-                    };
-                    let (hit_target, selecting) = {
-                        let this = node.read(cx);
-                        (
-                            crate::events::target(cx, this),
-                            this.component == "TextInput" && this.input_selection_anchor.is_some(),
-                        )
-                    };
-                    if event.pressed_button.is_some() {
-                        if selecting {
-                            node.update(cx, |this, cx| {
-                                crate::builtins::textinput::input::select_at_point(
-                                    this,
-                                    event.position,
-                                    true,
-                                    window,
-                                    cx,
-                                );
-                            });
-                        }
-                        // RN keeps the touch target fixed from mouse-down to
-                        // release, including when the pointer leaves the view.
-                        let target =
-                            crate::events::active_touch_target(cx).or_else(|| hit_target.clone());
-                        if let Some(target) = target.as_ref() {
-                            crate::events::send(
-                                window,
-                                cx,
-                                target,
-                                event.position,
-                                crate::events::Phase::Move,
-                                None,
-                                modifier_state(event.modifiers),
-                            );
-                        }
-                    } else {
-                        crate::events::hover(window, cx, hit_target.as_ref(), event.position);
-                    }
-                    if hit_target.is_some() || crate::events::active_touch_target(cx).is_some() {
-                        cx.stop_propagation();
-                    }
-                }));
-            handlers
-                .left_up
-                .push(Rc::new(move |event: &MouseUpEvent, window, cx| {
-                    // The release of a caption button is what the OS acts on.
-                    if os_owns_press {
-                        crate::events::hand_press_to_window();
-                        return;
-                    }
-                    if crate::events::press_belongs_to_window() {
-                        return;
-                    }
-                    let Some(node) = node.upgrade() else {
-                        return;
-                    };
-                    let active_target = crate::events::active_touch_target(cx);
-                    if let Some(target) = active_target.as_ref() {
-                        crate::events::send(
-                            window,
-                            cx,
-                            target,
-                            event.position,
-                            crate::events::Phase::End,
-                            Some(crate::events::Button::Left),
-                            modifier_state(event.modifiers),
-                        );
-                    }
-                    let is_touch_target = {
-                        let this = node.read(cx);
-                        crate::events::target(cx, this).is_some()
-                    };
-                    if active_target.is_some() || is_touch_target {
-                        cx.stop_propagation();
-                    }
-                }));
-        }
-        // Registered after every other press handler, which GPUI runs in reverse
-        // order: this one has to see the press before a touch or a context menu
-        // consumes it.
-        // Anywhere in a drag area — the region itself, or a node inside it that
-        // does not take the press — moves the window, and a double click zooms.
-        // macOS and Linux do not consult the hit-test, so the move starts here.
-        // Windows moves the window itself from the `HTCAPTION` press.
-        if control_area == Some(gpui::WindowControlArea::Drag) && !os_owns_press {
-            handlers
-                .left_down
-                .push(Rc::new(move |event: &MouseDownEvent, window, cx| {
-                    if event.click_count >= 2 {
-                        window.titlebar_double_click();
-                    } else {
-                        window.start_window_move();
-                    }
-                    cx.stop_propagation();
-                }));
-        }
-        // A child of a scrolling container moves with its content, so a pointer area
-        // here would drift off the viewport. A node that claims a window-control
-        // area has the same problem for a different reason: the platform asks
-        // which element is under the pointer, and an overlay child sits in front
-        // of its own parent, so the area would never be consulted and the window
-        // could not be dragged by the node that asked to be draggable.
-        if os_owns_press {
-            // What is left is a component's own hook — a caption button reporting
-            // its pressed state — which may stop propagation; the press still has
-            // to reach the OS, which performs the button's action.
-            handlers.left_down = handlers
-                .left_down
-                .into_iter()
-                .map(
-                    |handler| -> crate::pointer_area::PointerHandler<MouseDownEvent> {
-                        Rc::new(move |event: &MouseDownEvent, window, cx| {
-                            handler(event, window, cx);
-                            cx.propagate();
-                        })
-                    },
-                )
-                .collect();
-            handlers.left_up = handlers
-                .left_up
-                .into_iter()
-                .map(
-                    |handler| -> crate::pointer_area::PointerHandler<MouseUpEvent> {
-                        Rc::new(move |event: &MouseUpEvent, window, cx| {
-                            handler(event, window, cx);
-                            cx.propagate();
-                        })
-                    },
-                )
-                .collect();
-        }
+        let handlers = self.pointer_handlers(control_area, os_owns_press, cx);
         let claims_area = control_area.is_some();
+        let node = cx.entity().downgrade();
         if is_scroll || claims_area {
             // The direct-listener path needs one registration per button, and
             // the middle and side buttons go through it too, so a scroll
@@ -3602,34 +4268,37 @@ impl Render for RNNodeView {
                 ),
             ] {
                 for handler in down {
-                    element = element
-                        .on_mouse_down(button, move |event, window, cx| handler(event, window, cx));
+                    let node = node.clone();
+                    element = element.on_mouse_down(button, move |event, window, cx| {
+                        handler(&node, event, window, cx)
+                    });
                 }
                 for handler in up {
-                    element = element
-                        .on_mouse_up(button, move |event, window, cx| handler(event, window, cx));
+                    let node = node.clone();
+                    element = element.on_mouse_up(button, move |event, window, cx| {
+                        handler(&node, event, window, cx)
+                    });
                 }
             }
-            for handler in handlers.mouse_move {
-                element =
-                    element.on_mouse_move(move |event, window, cx| handler(event, window, cx));
+            for handler in handlers.mouse_move.iter().cloned() {
+                let node = node.clone();
+                element = element
+                    .on_mouse_move(move |event, window, cx| handler(&node, event, window, cx));
             }
             // GPUI's own `on_hover` reports an edge by tracking the hovered state
             // itself, so this path needs no bookkeeping of its own — and it takes
             // only one listener, so the handlers are chained rather than added.
             if !handlers.hover.is_empty() {
-                let chained = handlers.hover;
+                let chained = handlers.hover.clone();
+                let node = node.clone();
                 element = element.on_hover(move |hovered: &bool, window, cx| {
                     for handler in &chained {
-                        handler(*hovered, window, cx);
+                        handler(&node, *hovered, window, cx);
                     }
                 });
             }
-        } else {
-            if !handlers.is_empty() {
-                element = element.child(pointer_area(handlers));
-            }
         }
+        let pointer_area = (!is_scroll && !claims_area && !handlers.is_empty()).then_some(handlers);
         // Not for a scroll container, which never had one: its content is
         // re-parented into the scrolling child and a focus handle here would sit
         // outside it.
@@ -3638,18 +4307,25 @@ impl Render for RNNodeView {
                 element = element.child(focus_child);
             }
         }
-        if let Some(native_view_host) = &self.native_view_host {
+        if let Some(surface) = &self.native_surface {
             element = element.child(crate::native_surface::NativeSurfaceElement {
-                surface: native_view_host.clone(),
+                surface: surface.clone(),
             });
         }
+        if let Some(gradient) = self.gradient_element(frame, (scale_x, scale_y)) {
+            element = element.child(gradient);
+        }
+        let mut text_overlay = None;
         if let Some(paragraph) = &self.paragraph {
             let mut scaled_paragraph = paragraph.clone();
+            scaled_paragraph.shadow_dx *= scale_x;
+            scaled_paragraph.shadow_dy *= scale_y;
+            scaled_paragraph.shadow_radius *= scale_x;
             for fragment in &mut scaled_paragraph.fragments {
                 fragment.font_size = scaled_font_size(fragment.font_size, scale_y);
                 fragment.line_height *= scale_y;
                 fragment.letter_spacing *= scale_x;
-                if let Some(color) = self.animated_text_color {
+                if let Some(color) = self.animated_text_color.or(self.state_text_color) {
                     fragment.color = color;
                 }
             }
@@ -3664,13 +4340,31 @@ impl Render for RNNodeView {
                     window,
                 );
             } else {
-                element = crate::builtins::textinput::render::plain_paragraph(
+                let prepared = self.prepared_paragraph.as_ref().filter(|_| {
+                    scale_x == 1.0
+                        && scale_y == 1.0
+                        && self.animated_text_color.or(self.state_text_color).is_none()
+                });
+                // Painted by a wrapper rather than a child canvas, so the text costs
+                // no layout node, unless the div does more to its children than the
+                // wrapper can: hide them, fade them, or clip them to rounded corners.
+                let radii = self.view.border_radii;
+                let clip = decoration.clip || self.view.overflow_hidden;
+                let overlay = (!clip
+                    || (radii.tl <= 0.0 && radii.tr <= 0.0 && radii.br <= 0.0 && radii.bl <= 0.0))
+                    && element.style().display != Some(Display::None)
+                    && element.style().opacity.is_none_or(|opacity| opacity >= 1.0);
+                let (with_text, overlay) = crate::builtins::textinput::render::plain_paragraph(
                     self,
                     element,
                     &scaled_paragraph,
                     (scale_x, scale_y),
                     frame,
+                    overlay,
+                    prepared,
                 );
+                element = with_text;
+                text_overlay = overlay.map(|parts| (parts, clip));
             }
         }
         // `core-private:` the caret and the selection are drawn from the
@@ -3689,33 +4383,67 @@ impl Render for RNNodeView {
                 .flex_none()
                 .w(px(content_width.max(frame.w)))
                 .h(px(content_height.max(frame.h)));
-            content = content.children(ordered_children.iter().map(|(_, child)| child.clone()));
+            content = content.children(Self::child_elements(&ordered_children, has_native, cx));
             // The handle is only written when React or a layout change moved
             // the offset. Writing it on every render would count as a scroll.
-            if std::mem::take(&mut self.scroll_handle_stale) {
-                self.scroll_handle.set_offset(point(
-                    px(-self.scroll_offset().x * scale_x),
-                    px(-self.scroll_offset().y * scale_y),
-                ));
+            if std::mem::take(&mut self.parts_mut().handle_stale) {
+                let offset = self.scroll_offset();
+                self.parts_mut()
+                    .handle
+                    .set_offset(point(px(-offset.x * scale_x), px(-offset.y * scale_y)));
             }
-            let strategy =
-                crate::scroll_layers::scroll_strategy(self.subtree_renders_native_surface());
+            let strategy = crate::scroll_layers::scroll_strategy(
+                self.subtree_renders_native_surface() || self.subtree_forms_effect_group(),
+            );
+            let mut thumb_apply: Option<crate::scroll_indicator::ApplyOffset> = None;
+            // A manual-offset container's handle is not tracked by an element, so
+            // its viewport and furthest offset come from the layout instead.
+            let manual = matches!(strategy, crate::scroll_layers::ScrollStrategy::ManualOffset);
+            let manual_extents = manual.then(|| {
+                (
+                    size(px(frame.w * scale_x), px(frame.h * scale_y)),
+                    point(
+                        px((content_width - frame.w).max(0.0) * scale_x),
+                        px((content_height - frame.h).max(0.0) * scale_y),
+                    ),
+                )
+            });
             if scroll.enabled {
                 let scroller = Rc::new(Scroller {
                     tag: self.tag,
-                    position: self.scroll_position.clone(),
-                    handle: self.scroll_handle.clone(),
-                    sync_generation: self.scroll_sync_generation.clone(),
+                    position: self.parts_mut().position.clone(),
+                    handle: self.parts_mut().handle.clone(),
+                    sync_generation: self.parts_mut().sync_generation.clone(),
+                    sync_pending: self.parts_mut().sync_pending.clone(),
+                    emit: self.parts_mut().emit.clone(),
+                    event_throttle: std::time::Duration::from_secs_f32(
+                        scroll.event_throttle_ms.max(0.0) / 1000.0,
+                    ),
                     content_size: scroll.content_size,
                     viewport: (frame.w, frame.h),
                     scale: (scale_x, scale_y),
                     event: scroll.event.clone(),
+                    horizontal: scroll.horizontal,
+                    snap: scroll.snap.clone(),
+                    gesture: self.parts_mut().gesture.clone(),
+                    deceleration: scroll.deceleration,
+                    max_offset: manual_extents.map(|(_, max)| max),
                 });
-                content =
-                    content.on_scroll_wheel(move |_event: &gpui::ScrollWheelEvent, window, cx| {
-                        let scroller = scroller.clone();
-                        window.defer(cx, move |window, cx| scroller.sync(window, cx));
-                    });
+                // A manual-offset container only follows its node's own render.
+                let view = cx.entity();
+                let dragged = scroller.clone();
+                thumb_apply = Some(Rc::new(move |offset, window, cx| {
+                    dragged.handle.set_offset(offset);
+                    dragged.sync(window, cx);
+                    if manual {
+                        let _ = view.update(cx, |_, cx| cx.notify());
+                    }
+                }));
+                content = content.on_scroll(move |event: &gpui::ScrollEvent, window, cx| {
+                    scroller.on_wheel(event, window, cx);
+                    let scroller = scroller.clone();
+                    window.defer(cx, move |window, cx| scroller.sync(window, cx));
+                });
             }
             // The scrolling container is a child filling this node, not the
             // node's own element: whatever sits inside a scrolling container
@@ -3730,10 +4458,12 @@ impl Render for RNNodeView {
                     } else {
                         scroller.overflow_y_scroll().overflow_x_hidden()
                     };
-                    element = element
-                        .overflow_hidden()
-                        .overflow_clips_corners()
-                        .child(scroller.track_scroll(&self.scroll_handle).child(content));
+                    scroller = scroller.restrict_scroll_to_axis();
+                    element = element.overflow_hidden().overflow_clips_corners().child(
+                        scroller
+                            .track_scroll(&self.parts_mut().handle)
+                            .child(content),
+                    );
                 }
                 crate::scroll_layers::ScrollStrategy::ManualOffset => {
                     let (offset_x, offset_y) = (self.scroll_offset().x, self.scroll_offset().y);
@@ -3744,24 +4474,26 @@ impl Render for RNNodeView {
                         .top(px(-offset_y * scale_y))
                         .w(px(scroll.content_size.0.max(frame.w)))
                         .h(px(scroll.content_size.1.max(frame.h)))
-                        .children(ordered_children.iter().map(|(_, child)| child.clone()));
+                        .children(Self::child_elements(&ordered_children, has_native, cx));
                     if scroll.enabled {
                         let horizontal = scroll.horizontal;
                         let max = (
                             (scroll.content_size.0 - frame.w).max(0.0),
                             (scroll.content_size.1 - frame.h).max(0.0),
                         );
-                        let position = self.scroll_position.clone();
-                        let handle = self.scroll_handle.clone();
+                        let position = self.parts_mut().position.clone();
+                        let handle = self.parts_mut().handle.clone();
                         let scale = (scale_x, scale_y);
                         let view = cx.entity();
-                        scroller = scroller.on_scroll_wheel(
-                            move |event: &gpui::ScrollWheelEvent, _window, _cx| {
+                        scroller =
+                            scroller.on_scroll(move |event: &gpui::ScrollEvent, _window, _cx| {
                                 let delta = event.delta.pixel_delta(px(20.));
                                 let (dx, dy) = if horizontal {
-                                    (f32::from(delta.x) + f32::from(delta.y), 0.0)
+                                    let swapped =
+                                        f32::from(delta.x) == 0.0 && event.modifiers.shift;
+                                    (f32::from(if swapped { delta.y } else { delta.x }), 0.0)
                                 } else {
-                                    (0.0, f32::from(delta.y) + f32::from(delta.x))
+                                    (0.0, f32::from(delta.y))
                                 };
                                 let current = position.get();
                                 let next = point(
@@ -3779,8 +4511,7 @@ impl Render for RNNodeView {
                                     px(-next.y * scale.1),
                                 ));
                                 let _ = view.update(_cx, |_, cx| cx.notify());
-                            },
-                        );
+                            });
                     }
                     scroller = scroller.overflow_hidden().child(moved);
                     element = element
@@ -3792,65 +4523,121 @@ impl Render for RNNodeView {
             if scroll.indicator && scroll.enabled {
                 let horizontal = scroll.horizontal;
                 if self
-                    .scroll_indicator
+                    .parts_mut()
+                    .indicator
                     .as_ref()
                     .is_none_or(|indicator| indicator.read(cx).horizontal() != horizontal)
                 {
-                    let handle = self.scroll_handle.clone();
-                    self.scroll_indicator = Some(cx.new(|_| {
-                        crate::scroll_indicator::ScrollIndicator::new(handle, horizontal)
+                    let handle = self.parts_mut().handle.clone();
+                    let programmatic = self.parts_mut().programmatic.clone();
+                    self.parts_mut().indicator = Some(cx.new(|_| {
+                        crate::scroll_indicator::ScrollIndicator::new(
+                            handle,
+                            horizontal,
+                            programmatic,
+                        )
                     }));
                 }
-                element = element.children(self.scroll_indicator.clone());
+                let tag = self.tag;
+                let parts = self.parts_mut();
+                if let (Some(indicator), Some(apply)) = (parts.indicator.clone(), thumb_apply) {
+                    let (bar_tag, position) = (parts.scrollbar_tag, parts.position.clone());
+                    let emit: crate::scroll_indicator::EmitEvent = Rc::new(move |event, cx| {
+                        let Some(store) = cx.try_global::<crate::store::StoreGlobal>() else {
+                            return;
+                        };
+                        let offset = position.get();
+                        let payload = serde_json::json!({
+                            "contentOffset": {"x": offset.x, "y": offset.y},
+                        });
+                        let host = &store.0.read(cx).host;
+                        // The scroll view declares `onScrollBarDrag*`; a ScrollBar
+                        // child declares its own `onDrag*` under other event names.
+                        host.dispatch_event(tag, event, &payload);
+                        if let Some(bar_tag) = bar_tag {
+                            let thumb = event.replacen("topScrollBar", "topScrollBarThumb", 1);
+                            host.dispatch_event(bar_tag, &thumb, &payload);
+                        }
+                    });
+                    let spec = parts.scrollbar.clone();
+                    indicator.update(cx, |indicator, _| {
+                        indicator.configure(spec, apply, emit, manual_extents)
+                    });
+                }
+                element = element.children(self.parts_mut().indicator.clone());
             } else {
-                self.scroll_indicator = None;
+                self.parts_mut().indicator = None;
             }
         } else if self.host_component.is_some() {
             let chrome_cx = self.host_context();
             let overlay_cx = self.host_context();
             let container = self.host_container;
             let (chrome, overlay) = match self.host_component.as_mut() {
-                Some(component) => (
-                    Some(component.render(window, chrome_cx)),
-                    if container {
+                Some(component) => {
+                    let chrome = {
+                        let (chrome_cx, _scope) = chrome_cx.enter(&mut *cx);
+                        component.render(window, chrome_cx)
+                    };
+                    let overlay = if container {
+                        let (overlay_cx, _scope) = overlay_cx.enter(&mut *cx);
                         component.render_overlay(window, overlay_cx)
                     } else {
                         None
-                    },
-                ),
+                    };
+                    (Some(chrome), overlay)
+                }
                 None => (None, None),
             };
             schedule_frame_host_report_flush(&self.host_reports, window, cx);
             element = element
                 .children(chrome)
-                .children(
-                    ordered_children
-                        .iter()
-                        .map(|(_, child)| child.clone().into_any_element()),
-                )
+                .children(Self::child_elements(&ordered_children, has_native, cx))
                 .children(overlay);
         } else {
-            let content =
-                crate::extensions::component_renderer(&self.component).and_then(|renderer| {
-                    let node = self.component_node(cx);
-                    renderer.content(&node, window, cx)
-                });
+            let renderer = crate::extensions::component_renderer(&self.component).map(|renderer| {
+                let node = self.renderer_node(&*renderer, cx);
+                (renderer, node)
+            });
+            let content = renderer
+                .as_ref()
+                .and_then(|(renderer, node)| renderer.content(node, window, cx));
             let painted: Vec<AnyElement> = content
                 .into_iter()
-                .chain(
-                    ordered_children
-                        .iter()
-                        .map(|(_, child)| child.clone().into_any_element()),
-                )
+                .chain(Self::child_elements(&ordered_children, has_native, cx))
                 .collect();
-            let painted = match crate::extensions::component_renderer(&self.component) {
-                Some(renderer) => renderer.children(&self.component_node(cx), painted, window, cx),
+            let painted = match &renderer {
+                Some((renderer, node)) => renderer.children(node, painted, window, cx),
                 None => painted,
             };
-            element = element.children(painted);
-            if self.component == "TextInput" && !self.input_multiline {
-                element = element.on_scroll_wheel(cx.listener(
-                    |this, event: &gpui::ScrollWheelEvent, window, cx| {
+            if self.mask_children && !painted.is_empty() {
+                let mut painted = painted.into_iter();
+                let mask = painted.next().expect("a mask child");
+                element = element.child(crate::filter::Masked::new(mask, painted.collect()));
+            } else {
+                element = element.children(painted);
+            }
+            if self.component == "TextInput" && self.input().multiline {
+                element = element.on_scroll(cx.listener(
+                    |this, event: &gpui::ScrollEvent, _window, cx| {
+                        let delta = match &event.delta {
+                            gpui::ScrollDelta::Pixels(delta) => f32::from(delta.y),
+                            gpui::ScrollDelta::Lines(lines) => lines.y * 40.0,
+                        };
+                        let before = this.input().scroll_y;
+                        crate::builtins::textinput::input::scroll_input_to(
+                            this,
+                            before - delta,
+                            cx,
+                        );
+                        if this.input().scroll_y != before {
+                            cx.stop_propagation();
+                        }
+                    },
+                ));
+            }
+            if self.component == "TextInput" && !self.input().multiline {
+                element = element.on_scroll(cx.listener(
+                    |this, event: &gpui::ScrollEvent, window, cx| {
                         let delta = match &event.delta {
                             gpui::ScrollDelta::Pixels(delta) => {
                                 let x = f32::from(delta.x);
@@ -3876,7 +4663,7 @@ impl Render for RNNodeView {
                             .paragraph
                             .as_ref()
                             .map(|paragraph| {
-                                let line = this.input_text.split('\n').next().unwrap_or_default();
+                                let line = this.input().text.split('\n').next().unwrap_or_default();
                                 crate::text::input_caret_x(
                                     window.text_system(),
                                     paragraph,
@@ -3886,9 +4673,9 @@ impl Render for RNNodeView {
                             })
                             .unwrap_or(0.0);
                         let max_offset = (natural_width - viewport).max(0.0);
-                        let next = (this.input_scroll_x - delta).clamp(0.0, max_offset);
-                        if (next - this.input_scroll_x).abs() > f32::EPSILON {
-                            this.input_scroll_x = next;
+                        let next = (this.input().scroll_x - delta).clamp(0.0, max_offset);
+                        if (next - this.input().scroll_x).abs() > f32::EPSILON {
+                            this.input_mut().scroll_x = next;
                             cx.notify();
                             cx.stop_propagation();
                         }
@@ -3932,16 +4719,26 @@ impl Render for RNNodeView {
                 true,
             ),
         ];
-        // GPUI paints a complete rounded border, including the inner curve.
-        // Four edge rules cannot represent it, even with rounded clipping.
-        let native_border = self.view.border_colors[0] != 0
-            && edges.iter().any(|(_, _, _, _, thickness, _)| *thickness > 0.0)
-            && self.view.border_colors.iter().all(|color| *color == self.view.border_colors[0])
-            && self.view.border_styles.iter().all(|style| *style == 0);
+        let border_colors = resolved.as_ref().map_or(self.view.border_colors, |state| {
+            state.border_colors(self.view.border_colors)
+        });
+        let radii = self.view.border_radii;
+        let rounded = radii.tl > 0.0 || radii.tr > 0.0 || radii.br > 0.0 || radii.bl > 0.0;
+        let uniform_border = rounded
+            && border_colors[0] != 0
+            && border_colors.iter().all(|c| *c == border_colors[0])
+            && self.view.border_styles.iter().all(|s| *s == 0)
+            && self.view.border_widths.left > 0.0
+            && self.view.border_widths.left == self.view.border_widths.top
+            && self.view.border_widths.left == self.view.border_widths.right
+            && self.view.border_widths.left == self.view.border_widths.bottom;
         let mut border_rules = Vec::new();
         for (edge, x, y, length, thickness, horizontal) in edges {
-            let color = self.view.border_colors[edge];
-            if !native_border && color != 0 && thickness > 0.0 {
+            if uniform_border {
+                break;
+            }
+            let color = border_colors[edge];
+            if color != 0 && thickness > 0.0 {
                 border_rules.extend(rule_segments(
                     x,
                     y,
@@ -3953,7 +4750,24 @@ impl Render for RNNodeView {
                 ));
             }
         }
-        if native_border || !border_rules.is_empty() {
+        if uniform_border {
+            // Strips cannot follow a rounded corner; GPUI paints a rounded border itself.
+            let mut ring = div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .border(px(self.view.border_widths.left * scale_x.min(scale_y)))
+                .border_color(style::color(border_colors[0]));
+            let radii = &mut ring.style().corner_radii;
+            let scale = scale_x.min(scale_y);
+            radii.top_left = Some(px(self.view.border_radii.tl * scale).into());
+            radii.top_right = Some(px(self.view.border_radii.tr * scale).into());
+            radii.bottom_right = Some(px(self.view.border_radii.br * scale).into());
+            radii.bottom_left = Some(px(self.view.border_radii.bl * scale).into());
+            element = element.child(ring);
+        }
+        if !border_rules.is_empty() {
             let mut border_clip = div()
                 .absolute()
                 .top_0()
@@ -3969,44 +4783,66 @@ impl Render for RNNodeView {
                 radii.bottom_left =
                     Some(px(self.view.border_radii.bl * scale_x.min(scale_y)).into());
             }
-            if native_border {
-                // Keep the border on a decoration child: adding border widths
-                // to the Fabric node itself would inset its Yoga-laid-out children.
-                let border = border_clip.style();
-                border.border_color = Some(style::color(self.view.border_colors[0]));
-                border.border_widths.left = Some(px(self.view.border_widths.left * scale_x).into());
-                border.border_widths.top = Some(px(self.view.border_widths.top * scale_y).into());
-                border.border_widths.right = Some(px(self.view.border_widths.right * scale_x).into());
-                border.border_widths.bottom = Some(px(self.view.border_widths.bottom * scale_y).into());
-                element = element.child(border_clip);
-            } else {
-                element = element.child(border_clip.children(border_rules));
-            }
+            element = element.child(border_clip.children(border_rules));
         }
+        let (outline_color, outline_width, outline_offset) = resolved.as_ref().map_or(
+            (
+                self.view.outline_color,
+                self.view.outline_width,
+                self.view.outline_offset,
+            ),
+            |state| {
+                state.outline((
+                    self.view.outline_color,
+                    self.view.outline_width,
+                    self.view.outline_offset,
+                ))
+            },
+        );
         let mut outline_rules = Vec::new();
-        if self.view.outline_color != 0 && self.view.outline_width > 0.0 {
-            let outline_width_x = self.view.outline_width * scale_x;
-            let outline_width_y = self.view.outline_width * scale_y;
-            let offset_x = self.view.outline_offset * scale_x;
-            let offset_y = self.view.outline_offset * scale_y;
+        let outline_radii = [
+            self.view.border_radii.tl,
+            self.view.border_radii.tr,
+            self.view.border_radii.br,
+            self.view.border_radii.bl,
+        ];
+        let rounded_outline = self.view.outline_style == 0
+            && outline_color != 0
+            && outline_width > 0.0
+            && outline_radii.iter().any(|radius| *radius > 0.0);
+        if rounded_outline {
+            outline_rules.push(rounded_ring(
+                width,
+                height,
+                outline_offset,
+                outline_width,
+                outline_color,
+                outline_radii,
+                scale_x.min(scale_y),
+            ));
+        } else if outline_color != 0 && outline_width > 0.0 {
+            let outline_width_x = outline_width * scale_x;
+            let outline_width_y = outline_width * scale_y;
+            let offset_x = outline_offset * scale_x;
+            let offset_y = outline_offset * scale_y;
             let x = -offset_x - outline_width_x;
             let y = -offset_y - outline_width_y;
             outline_rules.extend(rule_segments(
                 x,
                 y,
-                width + 2.0 * offset_x,
+                width + 2.0 * (offset_x + outline_width_x),
                 outline_width_y,
                 true,
-                self.view.outline_color,
+                outline_color,
                 self.view.outline_style,
             ));
             outline_rules.extend(rule_segments(
                 x,
                 height + offset_y,
-                width + 2.0 * offset_x,
+                width + 2.0 * (offset_x + outline_width_x),
                 outline_width_y,
                 true,
-                self.view.outline_color,
+                outline_color,
                 self.view.outline_style,
             ));
             outline_rules.extend(rule_segments(
@@ -4015,7 +4851,7 @@ impl Render for RNNodeView {
                 height + 2.0 * offset_y,
                 outline_width_x,
                 false,
-                self.view.outline_color,
+                outline_color,
                 self.view.outline_style,
             ));
             outline_rules.extend(rule_segments(
@@ -4024,57 +4860,149 @@ impl Render for RNNodeView {
                 height + 2.0 * offset_y,
                 outline_width_x,
                 false,
-                self.view.outline_color,
+                outline_color,
                 self.view.outline_style,
             ));
         }
-        if window.last_input_was_keyboard()
+        // A text input shows its caret, and an app that sets an outline draws its
+        // own ring; the keyboard focus ring is for everything else.
+        let app_outline = outline_color != 0 && outline_width > 0.0;
+        if self.component != "TextInput"
+            && !app_outline
             && self
                 .focus_handle
                 .as_ref()
                 .is_some_and(|focus| focus.is_focused(window))
+            && window.last_input_was_keyboard()
         {
             let focus_color = 0xff60a5fa;
             let ring = 2.0;
-            outline_rules.extend(rule_segments(
-                -ring,
-                -ring,
-                width + ring * 2.0,
-                ring,
-                true,
-                focus_color,
-                0,
-            ));
-            outline_rules.extend(rule_segments(
-                -ring,
-                height,
-                width + ring * 2.0,
-                ring,
-                true,
-                focus_color,
-                0,
-            ));
-            outline_rules.extend(rule_segments(
-                -ring,
-                0.0,
-                height,
-                ring,
-                false,
-                focus_color,
-                0,
-            ));
-            outline_rules.extend(rule_segments(
-                width,
-                0.0,
-                height,
-                ring,
-                false,
-                focus_color,
-                0,
-            ));
+            let radii = [
+                self.view.border_radii.tl,
+                self.view.border_radii.tr,
+                self.view.border_radii.br,
+                self.view.border_radii.bl,
+            ];
+            if radii.iter().any(|radius| *radius > 0.0) {
+                outline_rules.push(rounded_ring(
+                    width,
+                    height,
+                    0.0,
+                    ring,
+                    focus_color,
+                    radii,
+                    scale_x.min(scale_y),
+                ));
+            } else {
+                outline_rules.extend(rule_segments(
+                    -ring,
+                    -ring,
+                    width + ring * 2.0,
+                    ring,
+                    true,
+                    focus_color,
+                    0,
+                ));
+                outline_rules.extend(rule_segments(
+                    -ring,
+                    height,
+                    width + ring * 2.0,
+                    ring,
+                    true,
+                    focus_color,
+                    0,
+                ));
+                outline_rules.extend(rule_segments(
+                    -ring,
+                    0.0,
+                    height,
+                    ring,
+                    false,
+                    focus_color,
+                    0,
+                ));
+                outline_rules.extend(rule_segments(
+                    width,
+                    0.0,
+                    height,
+                    ring,
+                    false,
+                    focus_color,
+                    0,
+                ));
+            }
         }
-        element.children(outline_rules).into_any_element()
+        let element = element.children(outline_rules);
+        let element = match text_overlay {
+            Some(((painter, offset, size), clip)) => {
+                crate::text::ParagraphOverlay::new(element, painter, offset, size, clip)
+                    .into_any_element()
+            }
+            None => element.into_any_element(),
+        };
+        let element = match pointer_area {
+            Some(handlers) => PointerArea::new(
+                element,
+                node,
+                handlers,
+                self.view.hit_slop,
+                crate::style::cursor_style(self.view.cursor),
+            )
+            .into_any_element(),
+            None => element.into_any_element(),
+        };
+        let element = match self.gpui_transform((scale_x, scale_y)) {
+            Some(matrix) => crate::transform::Transformed::new(element, matrix).into_any_element(),
+            None => element,
+        };
+        let element = crate::filter::parse(&self.view.filter_json)
+            .into_iter()
+            .fold(element, |element, step| match step {
+                crate::filter::Step::Color(filter) => {
+                    crate::filter::Filtered::new(element, filter).into_any_element()
+                }
+                step => crate::filter::Grouped::with_step(element, step).into_any_element(),
+            });
+        if group_opacity.is_some() || blend != gpui::BlendMode::Normal || isolated {
+            crate::filter::Grouped::blended(element, group_opacity.unwrap_or(1.0), blend, isolated)
+                .into_any_element()
+        } else {
+            element
+        }
     }
+}
+
+fn rounded_ring(
+    width: f32,
+    height: f32,
+    offset: f32,
+    ring: f32,
+    argb: u32,
+    radii: [f32; 4],
+    scale: f32,
+) -> gpui::Div {
+    let reach = (offset + ring) * scale;
+    let mut element = div()
+        .absolute()
+        .left(px(-reach))
+        .top(px(-reach))
+        .w(px(width + 2.0 * reach))
+        .h(px(height + 2.0 * reach))
+        .border(px(ring * scale))
+        .border_color(style::color(argb));
+    let corners = &mut element.style().corner_radii;
+    let outer = |radius: f32| {
+        if radius > 0.0 {
+            px(((radius + offset).max(0.0) + ring) * scale).into()
+        } else {
+            px(0.0).into()
+        }
+    };
+    corners.top_left = Some(outer(radii[0]));
+    corners.top_right = Some(outer(radii[1]));
+    corners.bottom_right = Some(outer(radii[2]));
+    corners.bottom_left = Some(outer(radii[3]));
+    element
 }
 
 fn rule_segments(
@@ -4135,6 +5063,7 @@ mod host_component_node_tests {
         declare_host_component, register_component, EmitterHandle, HostArg, HostComponentOptions,
         HostComponentSpec, HostContext, HostObject, PropsHandle, TEST_HANDLE,
     };
+    use gpui::AppContext as _;
     use rn_gpui_sys::ffi::{MountKind, ParagraphFlat};
     use std::cell::RefCell;
 
@@ -4209,8 +5138,6 @@ mod host_component_node_tests {
             parent_tag: -1,
             index: 0,
             component: "NodeTestFake".into(),
-            native_view_name: String::new(),
-            native_view_props: "{}".into(),
             frame: RectF {
                 x: 0.0,
                 y: 0.0,
@@ -4218,7 +5145,7 @@ mod host_component_node_tests {
                 h: 10.0,
             },
             props_changed: true,
-            view: ViewPropsFlat::default(),
+            view: rn_gpui_sys::ffi::ViewPropsFlat::default(),
             extension_props_json: String::new(),
             host_index: index,
             host_props_handle: 0,
@@ -4228,6 +5155,7 @@ mod host_component_node_tests {
             has_paragraph: false,
             paragraph: ParagraphFlat::default(),
             layout_changed: false,
+            layout_patch: 0,
         }
     }
 
@@ -4243,7 +5171,7 @@ mod host_component_node_tests {
         create.host_props_handle = TEST_HANDLE;
         create.host_emitter_handle = TEST_HANDLE;
         let reports = queue();
-        let node = RNNodeView::from_op(&create, 1, reports.clone());
+        let node = RNNodeView::from_op(&create, 1, reports.clone(), None);
         assert!(node.host_component.is_some());
         assert!(
             node.host_container,
@@ -4256,7 +5184,7 @@ mod host_component_node_tests {
     #[test]
     fn an_op_without_a_host_index_never_touches_the_registry() {
         declare();
-        let node = RNNodeView::from_op(&op(MountKind::Create, -1), 1, queue());
+        let node = RNNodeView::from_op(&op(MountKind::Create, -1), 1, queue(), None);
         assert!(node.host_component.is_none());
         assert!(!node.host_container);
     }
@@ -4267,7 +5195,7 @@ mod host_component_node_tests {
         let mut create = op(MountKind::Create, UNREGISTERED as i32);
         create.host_props_handle = TEST_HANDLE;
         create.host_emitter_handle = TEST_HANDLE;
-        let node = RNNodeView::from_op(&create, 1, queue());
+        let node = RNNodeView::from_op(&create, 1, queue(), None);
         assert!(node.host_component.is_none());
     }
 
@@ -4278,20 +5206,171 @@ mod host_component_node_tests {
         let mut create = op(MountKind::Create, REGISTERED as i32);
         create.host_props_handle = TEST_HANDLE;
         create.host_emitter_handle = TEST_HANDLE;
-        let mut node = RNNodeView::from_op(&create, 1, queue());
+        let mut node = RNNodeView::from_op(&create, 1, queue(), None);
 
-        node.update_from_op(&op(MountKind::Update, REGISTERED as i32));
+        node.update_from_op(&op(MountKind::Update, REGISTERED as i32), None);
         assert_eq!(log(), vec!["create".to_string()]);
 
         let mut update = op(MountKind::Update, REGISTERED as i32);
         update.host_props_handle = TEST_HANDLE;
         update.host_changed = 0b101;
         update.host_changed_more = vec![0b1];
-        node.update_from_op(&update);
+        node.update_from_op(&update, None);
         assert_eq!(
             log(),
             vec!["create".to_string(), "update [5, 1]".to_string()]
         );
+    }
+
+    struct AppProbe {
+        counter: Option<gpui::Entity<u32>>,
+    }
+
+    impl HostObject for AppProbe {
+        fn update(&mut self, _props: PropsHandle, _changed: &[u64], mut cx: HostContext) {
+            LOG.with(|log| {
+                log.borrow_mut()
+                    .push(format!("update app {}", cx.app().is_some()))
+            });
+        }
+
+        fn render(&mut self, _window: &mut Window, _cx: HostContext) -> AnyElement {
+            gpui::IntoElement::into_any_element(gpui::div())
+        }
+
+        fn render_overlay(&mut self, _window: &mut Window, _cx: HostContext) -> Option<AnyElement> {
+            None
+        }
+
+        fn command(&mut self, _index: u32, _args: &[HostArg], mut cx: HostContext) {
+            if cx.app().is_none() {
+                LOG.with(|log| log.borrow_mut().push("command without app".to_string()));
+                return;
+            }
+            let counter = self.counter.clone().expect("created with an app");
+            let with_window = cx.window().is_some();
+            let Some(app) = cx.app() else {
+                return;
+            };
+            LOG.with(|log| {
+                log.borrow_mut()
+                    .push(format!("command window {with_window}"))
+            });
+            counter.update(app, |value, _| *value += 1);
+            let value = *counter.read(app);
+            LOG.with(|log| log.borrow_mut().push(format!("counter {value}")));
+        }
+    }
+
+    struct AppProbeSpec;
+
+    impl HostComponentSpec for AppProbeSpec {
+        const NAME: &'static str = "NodeTestAppProbe";
+
+        fn create(
+            _props: PropsHandle,
+            _emitter: EmitterHandle,
+            mut cx: HostContext,
+        ) -> Box<dyn HostObject> {
+            let counter = cx.app().map(|app| app.new(|_| 41u32));
+            let window = cx.with_window(|_, _| ()).is_some();
+            LOG.with(|log| {
+                log.borrow_mut()
+                    .push(format!("create app {} window {window}", counter.is_some()))
+            });
+            Box::new(AppProbe { counter })
+        }
+    }
+
+    const APP_PROBE: u32 = 962;
+
+    #[gpui::test]
+    fn a_component_gets_the_app_to_create_an_entity_and_use_it_later(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        declare_host_component(
+            APP_PROBE,
+            AppProbeSpec::NAME,
+            HostComponentOptions::default(),
+        );
+        register_component(AppProbeSpec);
+        LOG.with(|log| log.borrow_mut().clear());
+        let mut create = op(MountKind::Create, APP_PROBE as i32);
+        create.host_props_handle = TEST_HANDLE;
+        create.host_emitter_handle = TEST_HANDLE;
+        let node = cx.update(|app| {
+            let mut node = RNNodeView::from_op(&create, 1, queue(), Some(app));
+            let mut update = op(MountKind::Update, APP_PROBE as i32);
+            update.host_props_handle = TEST_HANDLE;
+            update.host_changed = 1;
+            node.update_from_op(&update, Some(app));
+            node.dispatch_host_command(0, &[], None, app);
+            node.dispatch_host_command(0, &[], None, app);
+            node
+        });
+        assert_eq!(
+            log(),
+            vec![
+                "create app true window false".to_string(),
+                "update app true".to_string(),
+                "command window false".to_string(),
+                "counter 42".to_string(),
+                "command window false".to_string(),
+                "counter 43".to_string(),
+            ]
+        );
+        drop(node);
+    }
+
+    #[gpui::test]
+    fn a_component_reaches_the_window_of_its_surface_and_the_window_of_a_command(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        declare_host_component(
+            APP_PROBE,
+            AppProbeSpec::NAME,
+            HostComponentOptions::default(),
+        );
+        register_component(AppProbeSpec);
+        let window = cx.add_window(|_, _| gpui::Empty);
+        crate::store::note_surface_window(1, Some(window.into()));
+        LOG.with(|log| log.borrow_mut().clear());
+        let mut create = op(MountKind::Create, APP_PROBE as i32);
+        create.host_props_handle = TEST_HANDLE;
+        create.host_emitter_handle = TEST_HANDLE;
+        let mut node = cx.update(|app| RNNodeView::from_op(&create, 1, queue(), Some(app)));
+        cx.update(|app| {
+            window
+                .update(app, |_, window, app| {
+                    node.dispatch_host_command(0, &[], Some(window), app);
+                })
+                .unwrap();
+        });
+        crate::store::note_surface_window(1, None);
+        assert_eq!(
+            log(),
+            vec![
+                "create app true window true".to_string(),
+                "command window true".to_string(),
+                "counter 42".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn without_an_app_the_component_gets_none() {
+        declare_host_component(
+            APP_PROBE,
+            AppProbeSpec::NAME,
+            HostComponentOptions::default(),
+        );
+        register_component(AppProbeSpec);
+        LOG.with(|log| log.borrow_mut().clear());
+        let mut create = op(MountKind::Create, APP_PROBE as i32);
+        create.host_props_handle = TEST_HANDLE;
+        create.host_emitter_handle = TEST_HANDLE;
+        let _node = RNNodeView::from_op(&create, 1, queue(), None);
+        assert_eq!(log(), vec!["create app false window false".to_string()]);
     }
 }
 
@@ -4326,7 +5405,546 @@ mod border_segment_tests {
 
 const SCROLL_STATE_SYNC_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
 
+fn scroll_payload(
+    offset: Point<f32>,
+    content: (f32, f32),
+    viewport: (f32, f32),
+) -> serde_json::Value {
+    serde_json::json!({
+        "contentOffset": {"x": offset.x, "y": offset.y},
+        "contentSize": {"width": content.0, "height": content.1},
+        "layoutMeasurement": {"width": viewport.0, "height": viewport.1},
+        "zoomScale": 1
+    })
+}
+
+/// How long an offset rests before `onScroll` hears it once more.
+const SCROLL_REST_REPORT_DELAY: Duration = Duration::from_millis(150);
+
+/// Sends the offset in `position` once more when nothing has moved it, as
+/// `generation` counts, for [`SCROLL_REST_REPORT_DELAY`]. A wheel or a
+/// scrollbar stops without the momentum events a fling ends with, so an offset
+/// a list ignored while it adjusted for items above it changing size would
+/// otherwise stay its last.
+fn report_rest(
+    cx: &App,
+    generation: Rc<Cell<u64>>,
+    position: Rc<Cell<Point<f32>>>,
+    send: impl FnOnce(Point<f32>) + 'static,
+) {
+    let expected = generation.get();
+    let executor = cx.background_executor().clone();
+    cx.foreground_executor()
+        .spawn(async move {
+            executor.timer(SCROLL_REST_REPORT_DELAY).await;
+            if generation.get() == expected {
+                send(position.get());
+            }
+        })
+        .detach();
+}
+
 impl RNNodeView {
+    /// The listeners this node's pointer area registers. Only a component's
+    /// input changes them from one render to the next, so for a node without a
+    /// component renderer they are built once and kept until what they depend
+    /// on changes.
+    fn pointer_handlers(
+        &mut self,
+        control_area: Option<gpui::WindowControlArea>,
+        os_owns_press: bool,
+        cx: &mut Context<Self>,
+    ) -> Rc<PointerHandlers> {
+        let cacheable = crate::extensions::component_renderer(&self.component).is_none();
+        let key = PointerHandlersKey {
+            role: self.window_control_role(),
+            inherited_area: self.inherited.window_control_area,
+            pointer_events: self.view.pointer_events,
+            drags: control_area == Some(gpui::WindowControlArea::Drag),
+            os_owns_press,
+        };
+        if let Some((cached, handlers)) = &self.pointer_handlers {
+            if cacheable && *cached == key {
+                return handlers.clone();
+            }
+        }
+        if cacheable {
+            let shared = SHARED_POINTER_HANDLERS.with_borrow(|shared| {
+                shared
+                    .iter()
+                    .find(|(shared_key, _)| *shared_key == key)
+                    .map(|(_, handlers)| handlers.clone())
+            });
+            if let Some(handlers) = shared {
+                self.pointer_handlers = Some((key, handlers.clone()));
+                return handlers;
+            }
+        }
+        let mut handlers = PointerHandlers::default();
+        // A component renderer that asked for input gets it through the same
+        // handlers the View props use, so ordering with RN's touch handling and
+        // the scroll-container case stays as it was.
+        let input_spec = crate::extensions::component_renderer(&self.component).map(|renderer| {
+            let node = self.renderer_node(&*renderer, cx);
+            let spec = renderer.input(&node);
+            (spec, node)
+        });
+        // A component that owns the press has its left-button hooks run before the
+        // ones that start a React Native touch, which would otherwise stop the
+        // press first: GPUI runs listeners in reverse order of registration.
+        let claims_press = input_spec.is_some()
+            && crate::extensions::component_renderer(&self.component)
+                .is_some_and(|renderer| renderer.claims_press(&self.component_node_shallow()));
+        let mut late_left_down: Vec<crate::pointer_area::PointerHandler<MouseDownEvent>> =
+            Vec::new();
+        let mut late_left_up: Vec<crate::pointer_area::PointerHandler<MouseUpEvent>> = Vec::new();
+        if let Some((spec, node)) = input_spec {
+            for button in [
+                crate::events::Button::Left,
+                crate::events::Button::Middle,
+                crate::events::Button::Right,
+                crate::events::Button::Back,
+                crate::events::Button::Forward,
+            ] {
+                if !spec.mouse_buttons.contains(button) {
+                    continue;
+                }
+                let down_node = cx.entity().downgrade();
+                let down_component = node.clone();
+                let handler: crate::pointer_area::PointerHandler<MouseDownEvent> =
+                    Rc::new(move |_: &Node, event: &MouseDownEvent, window, cx| {
+                        run_component_hook(
+                            &down_node,
+                            &down_component,
+                            window,
+                            cx,
+                            event.position,
+                            button,
+                            event.click_count,
+                            event.modifiers,
+                            ComponentHook::Down,
+                        );
+                    });
+                match button {
+                    crate::events::Button::Left if claims_press => late_left_down.push(handler),
+                    crate::events::Button::Left => handlers.left_down.push(handler),
+                    crate::events::Button::Middle => handlers.middle_down.push(handler),
+                    crate::events::Button::Right => handlers.right_down.push(handler),
+                    crate::events::Button::Back => handlers.back_down.push(handler),
+                    crate::events::Button::Forward => handlers.forward_down.push(handler),
+                }
+                let up_node = cx.entity().downgrade();
+                let up_component = node.clone();
+                let handler: crate::pointer_area::PointerHandler<MouseUpEvent> =
+                    Rc::new(move |_: &Node, event: &MouseUpEvent, window, cx| {
+                        run_component_hook(
+                            &up_node,
+                            &up_component,
+                            window,
+                            cx,
+                            event.position,
+                            button,
+                            event.click_count,
+                            event.modifiers,
+                            ComponentHook::Up,
+                        );
+                    });
+                match button {
+                    crate::events::Button::Left if claims_press => late_left_up.push(handler),
+                    crate::events::Button::Left => handlers.left_up.push(handler),
+                    crate::events::Button::Middle => handlers.middle_up.push(handler),
+                    crate::events::Button::Right => handlers.right_up.push(handler),
+                    crate::events::Button::Back => handlers.back_up.push(handler),
+                    crate::events::Button::Forward => handlers.forward_up.push(handler),
+                }
+            }
+            if spec.hover {
+                // The edge is decided here, on the entity, because the listener
+                // that reports the sample is rebuilt on every paint.
+                let hover_node = cx.entity().downgrade();
+                let hover_component = node;
+                handlers
+                    .hover
+                    .push(Rc::new(move |_: &Node, hovered: bool, window, cx| {
+                        let Some(entity) = hover_node.upgrade() else {
+                            return;
+                        };
+                        let component = entity.read(cx).component.clone();
+                        let Some(renderer) = crate::extensions::component_renderer(&component)
+                        else {
+                            return;
+                        };
+                        let changed = entity.update(cx, |this, _| {
+                            if this.hovered == hovered {
+                                return false;
+                            }
+                            this.hovered = hovered;
+                            true
+                        });
+                        if !changed {
+                            return;
+                        }
+                        let mut context = crate::extensions::input::InputContext {
+                            node: &hover_component,
+                            window,
+                            cx,
+                            captured: false,
+                        };
+                        renderer.on_hover(&hover_component, hovered, &mut context);
+                    }));
+            }
+        }
+        // `none` and `box-none` never take a press for themselves: the press falls
+        // through to what is behind them, or to the nearest ancestor that takes it,
+        // and a child of a `box-none` view still takes its own.
+        // The glyph inside a caption button is part of the button: the press has
+        // to reach the button's own hook, so it must not start a touch and stop
+        // there. Windows hands these presses to the OS instead.
+        let inside_caption_button = !cfg!(target_os = "windows")
+            && matches!(self.window_control_role(), WindowControlRole::Passive)
+            && matches!(
+                self.inherited.window_control_area,
+                Some(
+                    gpui::WindowControlArea::Min
+                        | gpui::WindowControlArea::Max
+                        | gpui::WindowControlArea::Close
+                )
+            );
+        if !inside_caption_button
+            && !matches!(
+                self.view.pointer_events,
+                crate::events::POINTER_EVENTS_NONE | crate::events::POINTER_EVENTS_BOX_NONE
+            )
+        {
+            handlers.left_down.push(Rc::new(
+                move |down_node: &Node, event: &MouseDownEvent, window, cx| {
+                    // Ctrl + click is the macOS equivalent of a right click. It is a
+                    // left press, so it must not also start a touch, or a `Pressable`
+                    // would fire; the check happens before any touch dispatch.
+                    if ctrl_click_context_menu(down_node, event, os_owns_press, window, cx) {
+                        return;
+                    }
+                    // No touch either: the release never comes back once the OS
+                    // has taken the press into its move loop. The ancestors this
+                    // press bubbles to are told, so none of them starts one.
+                    if os_owns_press {
+                        crate::events::hand_press_to_window();
+                        return;
+                    }
+                    if crate::events::press_belongs_to_window() || crate::events::press_claimed() {
+                        return;
+                    }
+                    let Some(node) = down_node.upgrade() else {
+                        return;
+                    };
+                    if node.read(cx).shares_pointer_with_native(cx) {
+                        crate::events::mark_native_press();
+                    }
+                    let (target, is_text_input, selectable_text) = {
+                        let this = node.read(cx);
+                        (
+                            crate::events::target(cx, this),
+                            this.component == "TextInput",
+                            crate::builtins::text_select::is_selectable(this),
+                        )
+                    };
+                    if selectable_text {
+                        node.update(cx, |this, cx| {
+                            crate::builtins::text_select::begin(
+                                this,
+                                event.position,
+                                event.click_count,
+                                cx,
+                            );
+                        });
+                    } else {
+                        crate::builtins::text_select::clear_active(cx);
+                    }
+                    let Some(target) = target else {
+                        return;
+                    };
+                    if let Some(handle) = RNNodeView::press_focus_handle(&node, window, cx) {
+                        window.focus(&handle, cx);
+                    }
+                    if is_text_input {
+                        node.update(cx, |this, cx| {
+                            if event.click_count >= 2 {
+                                crate::builtins::textinput::input::select_all(this, window, cx);
+                            } else {
+                                crate::builtins::textinput::input::select_at_point(
+                                    this,
+                                    event.position,
+                                    false,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        });
+                    }
+                    crate::events::send(
+                        window,
+                        cx,
+                        &target,
+                        event.position,
+                        crate::events::Phase::Start,
+                        Some(crate::events::Button::Left),
+                        modifier_state(event.modifiers),
+                    );
+                    crate::drag_drop::press(cx, &target, event.position);
+                    if node.read(cx).shares_pointer_with_native(cx) {
+                        crate::events::claim_press();
+                    } else if !crate::events::native_press() {
+                        cx.stop_propagation();
+                    }
+                },
+            ));
+            // Every other button reports the DOM pointer events only, with no
+            // touch or responder involvement, so `Pressable` never fires for a
+            // middle or right click. The right button is only wired here when the
+            // view has no `onContextMenu`, since that handler owns the press
+            // otherwise and stopping there would hide the pointer event too.
+            handlers.middle_down.push(Rc::new(
+                move |middle_node: &Node, event: &MouseDownEvent, window, cx| {
+                    dispatch_pointer_button(
+                        &middle_node,
+                        event,
+                        crate::events::Button::Middle,
+                        window,
+                        cx,
+                    );
+                },
+            ));
+            handlers.middle_up.push(Rc::new(
+                move |middle_up_node: &Node, event: &MouseUpEvent, window, cx| {
+                    dispatch_pointer_release(
+                        &middle_up_node,
+                        event,
+                        crate::events::Button::Middle,
+                        window,
+                        cx,
+                    );
+                },
+            ));
+            handlers.right_up.push(Rc::new(
+                move |right_up_node: &Node, event: &MouseUpEvent, window, cx| {
+                    dispatch_pointer_release(
+                        &right_up_node,
+                        event,
+                        crate::events::Button::Right,
+                        window,
+                        cx,
+                    );
+                },
+            ));
+            // Every node that takes pointer input handles the right button, whether
+            // or not it owns a context menu. One press must do both jobs: report
+            // `topPointerDown` for the innermost node, and open the nearest
+            // ancestor's menu. Splitting them across two nodes is what broke a
+            // right click on a `Text` inside a view with `onContextMenu` — the
+            // text's listener stopped the press before the parent's ran.
+            handlers.right_down.push(Rc::new(
+                move |right_node: &Node, event: &MouseDownEvent, window, cx| {
+                    dispatch_right_press(&right_node, event, window, cx);
+                },
+            ));
+            // Not `cx.listener`: a listener updates its entity every time it runs, and
+            // gpui-fast rebuilds any view that read an updated entity.
+            handlers.mouse_move.push(Rc::new(
+                move |move_node: &Node, event: &MouseMoveEvent, window, cx| {
+                    let Some(node) = move_node.upgrade() else {
+                        return;
+                    };
+                    let (hit_target, selecting, selecting_text) = {
+                        let this = node.read(cx);
+                        (
+                            crate::events::target(cx, this),
+                            this.component == "TextInput"
+                                && this.input().selection_anchor.is_some(),
+                            this.text_selection_anchor.is_some(),
+                        )
+                    };
+                    if crate::drag_drop::tracking() {
+                        crate::drag_drop::moved(
+                            window,
+                            cx,
+                            hit_target.as_ref(),
+                            event.position,
+                            event.pressed_button.is_some(),
+                        );
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if crate::file_drop::active() {
+                        crate::file_drop::over(window, cx, hit_target.as_ref(), event.position);
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if event.pressed_button.is_some() {
+                        if selecting_text {
+                            node.update(cx, |this, cx| {
+                                crate::builtins::text_select::extend(this, event.position, cx);
+                            });
+                        }
+                        if selecting {
+                            node.update(cx, |this, cx| {
+                                crate::builtins::textinput::input::select_at_point(
+                                    this,
+                                    event.position,
+                                    true,
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }
+                        // RN keeps the touch target fixed from mouse-down to
+                        // release, including when the pointer leaves the view.
+                        crate::events::move_pressed(
+                            window,
+                            cx,
+                            hit_target.as_ref(),
+                            event.position,
+                            modifier_state(event.modifiers),
+                        );
+                    } else {
+                        crate::events::hover(window, cx, hit_target.as_ref(), event.position);
+                        crate::events::move_hovered(
+                            window,
+                            cx,
+                            hit_target.as_ref(),
+                            event.position,
+                            modifier_state(event.modifiers),
+                        );
+                    }
+                    let active_target = crate::events::active_touch_target(cx);
+                    // A press that began over native content keeps its moves
+                    // reaching the native elements (a text selection drag).
+                    let native_press = crate::events::native_press()
+                        || active_target.as_ref().is_some_and(|target| {
+                            crate::store::store_from(cx)
+                                .and_then(|store| store.read(cx).nodes.get(&target.tag).cloned())
+                                .is_some_and(|node| node.read(cx).shares_pointer_with_native(cx))
+                        });
+                    if (hit_target.is_some() || active_target.is_some())
+                        && !(native_press && event.pressed_button.is_some())
+                    {
+                        cx.stop_propagation();
+                    }
+                },
+            ));
+            handlers.left_up.push(Rc::new(
+                move |node: &Node, event: &MouseUpEvent, window, cx| {
+                    // The release of a caption button is what the OS acts on.
+                    if os_owns_press {
+                        crate::events::hand_press_to_window();
+                        return;
+                    }
+                    if crate::events::press_belongs_to_window() || crate::events::press_claimed() {
+                        return;
+                    }
+                    let Some(node) = node.upgrade() else {
+                        return;
+                    };
+                    if crate::drag_drop::tracking() {
+                        let target = crate::events::target(cx, node.read(cx));
+                        if crate::drag_drop::released(window, cx, target.as_ref(), event.position) {
+                            return;
+                        }
+                    }
+                    if crate::file_drop::active() {
+                        let target = crate::events::target(cx, node.read(cx));
+                        crate::file_drop::landing(target, event.position);
+                        return;
+                    }
+                    let active_target = crate::events::active_touch_target(cx);
+                    if let Some(target) = active_target.as_ref() {
+                        crate::events::send(
+                            window,
+                            cx,
+                            target,
+                            event.position,
+                            crate::events::Phase::End,
+                            Some(crate::events::Button::Left),
+                            modifier_state(event.modifiers),
+                        );
+                    }
+                    let is_touch_target = {
+                        let this = node.read(cx);
+                        crate::events::target(cx, this).is_some()
+                    };
+                    if active_target.is_some() || is_touch_target {
+                        if node.read(cx).in_host_container(cx) {
+                            crate::events::claim_press();
+                        } else if !crate::events::native_press() {
+                            cx.stop_propagation();
+                        }
+                    }
+                },
+            ));
+        }
+        // Registered after every other press handler, which GPUI runs in reverse
+        // order: this one has to see the press before a touch or a context menu
+        // consumes it.
+        // Anywhere in a drag area — the region itself, or a node inside it that
+        // does not take the press — moves the window, and a double click zooms.
+        // macOS and Linux do not consult the hit-test, so the move starts here.
+        // Windows moves the window itself from the `HTCAPTION` press.
+        if control_area == Some(gpui::WindowControlArea::Drag) && !os_owns_press {
+            handlers.left_down.push(Rc::new(
+                move |_: &Node, event: &MouseDownEvent, window, cx| {
+                    if event.click_count >= 2 {
+                        window.titlebar_double_click();
+                    } else {
+                        window.start_window_move();
+                    }
+                    cx.stop_propagation();
+                },
+            ));
+        }
+        handlers.left_down.extend(late_left_down);
+        handlers.left_up.extend(late_left_up);
+        // A child of a scrolling container moves with its content, so a pointer area
+        // here would drift off the viewport. A node that claims a window-control
+        // area has the same problem for a different reason: the platform asks
+        // which element is under the pointer, and an overlay child sits in front
+        // of its own parent, so the area would never be consulted and the window
+        // could not be dragged by the node that asked to be draggable.
+        if os_owns_press {
+            // What is left is a component's own hook — a caption button reporting
+            // its pressed state — which may stop propagation; the press still has
+            // to reach the OS, which performs the button's action.
+            handlers.left_down = handlers
+                .left_down
+                .into_iter()
+                .map(
+                    |handler| -> crate::pointer_area::PointerHandler<MouseDownEvent> {
+                        Rc::new(move |node: &Node, event: &MouseDownEvent, window, cx| {
+                            handler(node, event, window, cx);
+                            cx.propagate();
+                        })
+                    },
+                )
+                .collect();
+            handlers.left_up = handlers
+                .left_up
+                .into_iter()
+                .map(
+                    |handler| -> crate::pointer_area::PointerHandler<MouseUpEvent> {
+                        Rc::new(move |node: &Node, event: &MouseUpEvent, window, cx| {
+                            handler(node, event, window, cx);
+                            cx.propagate();
+                        })
+                    },
+                )
+                .collect();
+        }
+        let handlers = Rc::new(handlers);
+        if cacheable {
+            SHARED_POINTER_HANDLERS.with_borrow_mut(|shared| shared.push((key, handlers.clone())));
+            self.pointer_handlers = Some((key, handlers.clone()));
+        }
+        handlers
+    }
+
     /// The intrinsic size Fabric last reported, if the component measures.
     pub fn intrinsic_size(&self) -> Option<(f32, f32)> {
         self.intrinsic_size
@@ -4345,6 +5963,7 @@ impl RNNodeView {
 
     fn host_context(&self) -> crate::host_component::HostContext {
         crate::host_component::HostContext::queued(self.tag, self.host_reports.clone())
+            .on_surface(self.surface_id)
     }
 
     /// The same, with the store handle a command can act through.
@@ -4357,10 +5976,265 @@ impl RNNodeView {
             self.host_reports.clone(),
             handle,
         )
+        .on_surface(self.surface_id)
     }
 
     pub fn scroll_offset(&self) -> Point<f32> {
-        self.scroll_position.get()
+        self.scroll_parts
+            .as_ref()
+            .map_or_else(Point::default, |parts| parts.position.get())
+    }
+
+    /// `maintainVisibleContentPosition`: the first index kept in place, and the
+    /// distance from the start within which new items scroll into view.
+    pub(crate) fn maintain_visible(&self) -> Option<(usize, Option<f32>)> {
+        self.scroll.as_ref()?;
+        let min = self.extension_props.get("maintainMinIndex")?.as_i64()?;
+        let threshold = self
+            .extension_props
+            .get("maintainAutoscrollThreshold")
+            .and_then(serde_json::Value::as_f64)
+            .map(|value| value as f32);
+        Some((min.max(0) as usize, threshold))
+    }
+
+    /// The tag of the first item at or after `min_index` that reaches into the
+    /// viewport, with its start along the scroll axis.
+    pub(crate) fn visible_anchor(&self, min_index: usize, cx: &App) -> Option<(i32, f32)> {
+        let horizontal = self.scroll.as_ref()?.horizontal;
+        let offset = self.scroll_offset();
+        let start = if horizontal { offset.x } else { offset.y };
+        let (_, content) = self.children.first()?;
+        let content = content.read(cx);
+        content
+            .children
+            .iter()
+            .skip(min_index)
+            .find_map(|(tag, child)| {
+                let frame = child.read(cx).frame;
+                let (from, length) = if horizontal {
+                    (frame.x, frame.w)
+                } else {
+                    (frame.y, frame.h)
+                };
+                (from + length > start).then_some((*tag, from))
+            })
+    }
+
+    /// The start along the scroll axis of one of this node's items.
+    pub(crate) fn item_start(&self, tag: i32, cx: &App) -> Option<f32> {
+        let horizontal = self.scroll.as_ref()?.horizontal;
+        let (_, content) = self.children.first()?;
+        let content = content.read(cx);
+        let (_, child) = content.children.iter().find(|(child, _)| *child == tag)?;
+        let frame = child.read(cx).frame;
+        Some(if horizontal { frame.x } else { frame.y })
+    }
+
+    /// Moves the offset by what an item above the viewport's start moved.
+    pub(crate) fn keep_anchor(
+        &mut self,
+        anchor: i32,
+        before: f32,
+        threshold: Option<f32>,
+        host: &crate::host::Host,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(after) = self.item_start(anchor, cx) else {
+            return;
+        };
+        let delta = after - before;
+        if delta.abs() < 0.5 {
+            return;
+        }
+        let horizontal = self.scroll.as_ref().is_some_and(|scroll| scroll.horizontal);
+        let current = self.scroll_offset();
+        let along = if horizontal { current.x } else { current.y };
+        let max = self.max_scroll();
+        let max = if horizontal { max.0 } else { max.1 };
+        let next = if delta > 0.0 && threshold.is_some_and(|limit| along <= limit) {
+            0.0
+        } else {
+            (along + delta).clamp(0.0, max)
+        };
+        let target = if horizontal {
+            point(next, current.y)
+        } else {
+            point(current.x, next)
+        };
+        self.set_scroll_offset(target, host, cx);
+    }
+
+    /// The largest offset the scroll content allows.
+    fn max_scroll(&self) -> (f32, f32) {
+        let content = self.scroll.as_ref().map_or((0.0, 0.0), |s| s.content_size);
+        (
+            (content.0 - self.frame.w).max(0.0),
+            (content.1 - self.frame.h).max(0.0),
+        )
+    }
+
+    /// Whether this scroll view's thumb is shown right now, for the test driver.
+    pub(crate) fn scroll_indicator_shown(&self, cx: &App) -> bool {
+        self.scroll_parts
+            .as_ref()
+            .and_then(|parts| parts.indicator.as_ref())
+            .is_some_and(|indicator| indicator.read(cx).shown())
+    }
+
+    /// Runs `scrollTo`, `scrollToEnd` and `flashScrollIndicators`.
+    pub(crate) fn scroll_command(
+        &mut self,
+        name: &str,
+        args: &serde_json::Value,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(scroll) = self.scroll.as_ref() else {
+            return false;
+        };
+        let number = |index: usize| args.get(index).and_then(serde_json::Value::as_f64);
+        let flag = |index: usize| {
+            args.get(index)
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(true)
+        };
+        let current = self.scroll_offset();
+        let max = self.max_scroll();
+        let (target, animated) = match name {
+            "scrollTo" => (
+                point(
+                    number(0).map_or(current.x, |x| x as f32),
+                    number(1).map_or(current.y, |y| y as f32),
+                ),
+                flag(2),
+            ),
+            "scrollToEnd" => (
+                if scroll.horizontal {
+                    point(max.0, current.y)
+                } else {
+                    point(current.x, max.1)
+                },
+                flag(0),
+            ),
+            "flashScrollIndicators" => {
+                if let Some(indicator) = self.parts_mut().indicator.clone() {
+                    indicator.update(cx, |indicator, cx| indicator.flash(cx));
+                }
+                return true;
+            }
+            _ => return false,
+        };
+        let target = point(target.x.clamp(0.0, max.0), target.y.clamp(0.0, max.1));
+        let Some(host) = crate::store::store_from(cx).map(|store| store.read(cx).host.clone())
+        else {
+            return false;
+        };
+        self.scroll_to(target, animated, host, cx);
+        true
+    }
+
+    /// Moves the scroll offset the way `scrollTo` does: reported through
+    /// `onScroll`, and handed to Fabric once it settles.
+    pub(crate) fn scroll_to(
+        &mut self,
+        target: Point<f32>,
+        animated: bool,
+        host: crate::host::Host,
+        cx: &mut Context<Self>,
+    ) {
+        const STEPS: u32 = 10;
+        let generation = {
+            let mut gesture = self.parts_mut().gesture.borrow_mut();
+            gesture.generation += 1;
+            gesture.generation
+        };
+        let from = self.parts_mut().position.get();
+        if !animated || (from.x - target.x).abs() + (from.y - target.y).abs() < 0.5 {
+            self.parts_mut().programmatic.set(true);
+            self.set_scroll_offset(target, &host, cx);
+            return;
+        }
+        let programmatic = self.parts_mut().programmatic.clone();
+        let gesture = self.parts_mut().gesture.clone();
+        cx.spawn(async move |this, cx| {
+            for step in 1..=STEPS {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(15))
+                    .await;
+                if gesture.borrow().generation != generation {
+                    return;
+                }
+                let t = step as f32 / STEPS as f32;
+                let eased = 1.0 - (1.0 - t) * (1.0 - t);
+                let next = point(
+                    from.x + (target.x - from.x) * eased,
+                    from.y + (target.y - from.y) * eased,
+                );
+                programmatic.set(true);
+                if this
+                    .update(cx, |node, cx| node.set_scroll_offset(next, &host, cx))
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn set_scroll_offset(
+        &mut self,
+        offset: Point<f32>,
+        host: &crate::host::Host,
+        cx: &mut Context<Self>,
+    ) {
+        self.parts_mut().position.set(offset);
+        self.parts_mut().handle_stale = true;
+        cx.notify();
+        let host = host.clone();
+        let content = self.scroll.as_ref().map_or((0.0, 0.0), |s| s.content_size);
+        if let Some(event) = self.scroll.as_ref().and_then(|s| s.event.as_ref()) {
+            host.dispatch_event(
+                self.tag,
+                event,
+                &serde_json::json!({
+                    "contentOffset": {"x": offset.x, "y": offset.y},
+                    "contentSize": {"width": content.0, "height": content.1},
+                    "layoutMeasurement": {"width": self.frame.w, "height": self.frame.h},
+                    "zoomScale": 1
+                }),
+            );
+        }
+        let generation = self.parts_mut().sync_generation.get() + 1;
+        self.parts_mut().sync_generation.set(generation);
+        self.parts_mut().sync_pending.set(true);
+        if let Some(event) = self.scroll.as_ref().and_then(|s| s.event.clone()) {
+            let (host, tag, viewport) = (host.clone(), self.tag, (self.frame.w, self.frame.h));
+            report_rest(
+                cx,
+                self.parts_mut().sync_generation.clone(),
+                self.parts_mut().position.clone(),
+                move |offset| {
+                    host.dispatch_event(tag, &event, &scroll_payload(offset, content, viewport))
+                },
+            );
+        }
+        let (tag, position, sync_generation, pending) = (
+            self.tag,
+            self.parts_mut().position.clone(),
+            self.parts_mut().sync_generation.clone(),
+            self.parts_mut().sync_pending.clone(),
+        );
+        cx.spawn(async move |_, cx| {
+            cx.background_executor()
+                .timer(SCROLL_STATE_SYNC_DELAY)
+                .await;
+            if sync_generation.get() == generation && pending.replace(false) {
+                let offset = position.get();
+                host.set_scroll_offset(tag, offset.x, offset.y);
+            }
+        })
+        .detach();
     }
 
     /// Runs a Fabric command on this node's host component.
@@ -4368,6 +6242,7 @@ impl RNNodeView {
         &mut self,
         command: u32,
         args: &[crate::host_component::HostArg],
+        window: Option<&mut Window>,
         cx: &mut gpui::App,
     ) {
         if self.host_component.is_none() {
@@ -4384,6 +6259,14 @@ impl RNNodeView {
             None => self.host_context(),
         };
         if let Some(component) = self.host_component.as_mut() {
+            let (host, _scope) = host.enter(&mut *cx);
+            let (host, _window_scope) = match window {
+                Some(window) => {
+                    let (host, scope) = host.enter_window(window);
+                    (host, Some(scope))
+                }
+                None => (host, None),
+            };
             component.command(command, args, host);
         }
         if !self.host_reports.is_empty() {
@@ -4399,15 +6282,22 @@ impl RNNodeView {
     pub(crate) fn scroll_strategy_name(&self) -> Option<&'static str> {
         self.scroll.as_ref()?;
         Some(
-            match crate::scroll_layers::scroll_strategy(self.subtree_renders_native_surface()) {
+            match crate::scroll_layers::scroll_strategy(
+                self.subtree_renders_native_surface() || self.subtree_forms_effect_group(),
+            ) {
                 crate::scroll_layers::ScrollStrategy::GpuiLayer => "GpuiLayer",
                 crate::scroll_layers::ScrollStrategy::ManualOffset => "ManualOffset",
             },
         )
     }
 
-    pub(crate) fn extension_props_json(&self) -> &str {
-        &self.extension_props_json
+    pub(crate) fn extension_props(&self) -> &serde_json::Value {
+        &self.extension_props
+    }
+
+    /// Whether `json` is the extension props this node was last given.
+    pub(crate) fn has_extension_props_json(&self, json: &str) -> bool {
+        self.extension_props_hash == json_hash(json)
     }
 
     /// The window-control area a press on this node lands in, if any.
@@ -4502,7 +6392,7 @@ impl RNNodeView {
 
     pub(crate) fn component_node_shallow(&self) -> crate::extensions::ComponentNode {
         crate::extensions::ComponentNode {
-            component: self.component.clone(),
+            component: self.component.to_string(),
             tag: self.tag,
             frame: self.frame,
             scale: (self.inherited.scale.0.abs(), self.inherited.scale.1.abs()),
@@ -4533,14 +6423,29 @@ impl RNNodeView {
             props: self.extension_props.clone(),
             parent: self.parent_tag_cached(),
             children: self.child_tags(),
+            mask_children: self.mask_children,
             surface_id: self.surface_id,
             transition: self.transition_state(),
         }
     }
 
+    /// The node handed to `renderer`'s hooks: with its subtree only when the
+    /// renderer reads it.
+    pub(crate) fn renderer_node(
+        &self,
+        renderer: &dyn crate::extensions::ComponentRenderer,
+        cx: &App,
+    ) -> crate::extensions::ComponentNode {
+        if renderer.reads_children() {
+            self.component_node(cx)
+        } else {
+            self.component_node_shallow()
+        }
+    }
+
     pub(crate) fn component_node(&self, cx: &App) -> crate::extensions::ComponentNode {
         crate::extensions::ComponentNode {
-            component: self.component.clone(),
+            component: self.component.to_string(),
             tag: self.tag,
             frame: self.frame,
             scale: (self.inherited.scale.0.abs(), self.inherited.scale.1.abs()),
@@ -4559,20 +6464,396 @@ impl RNNodeView {
     }
 }
 
+/// The `backgroundImage` of a node, drawn for one box size.
+struct GradientCache {
+    json: String,
+    size: (u32, u32),
+    image: Option<std::sync::Arc<gpui::RenderImage>>,
+}
+
+/// The longest side, in pixels, a gradient is drawn at before the renderer
+/// scales it up to the box.
+const GRADIENT_RASTER_LIMIT: u32 = 512;
+
+/// What a scroll view keeps besides its spec.
+struct ScrollParts {
+    /// Outside the entity so a scroll can move it without updating this view:
+    /// gpui-fast rebuilds every view that read an updated entity.
+    position: Rc<Cell<Point<f32>>>,
+    indicator: Option<Entity<crate::scroll_indicator::ScrollIndicator>>,
+    programmatic: Rc<Cell<bool>>,
+    /// The settings of the `ScrollBar` inside this scroll view and the tag its
+    /// events go out on, handed over by that node when it renders.
+    scrollbar: crate::scroll_indicator::ScrollbarSpec,
+    scrollbar_tag: Option<i32>,
+    scrollbar_release: Option<(gpui::EntityId, Subscription)>,
+    sync_generation: Rc<Cell<u64>>,
+    /// Whether Fabric's copy of the offset is behind the node's own.
+    sync_pending: Rc<Cell<bool>>,
+    /// When the last scroll event went out, and whether one is waiting for the
+    /// throttle to pass.
+    emit: Rc<ScrollEmit>,
+    handle: gpui::ScrollHandle,
+    handle_stale: bool,
+    gesture: Rc<std::cell::RefCell<ScrollGesture>>,
+}
+
+impl ScrollParts {
+    fn at(position: Point<f32>) -> Self {
+        Self {
+            position: Rc::new(Cell::new(position)),
+            indicator: None,
+            programmatic: Rc::new(Cell::new(false)),
+            scrollbar: crate::scroll_indicator::ScrollbarSpec::default(),
+            scrollbar_tag: None,
+            scrollbar_release: None,
+            sync_generation: Rc::new(Cell::new(0)),
+            sync_pending: Rc::new(Cell::new(false)),
+            emit: Rc::default(),
+            handle: gpui::ScrollHandle::new(),
+            handle_stale: true,
+            gesture: Rc::default(),
+        }
+    }
+}
+
+impl RNNodeView {
+    /// This node's scroll state, made at offset zero the first time a node
+    /// that was not a scroll view needs it.
+    fn parts_mut(&mut self) -> &mut ScrollParts {
+        self.scroll_parts
+            .get_or_insert_with(|| Box::new(ScrollParts::at(Point::default())))
+    }
+}
+
+/// What the pointer is doing to a scroll view, so drag and momentum can be
+/// reported. A trackpad sends `Started`, `Moved` and `Ended` while the fingers
+/// are down; the momentum that follows arrives as more `Moved` events with no
+/// `Started`. A mouse wheel sends `Moved` only.
+#[derive(Default)]
+pub(crate) struct ScrollGesture {
+    dragging: bool,
+    after_drag: bool,
+    momentum: bool,
+    wheel: bool,
+    generation: u64,
+    drag_start: Option<f32>,
+    /// Recent touchpad deltas along the scroll axis, for the speed of a flick.
+    samples: Vec<(std::time::Instant, f32)>,
+}
+
+/// What `scrollEventThrottle` needs to remember between scroll events.
+#[derive(Default)]
+pub(crate) struct ScrollEmit {
+    last: Cell<Option<std::time::Instant>>,
+    waiting: Cell<bool>,
+}
+
+/// More than a frame between events is a throttle; a frame or less is not.
+const FRAME: std::time::Duration = std::time::Duration::from_millis(17);
+
+/// How long without a wheel event before the scroll counts as over.
+const SCROLL_IDLE: std::time::Duration = std::time::Duration::from_millis(120);
+
+/// How long without a touchpad event before a flick counts as lifted.
+#[cfg(not(target_os = "macos"))]
+const FLICK_IDLE: std::time::Duration = std::time::Duration::from_millis(40);
+
 struct Scroller {
     tag: i32,
     position: Rc<Cell<Point<f32>>>,
     handle: gpui::ScrollHandle,
     sync_generation: Rc<Cell<u64>>,
+    sync_pending: Rc<Cell<bool>>,
+    emit: Rc<ScrollEmit>,
+    event_throttle: std::time::Duration,
     content_size: (f32, f32),
     event: Option<String>,
     viewport: (f32, f32),
     scale: (f32, f32),
+    horizontal: bool,
+    snap: Option<crate::scroll_snap::SnapSpec>,
+    gesture: Rc<std::cell::RefCell<ScrollGesture>>,
+    deceleration: f32,
+    /// Set when no element tracks `handle`, whose own maximum is then unmeasured.
+    max_offset: Option<Point<Pixels>>,
 }
 
 impl Scroller {
+    fn payload(&self) -> serde_json::Value {
+        let offset = self.position.get();
+        serde_json::json!({
+            "contentOffset": {"x": offset.x, "y": offset.y},
+            "contentSize": {"width": self.content_size.0, "height": self.content_size.1},
+            "layoutMeasurement": {"width": self.viewport.0, "height": self.viewport.1},
+            "velocity": {"x": 0, "y": 0},
+            "zoomScale": 1
+        })
+    }
+
+    fn emit(&self, event: &str, cx: &App) {
+        if let Some(store) = cx.try_global::<crate::store::StoreGlobal>() {
+            store
+                .0
+                .read(cx)
+                .host
+                .dispatch_event(self.tag, event, &self.payload());
+        }
+    }
+
+    /// The wheel's movement along this scroll view's axis in points. A
+    /// horizontal one also takes a vertical wheel while shift is held, as a
+    /// browser does.
+    fn wheel_along(&self, event: &gpui::ScrollEvent) -> f32 {
+        let delta = event.delta.pixel_delta(px(20.));
+        if !self.horizontal {
+            f32::from(delta.y)
+        } else if f32::from(delta.x) == 0.0 && event.modifiers.shift {
+            f32::from(delta.y)
+        } else {
+            f32::from(delta.x)
+        }
+    }
+
+    fn main_offset(&self) -> f32 {
+        let offset = self.position.get();
+        if self.horizontal {
+            offset.x
+        } else {
+            offset.y
+        }
+    }
+
+    /// Reports the drag and momentum a wheel event is part of, and snaps once
+    /// the scroll has come to rest.
+    fn on_wheel(self: &Rc<Self>, event: &gpui::ScrollEvent, window: &mut Window, cx: &mut App) {
+        let along = self.wheel_along(event);
+        if self.horizontal && event.modifiers.shift {
+            let delta = event.delta.pixel_delta(px(20.));
+            if f32::from(delta.x) == 0.0 && f32::from(delta.y) != 0.0 {
+                let max = self.handle.max_offset();
+                let mut offset = self.handle.offset();
+                offset.x = (offset.x + delta.y).clamp(-max.x, px(0.0));
+                self.handle.set_offset(offset);
+            }
+        }
+        let generation = {
+            let mut gesture = self.gesture.borrow_mut();
+            gesture.generation += 1;
+            match event.touch_phase {
+                gpui::TouchPhase::Started => {
+                    if gesture.momentum {
+                        gesture.momentum = false;
+                        self.emit("topMomentumScrollEnd", cx);
+                    }
+                    gesture.dragging = true;
+                    gesture.after_drag = false;
+                    gesture.wheel = false;
+                    gesture.drag_start = Some(self.main_offset());
+                    self.emit("topScrollBeginDrag", cx);
+                }
+                gpui::TouchPhase::Moved => {
+                    if gesture.dragging {
+                    } else if gesture.after_drag {
+                        if !gesture.momentum {
+                            gesture.momentum = true;
+                            self.emit("topMomentumScrollBegin", cx);
+                        }
+                    } else {
+                        gesture.wheel = true;
+                        if matches!(event.delta, gpui::ScrollDelta::Pixels(_)) {
+                            crate::scroll_momentum::push_sample(
+                                &mut gesture.samples,
+                                std::time::Instant::now(),
+                                along,
+                            );
+                        }
+                    }
+                }
+                _ => {
+                    if gesture.dragging {
+                        gesture.dragging = false;
+                        gesture.after_drag = true;
+                        self.emit("topScrollEndDrag", cx);
+                    }
+                }
+            }
+            gesture.generation
+        };
+        let handle = window.window_handle();
+        // macOS sends its own momentum. Elsewhere a flick ends when the
+        // touchpad goes quiet, and the scroll view carries it on.
+        #[cfg(not(target_os = "macos"))]
+        {
+            let scroller = self.clone();
+            cx.spawn(async move |cx| {
+                cx.background_executor().timer(FLICK_IDLE).await;
+                let _ = cx.update_window(handle, |_, window, cx| {
+                    scroller.carry_on(generation, window, cx)
+                });
+            })
+            .detach();
+        }
+        let scroller = self.clone();
+        cx.spawn(async move |cx| {
+            cx.background_executor().timer(SCROLL_IDLE).await;
+            let _ = cx.update_window(handle, |_, window, cx| {
+                scroller.settle(generation, window, cx)
+            });
+        })
+        .detach();
+    }
+
+    /// The touchpad went quiet after a flick: keeps the content moving at the
+    /// speed it had, slowing at the scroll view's `decelerationRate`.
+    #[cfg(not(target_os = "macos"))]
+    fn carry_on(self: &Rc<Self>, generation: u64, window: &mut Window, cx: &mut App) {
+        let speed = {
+            let mut gesture = self.gesture.borrow_mut();
+            if gesture.generation != generation || gesture.dragging || !gesture.wheel {
+                return;
+            }
+            let samples = std::mem::take(&mut gesture.samples);
+            let Some(speed) = crate::scroll_momentum::flick_speed(&samples) else {
+                return;
+            };
+            gesture.momentum = true;
+            speed
+        };
+        self.emit("topMomentumScrollBegin", cx);
+        let handle = window.window_handle();
+        let scroller = self.clone();
+        cx.spawn(async move |cx| {
+            const TICK: u64 = 16;
+            let mut speed = speed;
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(TICK))
+                    .await;
+                let (distance, next) =
+                    crate::scroll_momentum::step(speed, scroller.deceleration, TICK as f32);
+                speed = next;
+                let carried = cx
+                    .update_window(handle, |_, window, cx| {
+                        // A wheel event since means the user took over.
+                        if scroller.gesture.borrow().generation != generation {
+                            return false;
+                        }
+                        let moved = scroller.shift_by(distance);
+                        if moved {
+                            scroller.sync(window, cx);
+                        }
+                        moved && !crate::scroll_momentum::stopped(speed)
+                    })
+                    .unwrap_or(false);
+                if !carried {
+                    break;
+                }
+            }
+            let _ = cx.update_window(handle, |_, window, cx| {
+                scroller.settle(generation, window, cx)
+            });
+        })
+        .detach();
+    }
+
+    /// Moves the content `distance` along the scroll axis, in the direction
+    /// of the wheel deltas, and says whether it went anywhere.
+    #[cfg(not(target_os = "macos"))]
+    fn shift_by(&self, distance: f32) -> bool {
+        let current = self.handle.offset();
+        let max = self.handle.max_offset();
+        let mut next = current;
+        if self.horizontal {
+            next.x = (current.x + px(distance)).clamp(-max.x, px(0.0));
+        } else {
+            next.y = (current.y + px(distance)).clamp(-max.y, px(0.0));
+        }
+        if next == current {
+            return false;
+        }
+        self.handle.set_offset(next);
+        true
+    }
+
+    /// The scroll went quiet: end any momentum, then snap.
+    fn settle(self: &Rc<Self>, generation: u64, window: &mut Window, cx: &mut App) {
+        let (moved_by_wheel, drag_start) = {
+            let mut gesture = self.gesture.borrow_mut();
+            if gesture.generation != generation || gesture.dragging {
+                return;
+            }
+            if gesture.momentum {
+                gesture.momentum = false;
+                self.emit("topMomentumScrollEnd", cx);
+                if let Some(store) = cx.try_global::<crate::store::StoreGlobal>() {
+                    store.0.read(cx).frame_hook.arm(window);
+                }
+            }
+            let result = (gesture.wheel, gesture.drag_start.take());
+            gesture.after_drag = false;
+            gesture.wheel = false;
+            result
+        };
+        let _ = moved_by_wheel;
+        let Some(snap) = self.snap.as_ref() else {
+            return;
+        };
+        let (viewport, content) = if self.horizontal {
+            (self.viewport.0, self.content_size.0)
+        } else {
+            (self.viewport.1, self.content_size.1)
+        };
+        let from = self.main_offset();
+        let target = snap.target(from, drag_start, viewport, content);
+        if (target - from).abs() < 0.5 {
+            return;
+        }
+        self.animate_to(from, target, window, cx);
+    }
+
+    /// Eases the offset from `from` to `to` over a short time, reporting each
+    /// step as a scroll.
+    fn animate_to(self: &Rc<Self>, from: f32, to: f32, window: &mut Window, cx: &mut App) {
+        const STEPS: u32 = 10;
+        let handle = window.window_handle();
+        let scroller = self.clone();
+        let generation = self.gesture.borrow().generation;
+        cx.spawn(async move |cx| {
+            for step in 1..=STEPS {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(15))
+                    .await;
+                if scroller.gesture.borrow().generation != generation {
+                    return;
+                }
+                let t = step as f32 / STEPS as f32;
+                let eased = 1.0 - (1.0 - t) * (1.0 - t);
+                let value = from + (to - from) * eased;
+                let _ = cx.update_window(handle, |_, window, cx| {
+                    let current = scroller.handle.offset();
+                    let next = if scroller.horizontal {
+                        point(px(-value * scroller.scale.0), current.y)
+                    } else {
+                        point(current.x, px(-value * scroller.scale.1))
+                    };
+                    scroller.handle.set_offset(next);
+                    scroller.sync(window, cx);
+                });
+            }
+        })
+        .detach();
+    }
+
     fn sync(&self, window: &mut Window, cx: &mut App) {
+        // The handle only clamps while painting, so a wheel event past the end
+        // leaves an offset beyond the content until the next frame.
+        let max = self.max_offset.unwrap_or_else(|| self.handle.max_offset());
         let scrolled = self.handle.offset();
+        let scrolled = point(
+            scrolled.x.clamp(-max.x, px(0.0)),
+            scrolled.y.clamp(-max.y, px(0.0)),
+        );
         let offset = point(
             -f32::from(scrolled.x) / self.scale.0.max(f32::EPSILON),
             -f32::from(scrolled.y) / self.scale.1.max(f32::EPSILON),
@@ -4596,23 +6877,83 @@ impl Scroller {
             "zoomScale": 1
         });
         if let Some(event) = &self.event {
-            host.dispatch_event(self.tag, event, &payload);
+            let since = self.emit.last.get().map(|at| at.elapsed());
+            match since {
+                Some(since) if self.event_throttle > FRAME && since < self.event_throttle => {
+                    // Too soon: one event carrying the offset it has then
+                    // goes out when the throttle has passed.
+                    if !self.emit.waiting.replace(true) {
+                        let (emit, position, host, event, tag) = (
+                            self.emit.clone(),
+                            self.position.clone(),
+                            host.clone(),
+                            event.clone(),
+                            self.tag,
+                        );
+                        let (content, viewport) = (self.content_size, self.viewport);
+                        let wait = self.event_throttle - since;
+                        let sent_before = self.emit.last.get();
+                        cx.spawn(async move |cx| {
+                            cx.background_executor().timer(wait).await;
+                            emit.waiting.set(false);
+                            // A scroll that came once the throttle had passed
+                            // but before this ran has already sent the offset
+                            // in this slot: a second would break the throttle.
+                            if emit.last.get() != sent_before {
+                                return;
+                            }
+                            emit.last.set(Some(std::time::Instant::now()));
+                            let offset = position.get();
+                            host.dispatch_event(
+                                tag,
+                                &event,
+                                &serde_json::json!({
+                                    "contentOffset": {"x": offset.x, "y": offset.y},
+                                    "contentSize": {"width": content.0, "height": content.1},
+                                    "layoutMeasurement": {"width": viewport.0, "height": viewport.1},
+                                    "zoomScale": 1
+                                }),
+                            );
+                        })
+                        .detach();
+                    }
+                }
+                _ => {
+                    self.emit.last.set(Some(std::time::Instant::now()));
+                    host.dispatch_event(self.tag, event, &payload);
+                }
+            }
         }
+        crate::virtual_view::update(cx);
         frame_hook.arm(window);
         // Fabric's copy of the offset costs a commit per update, so it follows once
         // scrolling pauses.
         let generation = self.sync_generation.get() + 1;
         self.sync_generation.set(generation);
-        let (tag, position, sync_generation) = (
+        self.sync_pending.set(true);
+        if let Some(event) = self.event.clone() {
+            let (host, tag) = (host.clone(), self.tag);
+            let (content, viewport) = (self.content_size, self.viewport);
+            report_rest(
+                cx,
+                self.sync_generation.clone(),
+                self.position.clone(),
+                move |offset| {
+                    host.dispatch_event(tag, &event, &scroll_payload(offset, content, viewport))
+                },
+            );
+        }
+        let (tag, position, sync_generation, pending) = (
             self.tag,
             self.position.clone(),
             self.sync_generation.clone(),
+            self.sync_pending.clone(),
         );
         cx.spawn(async move |cx| {
             cx.background_executor()
                 .timer(SCROLL_STATE_SYNC_DELAY)
                 .await;
-            if sync_generation.get() == generation {
+            if sync_generation.get() == generation && pending.replace(false) {
                 let offset = position.get();
                 host.set_scroll_offset(tag, offset.x, offset.y);
             }

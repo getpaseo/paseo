@@ -1,3 +1,5 @@
+mod scheme;
+
 use rn_gpui_module::{ModuleError, ModuleThread};
 
 use crate::builtins::main_thread::on_main;
@@ -15,18 +17,11 @@ impl NativeGpuiLinkingManagerSpec for LinkingManagerModule {
     }
 
     async fn get_initial_url(&self) -> Result<Option<String>, ModuleError> {
-        Ok(None)
+        Ok(crate::desktop::deep_link::initial_url())
     }
 
     async fn can_open_url(&self, url: String) -> Result<bool, ModuleError> {
-        let scheme = url
-            .split_once(':')
-            .map(|(scheme, _)| scheme.to_ascii_lowercase())
-            .unwrap_or_default();
-        Ok(matches!(
-            scheme.as_str(),
-            "http" | "https" | "mailto" | "tel"
-        ))
+        Ok(scheme::can_open(&url))
     }
 
     async fn open_url(&self, url: String) -> Result<(), ModuleError> {
@@ -34,9 +29,9 @@ impl NativeGpuiLinkingManagerSpec for LinkingManagerModule {
     }
 
     async fn open_settings(&self) -> Result<(), ModuleError> {
-        Err(ModuleError::new(
-            "opening application settings is not supported by GPUI",
-        ))
+        on_main(|cx| scheme::open_settings(cx))
+            .await?
+            .map_err(ModuleError::new)
     }
 
     fn add_listener(&self, _event_name: String) {}

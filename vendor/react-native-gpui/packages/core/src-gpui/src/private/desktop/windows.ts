@@ -7,7 +7,9 @@
  * @format
  */
 
-import { DeviceEventEmitter } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { DeviceEventEmitter, processColor } from 'react-native';
+import type { ColorValue } from 'react-native';
 import NativeGpuiWindows from '../specs/NativeGpuiWindows';
 import { nativeRequest } from './index';
 import { useDesktopWindowId } from './windowContext';
@@ -40,7 +42,14 @@ export interface WindowState {
   isFullscreen: boolean;
   isFocused: boolean;
   isMinimized: boolean;
+  /** `false` after `hide()`. A minimized window is still visible. */
+  isVisible: boolean;
+  title: string;
+  /** The content scale set with `setZoomFactor()`; `1` is the natural size. */
+  zoomFactor: number;
   scaleFactor: number;
+  /** How far a transparent title bar reaches into the content, in points. */
+  topInset: number;
 }
 
 export interface OpenWindowOptions {
@@ -51,10 +60,24 @@ export interface OpenWindowOptions {
   height?: number;
   x?: number;
   y?: number;
-  titleBar?: 'default' | 'transparent' | 'hidden';
+  titleBar?: 'default' | 'transparent' | 'hidden' | 'none';
+  /**
+   * What shows through the window where the app draws nothing opaque. `'mica'`
+   * is the Windows 11 material and leaves the window opaque elsewhere.
+   */
+  background?: 'opaque' | 'transparent' | 'blurred' | 'mica';
+  /** Whether macOS draws the traffic lights. Defaults to `true`; other systems ignore it. */
+  windowButtons?: boolean;
+  /** Whether the window has the system shadow. Defaults to `true`; only macOS draws one yet. */
+  shadow?: boolean;
   trafficLightPosition?: { x: number; y: number };
   resizable?: boolean;
   alwaysOnTop?: boolean;
+  /**
+   * Shows the window on every Space, over full-screen apps when it is also
+   * `alwaysOnTop`. Check `capabilities().visibleOnAllWorkspaces`.
+   */
+  visibleOnAllWorkspaces?: boolean;
   parent?: number;
 }
 
@@ -137,8 +160,63 @@ export class DesktopWindow {
     return request(native => native.windowFocus(this.id));
   }
 
+  /** Moves keyboard focus to the next focusable view in tab order, as Tab does. */
+  focusNext(): Promise<void> {
+    return request(native => native.windowMoveFocus(this.id, false));
+  }
+
+  /** Moves keyboard focus to the previous focusable view in tab order, as Shift+Tab does. */
+  focusPrevious(): Promise<void> {
+    return request(native => native.windowMoveFocus(this.id, true));
+  }
+
   setTitle(title: string): Promise<void> {
     return request(native => native.windowSetTitle(this.id, title));
+  }
+
+  /**
+   * Scales the window's content: `1` is the natural size, `2` doubles it. The
+   * factor is clamped to 0.25 to 5 and lasts until the window closes, so an app
+   * that remembers it saves it itself (the `stateChange` event reports changes)
+   * and sets it again on the next launch.
+   */
+  setZoomFactor(factor: number): Promise<void> {
+    return request(native => native.windowSetZoomFactor(this.id, factor));
+  }
+
+  /** The factor set with `setZoomFactor()`. */
+  async getZoomFactor(): Promise<number> {
+    return (await this.getState()).zoomFactor;
+  }
+
+  /** The title set with `setTitle()` or `open()`. */
+  async getTitle(): Promise<string> {
+    return (await this.getState()).title;
+  }
+
+  /**
+   * Paints the window behind its content, which shows while the window is
+   * resized and wherever the content is transparent. macOS only for now.
+   */
+  setBackgroundColor(color: ColorValue): Promise<void> {
+    const argb = processColor(color);
+    if (typeof argb !== 'number') {
+      return Promise.reject(
+        new TypeError('setBackgroundColor needs a plain color'),
+      );
+    }
+    return request(native => native.windowSetBackgroundColor(this.id, argb));
+  }
+
+  /**
+   * Gives the window's native title bar and traffic lights a light or dark look,
+   * or `'system'` to follow the system again. macOS only for now. A title bar the
+   * app draws itself takes its colors from its styles.
+   */
+  setChromeAppearance(appearance: 'light' | 'dark' | 'system'): Promise<void> {
+    return request(native =>
+      native.windowSetChromeAppearance(this.id, appearance),
+    );
   }
 
   setSize(size: { width: number; height: number }): Promise<void> {
@@ -193,6 +271,12 @@ export class DesktopWindow {
     return request(native => native.windowSetAlwaysOnTop(this.id, onTop));
   }
 
+  setVisibleOnAllWorkspaces(visible: boolean): Promise<void> {
+    return request(native =>
+      native.windowSetVisibleOnAllWorkspaces(this.id, visible),
+    );
+  }
+
   show(): Promise<void> {
     return request(native => native.windowShow(this.id));
   }
@@ -245,4 +329,120 @@ export class DesktopWindow {
 
 export function useDesktopWindow(): DesktopWindow {
   return new DesktopWindow(useDesktopWindowId());
+}
+
+function readStateSync(windowId: number): WindowState | null {
+  try {
+    return (
+      (NativeGpuiWindows?.windowGetStateSync(windowId) as WindowState) ?? null
+    );
+  } catch {
+    return null;
+  }
+}
+
+function sameState(a: WindowState | null, b: WindowState | null): boolean {
+  if (a === null || b === null) return a === b;
+  return (
+    a.windowId === b.windowId &&
+    a.bounds.x === b.bounds.x &&
+    a.bounds.y === b.bounds.y &&
+    a.bounds.width === b.bounds.width &&
+    a.bounds.height === b.bounds.height &&
+    a.isMaximized === b.isMaximized &&
+    a.isFullscreen === b.isFullscreen &&
+    a.isFocused === b.isFocused &&
+    a.isMinimized === b.isMinimized &&
+    a.isVisible === b.isVisible &&
+    a.title === b.title &&
+    a.zoomFactor === b.zoomFactor &&
+    a.scaleFactor === b.scaleFactor &&
+    a.topInset === b.topInset
+  );
+}
+
+/**
+ * The state of a window, kept current as it moves, resizes, changes state,
+ * gains or loses focus. The first render already has real values; `null` only
+ * for a window that is not open.
+ */
+export function useWindowState(windowIdOverride?: number): WindowState | null {
+  const contextId = useDesktopWindowId();
+  return useWindowStateSelector(
+    windowIdOverride ?? contextId,
+    state => state,
+    sameState,
+  );
+}
+
+/**
+ * A value derived from a window's state. It re-renders only when the value
+ * changes, so a field that a drag or resize leaves alone costs nothing while
+ * the window moves. A `null` window is not subscribed to.
+ */
+export function useWindowStateSelector<T>(
+  windowId: number | null,
+  select: (state: WindowState | null) => T,
+  equal: (a: T, b: T) => boolean = Object.is,
+): T {
+  const [value, setValue] = useState(() =>
+    select(windowId === null ? null : readStateSync(windowId)),
+  );
+  const latest = useRef({ value, select, equal });
+  latest.current = { value, select, equal };
+  useEffect(() => {
+    const update = () => {
+      const current = latest.current;
+      const next = current.select(
+        windowId === null ? null : readStateSync(windowId),
+      );
+      if (!current.equal(current.value, next)) {
+        current.value = next;
+        setValue(() => next);
+      }
+    };
+    update();
+    if (windowId === null) {
+      return;
+    }
+    const refresh = (event: WindowEvent) => {
+      if (event.windowId === windowId) {
+        update();
+      }
+    };
+    const subscriptions = (
+      ['focus', 'blur', 'resize', 'move', 'stateChange'] as const
+    ).map(name => DeviceEventEmitter.addListener(EVENT_NAMES[name], refresh));
+    return () => subscriptions.forEach(subscription => subscription.remove());
+  }, [windowId]);
+  return value;
+}
+
+/** Whether a window has focus. It does not re-render when the window moves. */
+export function useWindowFocus(windowIdOverride?: number): boolean {
+  const contextId = useDesktopWindowId();
+  const windowId = windowIdOverride ?? contextId;
+  const [focused, setFocused] = useState(
+    () => readStateSync(windowId)?.isFocused ?? false,
+  );
+  useEffect(() => {
+    const on = DeviceEventEmitter.addListener(
+      EVENT_NAMES.focus,
+      (event: WindowEvent) => {
+        if (event?.windowId === windowId) setFocused(true);
+      },
+    );
+    const off = DeviceEventEmitter.addListener(
+      EVENT_NAMES.blur,
+      (event: WindowEvent) => {
+        if (event?.windowId === windowId) setFocused(false);
+      },
+    );
+    setFocused(readStateSync(windowId)?.isFocused ?? false);
+    return () => {
+      on.remove();
+      off.remove();
+    };
+  }, [windowId]);
+  return focused;
 }

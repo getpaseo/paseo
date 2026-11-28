@@ -3,7 +3,12 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
-import { collectInputs, inputHash, runtimeChoice } from './prebuilt-inputs.mjs';
+import {
+  collectInputs,
+  inputHash,
+  overridesSha256,
+  runtimeChoice,
+} from './prebuilt-inputs.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const packageDir = path.resolve(scriptDir, '..');
@@ -47,6 +52,26 @@ describe('collectInputs', () => {
     expect(choice.reason).toContain('not-the-local-hash');
   });
 
+  test("hashes Loom's own inputs for the Loom runtime only", () => {
+    const fabric = collectInputs('fabric').map(entry => entry.path);
+    const loom = collectInputs('loom').map(entry => entry.path);
+    expect(fabric).not.toContain('ReactGpui/loom-pin.json');
+    expect(loom).toContain('ReactGpui/loom-pin.json');
+    expect(loom.some(rel => rel.startsWith('ReactCommonOverrides.loom/'))).toBe(
+      true,
+    );
+    expect(inputHash('loom').hash).not.toBe(inputHash('fabric').hash);
+    expect(overridesSha256('loom')).not.toBe(overridesSha256('fabric'));
+  });
+
+  test('uses the Loom pin section for the Loom runtime', () => {
+    const pin = { version: '1.0.0', inputHash: 'x', loom: { inputHash: 'y' } };
+    expect(runtimeChoice(pin, 'loom').pinnedHash).toBe('y');
+    expect(runtimeChoice({ ...pin, loom: undefined }, 'loom').kind).toBe(
+      'source',
+    );
+  });
+
   test('keys every path without the checkout location', () => {
     for (const { path: rel } of collectInputs()) {
       expect(path.isAbsolute(rel)).toBe(false);
@@ -77,7 +102,8 @@ describe('core package.json files', () => {
   // back to building React Native from source.
   test('covers every path collectInputs() returns', () => {
     const files = packageFiles();
-    const uncovered = collectInputs()
+    const uncovered = ['fabric', 'loom']
+      .flatMap(renderer => collectInputs(renderer))
       .map(entry => entry.path)
       .filter(rel => !rel.startsWith(EXTERNAL_PREFIX))
       .filter(rel => !coveredByFiles(rel, files));

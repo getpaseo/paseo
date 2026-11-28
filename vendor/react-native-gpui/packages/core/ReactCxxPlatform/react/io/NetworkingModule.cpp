@@ -7,6 +7,9 @@
 
 #include "NetworkingModule.h"
 #include <GpuiHttpClient.h>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 #include <react/debug/react_native_assert.h>
 #include <react/utils/Base64.h>
@@ -245,11 +248,32 @@ void NetworkingModule::didReceiveNetworkResponse(
   }
   emitDeviceEvent(
       "didReceiveNetworkResponse",
-      [requestId, statusCode, headers, responseUrl, jsInvoker = jsInvoker_](
+      [requestId, statusCode, headers, responseUrl](
           jsi::Runtime& rt, std::vector<jsi::Value>& args) {
-        auto result =
-            std::make_tuple(requestId, statusCode, headers, responseUrl);
-        args.emplace_back(bridging::toJs(rt, result, jsInvoker));
+        auto headerMap = jsi::Object(rt);
+        std::vector<std::string> names;
+        std::unordered_map<std::string, std::string> joined;
+        for (const auto& [name, value] : headers) {
+          auto found = joined.find(name);
+          if (found == joined.end()) {
+            names.push_back(name);
+            joined.emplace(name, value);
+          } else {
+            found->second += ", " + value;
+          }
+        }
+        for (const auto& name : names) {
+          headerMap.setProperty(
+              rt, name.c_str(), jsi::String::createFromUtf8(rt, joined[name]));
+        }
+        args.emplace_back(
+            rt,
+            jsi::Array::createWithElements(
+                rt,
+                static_cast<double>(requestId),
+                static_cast<double>(statusCode),
+                std::move(headerMap),
+                jsi::String::createFromUtf8(rt, responseUrl)));
       });
 }
 

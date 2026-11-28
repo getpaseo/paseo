@@ -36,6 +36,14 @@ void registerWindowInsetsObserver(extension::WindowInsetsFn fn) {
   gpuiExtensionHooks().windowInsetsObservers.push_back(std::move(fn));
 }
 
+void registerColorSchemeObserver(std::function<void(const std::string&)> fn) {
+  gpuiExtensionHooks().colorSchemeObservers.push_back(std::move(fn));
+}
+
+void registerWindowMetricsObserver(std::function<void()> fn) {
+  gpuiExtensionHooks().windowMetricsObservers.push_back(std::move(fn));
+}
+
 void registerFrameCallback(GpuiFrameFn fn) {
   gpuiExtensionHooks().frameCallbacks.push_back(std::move(fn));
 }

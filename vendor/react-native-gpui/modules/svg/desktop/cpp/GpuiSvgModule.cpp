@@ -5,6 +5,7 @@
 
 #include <folly/json.h>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace rngpui {
@@ -12,24 +13,25 @@ using namespace facebook::react;
 
 namespace {
 constexpr const char* kSvgComponents[] = {
-    "RNSVGSvgView",
-    "RNSVGCircle",
-    "RNSVGEllipse",
-    "RNSVGLine",
-    "RNSVGPath",
-    "RNSVGRect",
-    "RNSVGGroup",
-    "RNSVGDefs",
-    "RNSVGClipPath",
-    "RNSVGLinearGradient",
-    "RNSVGRadialGradient",
-    "RNSVGText",
-    "RNSVGTSpan",
+    "RNSVGSvgView",        "RNSVGCircle",         "RNSVGEllipse",
+    "RNSVGLine",           "RNSVGPath",           "RNSVGRect",
+    "RNSVGGroup",          "RNSVGDefs",           "RNSVGClipPath",
+    "RNSVGLinearGradient", "RNSVGRadialGradient", "RNSVGText",
+    "RNSVGTSpan",          "RNSVGFilter",         "RNSVGFeBlend",
+    "RNSVGFeColorMatrix",  "RNSVGFeComposite",    "RNSVGFeFlood",
+    "RNSVGFeGaussianBlur", "RNSVGFeMerge",        "RNSVGFeOffset",
 };
 
 template <typename T>
+  requires(!std::is_enum_v<T>)
 folly::dynamic svgJsonValue(const T& value) {
   return value;
+}
+
+template <typename T>
+  requires std::is_enum_v<T>
+folly::dynamic svgJsonValue(const T& value) {
+  return toString(value);
 }
 
 folly::dynamic svgJsonValue(const Float& value) {
@@ -98,6 +100,33 @@ folly::dynamic svgPropsJson(const T& props) {
   RN_GPUI_COPY_SVG_PROP(offset);
   RN_GPUI_COPY_SVG_PROP(stopColor);
   RN_GPUI_COPY_SVG_PROP(stopOpacity);
+  if constexpr (requires { props.filter; }) {
+    if constexpr (std::is_same_v<
+                      std::remove_cvref_t<decltype(props.filter)>,
+                      std::string>)
+      result["filter"] = props.filter;
+  }
+  RN_GPUI_COPY_SVG_PROP(filterUnits);
+  RN_GPUI_COPY_SVG_PROP(primitiveUnits);
+  RN_GPUI_COPY_SVG_PROP(result);
+  RN_GPUI_COPY_SVG_PROP(in1);
+  RN_GPUI_COPY_SVG_PROP(in2);
+  RN_GPUI_COPY_SVG_PROP(mode);
+  RN_GPUI_COPY_SVG_PROP(type);
+  RN_GPUI_COPY_SVG_PROP(values);
+  RN_GPUI_COPY_SVG_PROP(operator1);
+  RN_GPUI_COPY_SVG_PROP(k1);
+  RN_GPUI_COPY_SVG_PROP(k2);
+  RN_GPUI_COPY_SVG_PROP(k3);
+  RN_GPUI_COPY_SVG_PROP(k4);
+  RN_GPUI_COPY_SVG_PROP(dx);
+  RN_GPUI_COPY_SVG_PROP(dy);
+  RN_GPUI_COPY_SVG_PROP(edgeMode);
+  RN_GPUI_COPY_SVG_PROP(floodColor);
+  RN_GPUI_COPY_SVG_PROP(floodOpacity);
+  RN_GPUI_COPY_SVG_PROP(stdDeviationX);
+  RN_GPUI_COPY_SVG_PROP(stdDeviationY);
+  RN_GPUI_COPY_SVG_PROP(nodes);
 #undef RN_GPUI_COPY_SVG_PROP
   return result;
 }
@@ -121,6 +150,14 @@ folly::dynamic svgPropsJson(const std::string& component, const Props& props) {
   RN_GPUI_SVG_PROPS("RNSVGRadialGradient", RNSVGRadialGradientProps)
   RN_GPUI_SVG_PROPS("RNSVGText", RNSVGTextProps)
   RN_GPUI_SVG_PROPS("RNSVGTSpan", RNSVGTSpanProps)
+  RN_GPUI_SVG_PROPS("RNSVGFilter", RNSVGFilterProps)
+  RN_GPUI_SVG_PROPS("RNSVGFeBlend", RNSVGFeBlendProps)
+  RN_GPUI_SVG_PROPS("RNSVGFeColorMatrix", RNSVGFeColorMatrixProps)
+  RN_GPUI_SVG_PROPS("RNSVGFeComposite", RNSVGFeCompositeProps)
+  RN_GPUI_SVG_PROPS("RNSVGFeFlood", RNSVGFeFloodProps)
+  RN_GPUI_SVG_PROPS("RNSVGFeGaussianBlur", RNSVGFeGaussianBlurProps)
+  RN_GPUI_SVG_PROPS("RNSVGFeMerge", RNSVGFeMergeProps)
+  RN_GPUI_SVG_PROPS("RNSVGFeOffset", RNSVGFeOffsetProps)
 #undef RN_GPUI_SVG_PROPS
   return folly::dynamic::object();
 }

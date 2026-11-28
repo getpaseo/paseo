@@ -60,6 +60,11 @@ pub fn always_on_top() -> bool {
     !is_wayland()
 }
 
+/// Whether a window can be shown on every Space or workspace, which only macOS does yet.
+pub fn visible_on_all_workspaces() -> bool {
+    cfg!(target_os = "macos")
+}
+
 /// Whether a window can have its title bar removed while keeping the traffic
 /// lights or the app's own caption buttons.
 ///
@@ -139,6 +144,49 @@ pub fn note_window_decorations(decorations: gpui::Decorations) {
         gpui::Decorations::Server => DECORATIONS_SERVER,
     };
     OBSERVED_CLIENT_DECORATIONS.store(value, Ordering::Relaxed);
+    *DECORATIONS_NOTED
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+    DECORATIONS_NOTED.1.notify_all();
+}
+
+/// Set once any window has reported its decorations, with the condition the
+/// JS thread waits on until then.
+#[cfg(target_os = "linux")]
+static DECORATIONS_NOTED: (std::sync::Mutex<bool>, std::sync::Condvar) =
+    (std::sync::Mutex::new(false), std::sync::Condvar::new());
+
+/// Holds the caller until the first window has reported its decorations.
+///
+/// The app starts rendering while its window is still being created, and a
+/// `TitleBar` that read the answer before the window existed would take the
+/// guess and draw caption buttons next to the compositor's own. The wait is on
+/// the JS thread only, which has nothing to render into until the window exists
+/// anyway; the main thread, which is making the window, is never held. The
+/// timeout keeps a window that never opens from hanging the app.
+#[cfg(target_os = "linux")]
+pub fn wait_for_window_decorations() {
+    let (noted, signal) = &DECORATIONS_NOTED;
+    let guard = noted
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _ = signal.wait_timeout_while(guard, std::time::Duration::from_millis(1500), |noted| {
+        !*noted
+    });
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn wait_for_window_decorations() {}
+
+/// What the newest window's decorations are, once known.
+#[cfg(target_os = "linux")]
+pub fn observed_client_decorations() -> Option<bool> {
+    match OBSERVED_CLIENT_DECORATIONS.load(Ordering::Relaxed) {
+        DECORATIONS_CLIENT => Some(true),
+        DECORATIONS_SERVER => Some(false),
+        _ => None,
+    }
 }
 
 /// Nothing to record: these platforms always have a native border to resize by.

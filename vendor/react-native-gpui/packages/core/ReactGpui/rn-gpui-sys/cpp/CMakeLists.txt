@@ -1,4 +1,15 @@
 cmake_minimum_required(VERSION 3.18)
+# ccache cannot cache MSVC's default /Zi (a PDB written by the compiler), so
+# embed the debug info in the objects (/Z7). The policy must be set before
+# project(), which seeds the compiler flags; it needs CMake 3.25. build.rs also
+# sets the policy default and the format for the subprojects.
+if(NOT CMAKE_VERSION VERSION_LESS 3.25)
+  cmake_policy(SET CMP0141 NEW)
+  if(NOT DEFINED CMAKE_MSVC_DEBUG_INFORMATION_FORMAT)
+    set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT
+        "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>")
+  endif()
+endif()
 project(rn_gpui_core CXX C)
 if(APPLE)
   enable_language(OBJCXX)
@@ -22,9 +33,14 @@ if(MSVC)
   # them one at a time unless /MP is given; project dependencies leave only
   # one or two projects building at once. Half the cores per cl.exe keeps the
   # machine busy without exhausting memory (each compiler can use ~1 GB).
-  cmake_host_system_information(RESULT _rn_gpui_cores QUERY NUMBER_OF_LOGICAL_CORES)
-  math(EXPR _rn_gpui_mp "(${_rn_gpui_cores} + 1) / 2")
-  add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:/MP${_rn_gpui_mp}>")
+  # Ninja starts one cl.exe per source and already runs one per core, and
+  # ccache does not take a multi-file /MP command line, so /MP is for the
+  # Visual Studio generator only.
+  if(NOT CMAKE_GENERATOR MATCHES "Ninja")
+    cmake_host_system_information(RESULT _rn_gpui_cores QUERY NUMBER_OF_LOGICAL_CORES)
+    math(EXPR _rn_gpui_mp "(${_rn_gpui_cores} + 1) / 2")
+    add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:/MP${_rn_gpui_mp}>")
+  endif()
   # ReactCommon headers do `#ifndef RN_EXPORT / #define RN_EXPORT
   # __attribute__((visibility("default")))`, which cl.exe cannot parse. The
   # guard means defining it empty here is enough.
@@ -145,7 +161,19 @@ set(RN_GPUI_REACT_CXX_PLATFORM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../ReactCx
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/NodeModules.cmake)
 
-rn_gpui_find_node_module(react-native _rn_gpui_react_native_dir)
+# The renderer picks the React Native tree: the installed package for Fabric,
+# Loom's materialized copy of it for Loom (build.rs passes its path). Every
+# header and source below, and the autolinked modules, read from that one tree.
+if(RN_GPUI_REACT_NATIVE_DIR)
+  set(_rn_gpui_react_native_dir "${RN_GPUI_REACT_NATIVE_DIR}")
+else()
+  rn_gpui_find_node_module(react-native _rn_gpui_react_native_dir)
+endif()
+if(LOOM_RENDERER)
+  # Loom's headers change the layout of React Native classes, so every target
+  # of this build, modules included, compiles with the same switches.
+  add_compile_definitions(LOOM_RENDERER=1)
+endif()
 set(REACT_COMMON_DIR "${_rn_gpui_react_native_dir}/ReactCommon")
 if(NOT RN_GPUI_GENERATED_RNCORE_DIR)
   message(FATAL_ERROR
@@ -325,12 +353,23 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 # platform header that RN finds through the platform include directory), and
 # directory-level include dirs are emitted ahead of a target's own ones.
 include_directories(${RN_GPUI_OVERRIDES_DIR})
+if(LOOM_RENDERER)
+  # Files both this platform and Loom replace have a Loom variant that wins.
+  set(RN_GPUI_LOOM_OVERRIDES_DIR "${RN_GPUI_OVERRIDES_DIR}.loom")
+  include_directories(BEFORE ${RN_GPUI_LOOM_OVERRIDES_DIR})
+endif()
 
 # Adding a replacement header changes include resolution without changing the
 # upstream header already recorded in compiler dependencies. Recompile every
 # target when the override inventory changes to keep RN prop classes ABI-safe.
 file(GLOB_RECURSE RN_GPUI_OVERRIDE_HEADERS CONFIGURE_DEPENDS
   RELATIVE "${RN_GPUI_OVERRIDES_DIR}" "${RN_GPUI_OVERRIDES_DIR}/*.h")
+if(LOOM_RENDERER)
+  file(GLOB_RECURSE _rn_gpui_loom_override_headers CONFIGURE_DEPENDS
+    RELATIVE "${RN_GPUI_LOOM_OVERRIDES_DIR}" "${RN_GPUI_LOOM_OVERRIDES_DIR}/*.h")
+  list(TRANSFORM _rn_gpui_loom_override_headers PREPEND "loom/")
+  list(APPEND RN_GPUI_OVERRIDE_HEADERS ${_rn_gpui_loom_override_headers})
+endif()
 list(SORT RN_GPUI_OVERRIDE_HEADERS)
 string(SHA256 RN_GPUI_OVERRIDE_HEADER_SET "${RN_GPUI_OVERRIDE_HEADERS}")
 add_compile_definitions("RN_GPUI_HEADER_OVERRIDES_${RN_GPUI_OVERRIDE_HEADER_SET}=1")
@@ -338,6 +377,28 @@ add_compile_definitions("RN_GPUI_HEADER_OVERRIDES_${RN_GPUI_OVERRIDE_HEADER_SET}
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/jni react_codegen_rncore)
 
 add_react_common_subdir(yoga)
+
+# Compile our copy of Yoga's CalculateLayout.cpp
+# (ReactCommonOverrides/yoga/algorithm/CalculateLayout.cpp) and YGEnums.cpp in
+# place of the upstream sources: they add the FlexBasisAsIntrinsicSize errata.
+# See ReactCommonOverrides/README.md for what changed and the React Native
+# version the copies came from.
+if(TARGET yogacore)
+  get_target_property(_rn_gpui_yoga_sources yogacore SOURCES)
+  foreach(_rn_gpui_yoga_file algorithm/CalculateLayout YGEnums)
+    set(_rn_gpui_yoga_override
+        "${RN_GPUI_OVERRIDES_DIR}/yoga/${_rn_gpui_yoga_file}.cpp")
+    if(EXISTS "${_rn_gpui_yoga_override}")
+      list(FILTER _rn_gpui_yoga_sources EXCLUDE
+           REGEX "yoga/${_rn_gpui_yoga_file}\\.cpp$")
+      list(APPEND _rn_gpui_yoga_sources "${_rn_gpui_yoga_override}")
+    else()
+      message(WARNING
+        "rn_gpui_core: Yoga override not found (${_rn_gpui_yoga_override})")
+    endif()
+  endforeach()
+  set_property(TARGET yogacore PROPERTY SOURCES "${_rn_gpui_yoga_sources}")
+endif()
 
 # On Android the `yoga` target (JNI bindings over yogacore) is defined
 # in ReactAndroid/src/main/jni/first-party/yogajni, and RN targets link
@@ -376,6 +437,9 @@ add_react_common_subdir(react/renderer/mounting)
 add_react_common_subdir(react/renderer/scheduler)
 add_react_common_subdir(react/renderer/telemetry)
 add_react_common_subdir(react/renderer/viewtransition)
+if(LOOM_RENDERER)
+  add_react_common_subdir(react/renderer/loom)
+endif()
 add_react_common_subdir(react/renderer/uimanager)
 add_react_common_subdir(react/renderer/bridging)
 add_react_common_subdir(react/renderer/core)
@@ -465,6 +529,24 @@ else()
     "rn_gpui_core: TextLayoutManager override not found (${RN_GPUI_TEXT_LAYOUT_MANAGER_OVERRIDE}); "
     "paragraphs will measure to zero height")
 endif()
+# Upstream's cxx `ImageManager::requestImage` never completes, so Image sends
+# no load events. Compile our copy override
+# (ReactCommonOverrides/.../ImageManager.cpp) in place of the upstream source.
+set(RN_GPUI_IMAGE_MANAGER_OVERRIDE
+    "${RN_GPUI_OVERRIDES_DIR}/react/renderer/imagemanager/platform/cxx/react/renderer/imagemanager/ImageManager.cpp")
+if(TARGET react_renderer_imagemanager AND EXISTS "${RN_GPUI_IMAGE_MANAGER_OVERRIDE}")
+  get_target_property(_rn_gpui_im_sources react_renderer_imagemanager SOURCES)
+  list(FILTER _rn_gpui_im_sources EXCLUDE
+       REGEX "imagemanager/platform/cxx/.*ImageManager\\.cpp$")
+  list(APPEND _rn_gpui_im_sources "${RN_GPUI_IMAGE_MANAGER_OVERRIDE}")
+  set_property(TARGET react_renderer_imagemanager
+               PROPERTY SOURCES "${_rn_gpui_im_sources}")
+  message(STATUS "rn_gpui_core: ImageManager override: ${RN_GPUI_IMAGE_MANAGER_OVERRIDE}")
+else()
+  message(WARNING
+    "rn_gpui_core: ImageManager override not found (${RN_GPUI_IMAGE_MANAGER_OVERRIDE}); "
+    "Image will send no load events")
+endif()
 add_react_common_subdir(react/utils)
 add_react_common_subdir(react/bridging)
 add_react_common_subdir(react/renderer/mapbuffer)
@@ -517,6 +599,10 @@ endif()
 # them with C2018) and includes the header through the override include path.
 set(RN_GPUI_NATIVE_DOM_OVERRIDE
     "${RN_GPUI_OVERRIDES_DIR}/react/nativemodule/dom/NativeDOM.cpp")
+if(LOOM_RENDERER)
+  set(RN_GPUI_NATIVE_DOM_OVERRIDE
+      "${RN_GPUI_LOOM_OVERRIDES_DIR}/react/nativemodule/dom/NativeDOM.cpp")
+endif()
 if(TARGET react_nativemodule_dom)
   get_target_property(_rn_gpui_dom_sources react_nativemodule_dom SOURCES)
   list(FILTER _rn_gpui_dom_sources EXCLUDE REGEX "dom/NativeDOM\\.cpp$")
@@ -599,6 +685,7 @@ add_library(rn_gpui_core STATIC
   GpuiHost.cpp
   GpuiHttpClient.cpp
   GpuiHttpBridge.cpp
+  GpuiNetworkConfig.cpp
   GpuiStartupSignpost.cpp
   GpuiJsEngine.cpp
   GpuiLogBoxSurfaceDelegate.cpp
@@ -607,6 +694,7 @@ add_library(rn_gpui_core STATIC
   # shadow node with a state-driven measure function, and a descriptor per
   # registered component name.
   GpuiHostComponent.cpp
+  GpuiCppHostComponent.cpp
   # Stock Node-API addon loading: the `_requireNodeLibrary` JSI global, path
   # resolution, the cache and the error messages. Compiled on every platform —
   # it is one small source file with no extra library — and it talks to the VM
@@ -628,19 +716,32 @@ if(APPLE)
     COMPILE_FLAGS "-fobjc-arc")
   target_sources(rn_gpui_core PRIVATE GpuiAccessibilityMac.mm)
   target_link_libraries(rn_gpui_core PUBLIC "-framework AppKit")
+elseif(WIN32 OR (UNIX AND NOT ANDROID))
+  target_sources(rn_gpui_core PRIVATE GpuiAccessibilityDesktop.cpp)
 endif()
 target_include_directories(rn_gpui_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(rn_gpui_core PUBLIC "${REACT_CXX_PLATFORM_DIR}")
 target_sources(rn_gpui_core PRIVATE
-  "${REACT_CXX_PLATFORM_DIR}/react/renderer/components/nativeviewhost/NativeViewHost.cpp"
   "${REACT_CXX_PLATFORM_DIR}/react/renderer/components/windowcontrol/WindowControl.cpp"
+  "${REACT_CXX_PLATFORM_DIR}/react/renderer/components/desktopswitch/DesktopSwitch.cpp"
   "${REACT_CXX_PLATFORM_DIR}/react/renderer/components/desktopcontextmenuview/DesktopContextMenuView.cpp"
   "${REACT_CXX_PLATFORM_DIR}/react/renderer/components/shortcutscope/ShortcutScope.cpp"
+  "${REACT_CXX_PLATFORM_DIR}/react/renderer/components/nativeroot/NativeRoot.cpp"
+  "${REACT_CXX_PLATFORM_DIR}/react/renderer/components/nativeslot/NativeSlot.cpp"
+  "${REACT_CXX_PLATFORM_DIR}/react/renderer/components/desktopscrollbar/DesktopScrollBar.cpp"
   builtins/window_control/GpuiWindowControlProps.cpp
+  builtins/switch/GpuiSwitchProps.cpp
+  builtins/activity_indicator/GpuiActivityIndicatorProps.cpp
   builtins/context_menu_view/GpuiContextMenuViewProps.cpp
-  builtins/shortcut_scope/GpuiShortcutScopeProps.cpp)
+  builtins/shortcut_scope/GpuiShortcutScopeProps.cpp
+  builtins/native_root/GpuiNativeRootProps.cpp
+  builtins/native_slot/GpuiNativeSlotProps.cpp
+  builtins/desktop_scroll_bar/GpuiDesktopScrollBarProps.cpp)
 if(RN_GPUI_AUTOLINK_LIBRARIES)
   target_link_libraries(rn_gpui_core PUBLIC ${RN_GPUI_AUTOLINK_LIBRARIES})
+endif()
+if(LOOM_RENDERER)
+  target_sources(rn_gpui_core PRIVATE GpuiLoomHost.cpp LoomViewProps.cpp LoomComponentProps.cpp)
 endif()
 
 # The cxx-generated bridge header is located above,
@@ -745,6 +846,9 @@ set(RN_GPUI_CORE_DEPS
   react_cxx_platform_react_runtime
   react_cxx_platform_react_threading
   react_cxx_platform_react_utils)
+if(LOOM_RENDERER)
+  list(APPEND RN_GPUI_CORE_DEPS react_renderer_loom)
+endif()
 foreach(dep IN LISTS RN_GPUI_CORE_DEPS)
   if(TARGET ${dep})
     target_link_libraries(rn_gpui_core PUBLIC ${dep})
@@ -787,6 +891,22 @@ if(RN_GPUI_APP_CPP_PROVIDER_SOURCE AND EXISTS "${RN_GPUI_APP_CPP_PROVIDER_SOURCE
   get_property(RN_GPUI_CMAKE_APP_CPP_DEFINITIONS GLOBAL PROPERTY RN_GPUI_APP_CPP_DEFINITIONS)
   get_property(RN_GPUI_CMAKE_APP_CPP_COMPILE_OPTIONS GLOBAL PROPERTY RN_GPUI_APP_CPP_COMPILE_OPTIONS)
   list(APPEND RN_GPUI_APP_CPP_SOURCES ${RN_GPUI_CMAKE_APP_CPP_SOURCES})
+  # `extern "C" void f()` functions modules append to RN_GPUI_APP_CPP_INIT_FUNCTIONS
+  # run once, in order, at the end of the generated app initialization.
+  get_property(RN_GPUI_CMAKE_APP_CPP_INIT_FUNCTIONS GLOBAL PROPERTY RN_GPUI_APP_CPP_INIT_FUNCTIONS)
+  set(RN_GPUI_APP_CPP_INIT_DECLARATIONS "")
+  set(RN_GPUI_APP_CPP_INIT_CALLS "")
+  foreach(_rn_gpui_init IN LISTS RN_GPUI_CMAKE_APP_CPP_INIT_FUNCTIONS)
+    string(APPEND RN_GPUI_APP_CPP_INIT_DECLARATIONS "extern \"C\" void ${_rn_gpui_init}();\n")
+    string(APPEND RN_GPUI_APP_CPP_INIT_CALLS "  ${_rn_gpui_init}();\n")
+  endforeach()
+  set(RN_GPUI_APP_CPP_INIT_SOURCE "${CMAKE_BINARY_DIR}/rn_gpui_app_cpp_init.generated.cpp")
+  file(CONFIGURE OUTPUT "${RN_GPUI_APP_CPP_INIT_SOURCE}" CONTENT
+"// Generated by rn-gpui-sys; do not edit.
+@RN_GPUI_APP_CPP_INIT_DECLARATIONS@extern \"C\" void rn_gpui_run_app_cpp_init_functions() {
+@RN_GPUI_APP_CPP_INIT_CALLS@}
+" @ONLY)
+  list(APPEND RN_GPUI_APP_CPP_SOURCES "${RN_GPUI_APP_CPP_INIT_SOURCE}")
   add_library(rn_gpui_app_turbo_modules STATIC
     "${RN_GPUI_APP_CPP_PROVIDER_SOURCE}"
     ${RN_GPUI_APP_CPP_SOURCES})
@@ -851,7 +971,7 @@ list(APPEND RN_GPUI_MODULE_DEFINITIONS ${RN_GPUI_JS_ENGINE_DEFINITIONS})
 
 # Core's own built-in modules register their renderers through the same
 # generated installer, so a built-in is wired exactly like a package module.
-list(APPEND RN_GPUI_MODULE_INSTALLERS context_menu_view image modal scroll_view shortcut_scope text_input window_control)
+list(APPEND RN_GPUI_MODULE_INSTALLERS activity_indicator context_menu_view desktop_scroll_bar image modal native_root native_slot scroll_view shortcut_scope switch text_input window_control)
 
 # The generated installer list depends on which packages are present, so it is
 # written at configure time. file(CONFIGURE) only rewrites it when it changes.
@@ -1036,6 +1156,44 @@ endif()
 file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/link_libs-$<CONFIG>.txt" CONTENT "${RN_GPUI_LINK_LIBS}")
 file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/rpath_dirs-$<CONFIG>.txt" CONTENT "${RN_GPUI_RPATH_DIRS}")
 
+# --- C++ standard for C++ only -------------------------------------------
+# The same flag list passes -std=c++20 on to every target that links a
+# ReactCommon target, and clang rejects it for C sources ("invalid argument
+# '-std=c++20' not allowed with 'C'"), such as sqlite3.c in an app's TurboModule.
+# The flag is kept for C++ sources only.
+if(NOT MSVC)
+  function(rn_gpui_cxx_standard_for_cxx_only directory)
+    get_property(_targets DIRECTORY "${directory}" PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(_target IN LISTS _targets)
+      foreach(_property IN ITEMS COMPILE_OPTIONS INTERFACE_COMPILE_OPTIONS)
+        get_target_property(_options "${_target}" "${_property}")
+        if(NOT _options)
+          continue()
+        endif()
+        set(_rewritten "")
+        set(_changed FALSE)
+        foreach(_option IN LISTS _options)
+          if(_option MATCHES "^-std=(c|gnu)\\+\\+")
+            list(APPEND _rewritten "$<$<COMPILE_LANGUAGE:CXX>:${_option}>")
+            set(_changed TRUE)
+          else()
+            list(APPEND _rewritten "${_option}")
+          endif()
+        endforeach()
+        if(_changed)
+          set_target_properties("${_target}" PROPERTIES "${_property}" "${_rewritten}")
+        endif()
+      endforeach()
+    endforeach()
+    get_property(_subdirectories DIRECTORY "${directory}" PROPERTY SUBDIRECTORIES)
+    foreach(_subdirectory IN LISTS _subdirectories)
+      rn_gpui_cxx_standard_for_cxx_only("${_subdirectory}")
+    endforeach()
+  endfunction()
+
+  rn_gpui_cxx_standard_for_cxx_only("${CMAKE_CURRENT_BINARY_DIR}")
+endif()
+
 # --- MSVC compile-flag cleanup -------------------------------------------
 # React Native's shared flag list (cmake-utils/react-native-flags.cmake) is
 # written for clang/gcc and is applied to every ReactCommon target as
@@ -1065,6 +1223,9 @@ if(MSVC)
           if(_option MATCHES "^-W[a-zA-Z]" OR _option MATCHES "^-f"
              OR _option MATCHES "^-std=" OR _option MATCHES "^-m[a-z]"
              OR _option MATCHES "^-pthread"
+             # RN's glog CMakeLists hardcodes -g -O2, and cl rejects /O2 next
+             # to the /RTC1 of a Debug build; the build type sets both.
+             OR _option STREQUAL "-g" OR _option MATCHES "^-O[0-3sz]?$"
              # RN's glog CMakeLists hardcodes -DHAVE_PREAD=1 for Android.
              OR _option MATCHES "^-DHAVE_PREAD")
             set(_stripped TRUE)
@@ -1150,7 +1311,11 @@ if(MSVC)
         continue()
       endif()
       get_target_property(_source_dir "${_target}" SOURCE_DIR)
-      if(_source_dir AND (_source_dir MATCHES "native-deps"
+      # curl builds from the shared cache, which RN_GPUI_NATIVE_DEPS_CACHE may
+      # place anywhere; the prepared sources are under this build's native-deps.
+      string(FIND "${_source_dir}" "${RN_GPUI_NATIVE_DEPS_CACHE}/" _in_native_deps_cache)
+      if(_source_dir AND (_in_native_deps_cache EQUAL 0
+                          OR _source_dir MATCHES "native-deps"
                           OR _source_dir MATCHES "/ReactCommon/yoga/"))
         set_target_properties("${_target}" PROPERTIES UNITY_BUILD OFF)
       endif()
@@ -1163,6 +1328,11 @@ if(MSVC)
 
   if(RN_GPUI_UNITY_BUILD)
     rn_gpui_disable_unity_for_vendored("${CMAKE_CURRENT_BINARY_DIR}")
+    # The app's library sources come from several packages, whose file-scope
+    # names can collide once merged into one translation unit.
+    if(TARGET rn_gpui_app_turbo_modules)
+      set_target_properties(rn_gpui_app_turbo_modules PROPERTIES UNITY_BUILD OFF)
+    endif()
   endif()
 
   # RN's jsi CMakeLists globs every jsi/*.cpp, which drags in the POSIX memory

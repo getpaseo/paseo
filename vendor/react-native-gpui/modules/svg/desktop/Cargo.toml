@@ -8,3 +8,6 @@ react-native-gpui = { version = "0.1" }
 rn-gpui-sys = { version = "0.1" }
 gpui = { version = "0.2" }
 serde_json = "1"
+# The same versions gpui is built with, for the averaged image it draws.
+image = { version = "0.25", default-features = false }
+smallvec = "1"

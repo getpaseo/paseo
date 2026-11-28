@@ -23,9 +23,8 @@ pub fn known_paths() -> Result<KnownPaths, ModuleError> {
     let temp = std::env::temp_dir();
     let id = app_id();
 
-    let app_data = dirs::data_dir().map(|dir| dir.join(&id));
-    let app_cache = dirs::cache_dir().map(|dir| dir.join(&id));
-    let app_logs = logs_dir(&id);
+    let root = std::env::var_os("RN_GPUI_APP_DATA_DIR");
+    let (app_data, app_cache, app_logs) = app_folders(root.as_deref(), &id);
 
     Ok(KnownPaths {
         home: fallback(dirs::home_dir(), &temp),
@@ -37,6 +36,29 @@ pub fn known_paths() -> Result<KnownPaths, ModuleError> {
         app_cache: ensure_directory(app_cache, &temp),
         app_logs: ensure_directory(app_logs, &temp),
     })
+}
+
+/// The `appData`, `appCache` and `appLogs` folders for an app id.
+///
+/// A non-empty `RN_GPUI_APP_DATA_DIR` moves all three under that root so several
+/// copies of an app can run side by side with separate data without overriding
+/// `HOME`: `<root>/<id>`, `<root>/cache/<id>` and `<root>/logs/<id>`.
+fn app_folders(
+    root: Option<&std::ffi::OsStr>,
+    id: &str,
+) -> (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>) {
+    match root.filter(|root| !root.is_empty()).map(PathBuf::from) {
+        Some(root) => (
+            Some(root.join(id)),
+            Some(root.join("cache").join(id)),
+            Some(root.join("logs").join(id)),
+        ),
+        None => (
+            dirs::data_dir().map(|dir| dir.join(id)),
+            dirs::cache_dir().map(|dir| dir.join(id)),
+            logs_dir(id),
+        ),
+    }
 }
 
 /// A folder as a string, with the temp directory standing in when the platform
@@ -203,6 +225,24 @@ mod tests {
         assert_eq!(sanitise(" ../escape "), "escape");
         assert_eq!(sanitise("a/b\\c"), "a-b-c");
         assert_eq!(sanitise("  "), "");
+    }
+
+    #[test]
+    fn a_data_dir_override_roots_the_three_app_folders() {
+        use std::ffi::OsStr;
+        let (data, cache, logs) = app_folders(Some(OsStr::new("/srv/instance")), "notes");
+        assert_eq!(data, Some(PathBuf::from("/srv/instance/notes")));
+        assert_eq!(cache, Some(PathBuf::from("/srv/instance/cache/notes")));
+        assert_eq!(logs, Some(PathBuf::from("/srv/instance/logs/notes")));
+    }
+
+    #[test]
+    fn an_empty_or_missing_data_dir_override_keeps_the_platform_folders() {
+        use std::ffi::OsStr;
+        let default = app_folders(None, "notes");
+        assert_eq!(app_folders(Some(OsStr::new("")), "notes"), default);
+        assert_eq!(default.0, dirs::data_dir().map(|dir| dir.join("notes")));
+        assert_eq!(default.1, dirs::cache_dir().map(|dir| dir.join("notes")));
     }
 
     #[test]

@@ -19,6 +19,7 @@
 
 import React from 'react';
 import {
+  Image,
   Platform,
   StyleSheet,
   Text,
@@ -27,7 +28,13 @@ import {
   useColorScheme,
 } from 'react-native';
 import type { ColorValue, StyleProp, ViewStyle } from 'react-native';
-import { capabilities } from './index';
+import {
+  capabilities,
+  useClientDecorations,
+  windowButtonIcon,
+  windowButtonLayout,
+} from './index';
+import { Menu, useMenuBarVisible } from './menu';
 import { WindowControl } from './WindowControl';
 import type { WindowControlAction, WindowControlState } from './WindowControl';
 
@@ -41,6 +48,14 @@ export interface TitleBarProps {
    * `backgroundColor`, or to the system appearance when the bar has none.
    */
   appearance?: 'light' | 'dark';
+  /**
+   * Whether to keep a row under the bar for the window's menu bar, where the
+   * menu bar is drawn in the window (Linux). Defaults to `true`; without the
+   * row the menu bar is a strip above the whole window, title bar included.
+   * Hide the menu bar itself with `window.menuBar` in `desktop.json` or
+   * `Menu.setMenuBarVisible`.
+   */
+  menuBar?: boolean;
   style?: StyleProp<ViewStyle>;
   children?: React.ReactNode;
 }
@@ -50,6 +65,27 @@ const CAPTION_ACTIONS: WindowControlAction[] = [
   'maximize',
   'close',
 ];
+
+/**
+ * The buttons a GTK `button-layout` puts on each side of the bar, in order.
+ * Names that are not caption buttons (`appmenu`, `menu`, `icon`) are skipped.
+ */
+export function parseButtonLayout(layout: string): {
+  left: WindowControlAction[];
+  right: WindowControlAction[];
+} {
+  const side = (names: string) =>
+    names
+      .split(',')
+      .map(name => name.trim())
+      .filter((name): name is WindowControlAction =>
+        CAPTION_ACTIONS.includes(name as WindowControlAction),
+      );
+  const [left = '', right = ''] = layout.includes(':')
+    ? layout.split(':')
+    : ['', layout];
+  return { left: side(left), right: side(right) };
+}
 
 /** The colors of one appearance, as Windows draws its own caption buttons. */
 const PALETTE = {
@@ -92,6 +128,7 @@ export function TitleBar({
   trafficLightInset,
   showCaptionButtons,
   appearance,
+  menuBar,
   style,
   children,
 }: TitleBarProps) {
@@ -99,11 +136,16 @@ export function TitleBar({
   // `Platform.OS` is the host, reported by the desktop module, so it needs no
   // fallback: it is `macos`, `windows` or `linux` on a desktop build.
   const isMac = Platform.OS === 'macos';
+  const isLinux = !isMac && Platform.OS !== 'windows';
   // A window that kept its native title bar already has buttons, so drawing a
   // second set would only ever be wrong. `clientDecorations` is the capability
   // that says whether the window is really frameless, which on Linux depends on
   // what the compositor granted.
-  const frameless = capabilities().clientDecorations;
+  const frameless = useClientDecorations();
+  // The compositor draws the frame (Linux with server-side decorations): its bar
+  // already has the title and the buttons, so only the app's own controls stay,
+  // as a toolbar row.
+  const nativeFrame = isLinux && !frameless;
   const inset = trafficLightInset ?? (isMac ? 78 : 0);
   const captionButtons = showCaptionButtons ?? (frameless && !isMac);
   const resolved =
@@ -111,62 +153,125 @@ export function TitleBar({
     appearanceOf(StyleSheet.flatten(style)?.backgroundColor) ??
     (systemScheme === 'dark' ? 'dark' : 'light');
   const palette = PALETTE[resolved];
-  return (
+  const menuBarVisible = useMenuBarVisible();
+  const menuSlot =
+    menuBar !== false && capabilities().menuBarInWindow && menuBarVisible;
+  const slotRef = React.useRef<React.ElementRef<typeof View>>(null);
+  const measureSlot = React.useCallback(() => {
+    slotRef.current?.measureInWindow((x, y, width, height) => {
+      Menu.setMenuBarSlot(
+        { x, y, width, height },
+        {
+          foreground: processColor(palette.foreground) as number,
+          hover: processColor(palette.hover) as number,
+        },
+      ).catch(() => {});
+    });
+  }, [palette.foreground, palette.hover]);
+  React.useEffect(() => {
+    if (!menuSlot) {
+      return undefined;
+    }
+    measureSlot();
+    return () => {
+      Menu.clearMenuBarSlot().catch(() => {});
+    };
+  }, [menuSlot, measureSlot]);
+  const buttons = React.useMemo(
+    () =>
+      isLinux
+        ? parseButtonLayout(windowButtonLayout())
+        : { left: [], right: CAPTION_ACTIONS },
+    [isLinux],
+  );
+  const renderButtons = (actions: WindowControlAction[]) => (
     <View
-      desktopDragRegion
-      style={[
-        styles.bar,
-        { paddingLeft: inset },
-        captionButtons && styles.barWithCaptionButtons,
-        style,
-      ]}
+      style={[styles.captionButtons, isLinux && styles.captionButtonsLinux]}
     >
-      {title != null ? (
-        <Text
-          numberOfLines={1}
-          style={[styles.title, { color: palette.foreground }]}
+      {actions.map(action => (
+        <WindowControl
+          key={action}
+          action={action}
+          testID={`titlebar-${action}`}
+          style={({ hovered, pressed }) => [
+            styles.captionButton,
+            isLinux && styles.captionButtonLinux,
+            hovered && {
+              backgroundColor:
+                action === 'close' && !isLinux ? CLOSE_HOVER : palette.hover,
+            },
+            pressed && {
+              backgroundColor:
+                action === 'close' && !isLinux
+                  ? CLOSE_PRESSED
+                  : palette.pressed,
+            },
+          ]}
         >
-          {title}
-        </Text>
-      ) : null}
-      <View style={styles.spacer} pointerEvents="box-none">
-        {children}
-      </View>
-      {captionButtons ? (
-        <View style={styles.captionButtons}>
-          {CAPTION_ACTIONS.map(action => (
-            <WindowControl
-              key={action}
+          {state => (
+            <CaptionGlyph
               action={action}
-              testID={`titlebar-${action}`}
-              style={({ hovered, pressed }) => [
-                styles.captionButton,
-                hovered && {
-                  backgroundColor:
-                    action === 'close' ? CLOSE_HOVER : palette.hover,
-                },
-                pressed && {
-                  backgroundColor:
-                    action === 'close' ? CLOSE_PRESSED : palette.pressed,
-                },
-              ]}
-            >
-              {state => (
-                <CaptionGlyph
-                  action={action}
-                  state={state}
-                  color={
-                    action === 'close' && (state.hovered || state.pressed)
-                      ? CLOSE_FOREGROUND
-                      : palette.foreground
-                  }
-                />
-              )}
-            </WindowControl>
-          ))}
-        </View>
-      ) : null}
+              state={state}
+              color={
+                action === 'close' &&
+                !isLinux &&
+                (state.hovered || state.pressed)
+                  ? CLOSE_FOREGROUND
+                  : palette.foreground
+              }
+            />
+          )}
+        </WindowControl>
+      ))}
     </View>
+  );
+  return (
+    <>
+      {nativeFrame && React.Children.toArray(children).length === 0 ? null : (
+        <View
+          desktopDragRegion={!nativeFrame}
+          style={[
+            styles.bar,
+            { paddingLeft: inset },
+            captionButtons &&
+              (isLinux
+                ? styles.barWithRoundCaptionButtons
+                : styles.barWithCaptionButtons),
+            captionButtons && buttons.left.length > 0 && styles.barLeftButtons,
+            style,
+          ]}
+        >
+          {captionButtons && buttons.left.length > 0
+            ? renderButtons(buttons.left)
+            : null}
+          {title != null && !nativeFrame ? (
+            <Text
+              numberOfLines={1}
+              style={[styles.title, { color: palette.foreground }]}
+            >
+              {title}
+            </Text>
+          ) : null}
+          <View style={styles.spacer} pointerEvents="box-none">
+            {children}
+          </View>
+          {captionButtons && buttons.right.length > 0
+            ? renderButtons(buttons.right)
+            : null}
+        </View>
+      )}
+      {menuSlot ? (
+        <View
+          ref={slotRef}
+          pointerEvents="none"
+          onLayout={measureSlot}
+          style={[
+            styles.menuSlot,
+            { backgroundColor: StyleSheet.flatten(style)?.backgroundColor },
+          ]}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -204,6 +309,15 @@ function CaptionGlyph({
         : WINDOWS_GLYPHS[action];
     return <Text style={[styles.windowsGlyph, { color }]}>{glyph}</Text>;
   }
+  if (Platform.OS !== 'macos') {
+    const uri = windowButtonIcon(
+      action === 'maximize' && state.maximized ? 'restore' : action,
+      color,
+    );
+    if (uri != null) {
+      return <Image source={{ uri }} style={styles.themeIcon} />;
+    }
+  }
   if (action === 'minimize') {
     return (
       <View style={styles.glyph}>
@@ -232,6 +346,9 @@ function CaptionGlyph({
 const GLYPH = 10;
 
 const styles = StyleSheet.create({
+  menuSlot: {
+    height: 26,
+  },
   bar: {
     height: 38,
     flexDirection: 'row',
@@ -243,6 +360,10 @@ const styles = StyleSheet.create({
   // The caption buttons sit flush with the window's right edge.
   barWithCaptionButtons: {
     paddingRight: 0,
+  },
+  // Linux draws the buttons compact and round, inset from the window edge.
+  barWithRoundCaptionButtons: {
+    paddingRight: 8,
   },
   title: {
     fontSize: 13,
@@ -258,10 +379,26 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignSelf: 'stretch',
   },
+  barLeftButtons: {
+    paddingLeft: 8,
+  },
+  captionButtonsLinux: {
+    alignSelf: 'center',
+    gap: 6,
+  },
+  captionButtonLinux: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+  },
   captionButton: {
     width: 46,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  themeIcon: {
+    width: 16,
+    height: 16,
   },
   glyph: {
     width: GLYPH,

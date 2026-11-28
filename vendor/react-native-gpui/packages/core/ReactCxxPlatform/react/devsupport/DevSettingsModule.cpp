@@ -60,7 +60,10 @@ void DevSettingsModule::toggleElementInspector(jsi::Runtime& /*rt*/) {
 
 void DevSettingsModule::addMenuItem(
     jsi::Runtime& /*rt*/,
-    const std::string& /*title*/) {}
+    const std::string& title) {
+  // Carried on the same shim as the toggles: the name says which one.
+  rn_gpui_dev_settings_changed(("menuItem:" + title).c_str(), true);
+}
 
 void DevSettingsModule::setIsShakeToShowDevMenuEnabled(
     jsi::Runtime& /*rt*/,

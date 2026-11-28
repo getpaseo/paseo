@@ -198,14 +198,54 @@ describe('commands and events', () => {
 
   test('fill the generated event struct from the flattened leaves', () => {
     expect(cpp).toContain(
-      'rr::FixtureChartEventEmitter::OnPointSelected value{};',
+      'rr::FixtureChartEventEmitter::OnPointSelected rn_payload{};',
     );
-    expect(cpp).toContain('value.index = index;');
-    expect(cpp).toContain('.onPointSelected(std::move(value));');
-    expect(cpp).toContain('value.nested.flag = nested_flag;');
-    expect(cpp).toContain('value.nested.names.emplace_back(');
+    expect(cpp).toContain('rn_payload.index = p_index;');
+    expect(cpp).toContain('.onPointSelected(std::move(rn_payload));');
+    expect(cpp).toContain('rn_payload.nested.flag = p_nested_flag;');
+    expect(cpp).toContain('rn_payload.nested.names.emplace_back(');
     expect(cpp).toContain(
       'void rn_gpui_fixture_chart_event_done(const void* emitter) {',
+    );
+  });
+
+  test('a payload field called value or emitter cannot collide with a local or the emitter parameter', () => {
+    const shims = cpp
+      .split('\n')
+      .filter(line => /^void rn_gpui_\w+_event_\w+\(/u.test(line));
+    expect(shims.length).toBeGreaterThan(1);
+    for (const shim of shims) {
+      expect(shim).not.toMatch(
+        /\b(?:int32_t|double|bool|size_t) (?:value|emitter)\b/u,
+      );
+    }
+    expect(cpp).toMatch(/rn_payload\.\w+ = p_\w+;/u);
+  });
+});
+
+describe('an event payload field named like a local of the shim', () => {
+  const source = `
+import { codegenNativeComponent, type CodegenTypes, type ViewProps } from 'react-native';
+export interface NativeProps extends ViewProps {
+  onChanged?: CodegenTypes.DirectEventHandler<
+    Readonly<{ value: string; emitter: CodegenTypes.Double }>
+  >;
+}
+export default codegenNativeComponent<NativeProps>('FixtureValue', { interfaceOnly: true });
+`;
+  const file = writeSpec('FixtureValue', source);
+  const generated = generateHostComponentCpp({
+    specPaths: [file],
+    libraryName: 'ValueSpec',
+    components: { FixtureValue: FLAGS },
+  });
+
+  test('is a parameter of its own, apart from the payload and the emitter', () => {
+    expect(generated).toContain('rn_payload.value.assign(');
+    expect(generated).toContain('rn_payload.emitter = p_emitter;');
+    expect(generated).not.toMatch(/\bvalue\{\}/u);
+    expect(generated).toMatch(
+      /const uint8_t\* p_value_data, size_t p_value_len/u,
     );
   });
 });
@@ -435,3 +475,12 @@ export default codegenNativeComponent<NativeProps>('Many', { interfaceOnly: true
     }, 240_000);
   },
 );
+
+describe('an enum in an event payload', () => {
+  test('is filled from its discriminant, and no layout check names a type for it', () => {
+    expect(cpp).toContain(
+      'rn_payload.speed = static_cast<decltype(rn_payload.speed)>(',
+    );
+    expect(cpp).not.toContain('FixtureChartSpeed');
+  });
+});

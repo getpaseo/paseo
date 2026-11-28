@@ -17,6 +17,28 @@ void setHostComponentStateManager(std::weak_ptr<GpuiMountingManager> manager);
 /// re-measures it. A size the state already holds is dropped there.
 void reportHostComponentSize(int32_t tag, float width, float height);
 
+/// Pushes the size a native root laid its tree out at into its shadow node's
+/// state, where `adopt` applies it to Yoga's style, and asks for the commit
+/// that lays the siblings out again. `minWidth` and `width` count only with
+/// `hasWidth`. Whether the node is known; a size reported before its mount is
+/// not kept.
+bool reportNativeRootSize(
+    int32_t tag,
+    float height,
+    bool hasWidth,
+    float width,
+    float minWidth);
+
+/// Pushes the size the native layout gave a slot's placeholder into the slot's
+/// shadow node's state, where `adopt` makes it the content's width (and, with
+/// `hasHeight`, height). Whether the node is known.
+bool reportNativeSlotSize(
+    int32_t tag,
+    bool hasWidth,
+    float width,
+    bool hasHeight,
+    float height);
+
 /// Pushes the insets a container reported for its chrome into its shadow node's
 /// state, where `adopt` turns them into Yoga padding around the React children.
 /// Insets the state already holds are dropped there.

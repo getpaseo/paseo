@@ -12,6 +12,7 @@ import {
   releaseLibraryDirectories,
   resolveLinkedLibraryForTest,
   runtimeLibraries,
+  vcRuntimeLibraries,
   targetProfileDir,
   toPackagerConfig,
 } from './package-desktop.js';
@@ -252,6 +253,27 @@ describe('toPackagerConfig', () => {
     ...overrides,
   });
 
+  test("what a package's bundle hook produced ships as a resource", () => {
+    const config = toPackagerConfig(
+      desktopConfig(),
+      build({
+        extraResources: ['/project/desktop/build/package/workers'],
+      }),
+    );
+    expect(config.resources).toContain('build/package/workers');
+  });
+
+  test('url schemes become deep link protocols, which register them per OS', () => {
+    const config = toPackagerConfig(
+      desktopConfig({ urlSchemes: ['myapp'] }),
+      build(),
+    );
+    expect(config.deepLinkProtocols).toEqual([{ schemes: ['myapp'] }]);
+    expect(
+      toPackagerConfig(desktopConfig(), build()).deepLinkProtocols,
+    ).toBeUndefined();
+  });
+
   test('a minimal app gives the fields cargo-packager needs', () => {
     const config = toPackagerConfig(desktopConfig(), build());
     expect(config.productName).toBe('My App');
@@ -261,6 +283,25 @@ describe('toPackagerConfig', () => {
     expect(config.binaries).toEqual([{ path: 'my-app', main: true }]);
     expect(config.formats).toEqual(['app', 'dmg']);
     expect(config.outDir).toBe('/project/desktop/build/dist');
+  });
+
+  test('the bundle file and the assets directory ship as resources', () => {
+    // A directory containing this run's output cannot be shipped, so the two
+    // are named. The asset directory has to exist to be listed.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rn-gpui-res-'));
+    roots.push(root);
+    const crateDir = path.join(root, 'desktop');
+    fs.mkdirSync(path.join(crateDir, 'build', 'assets'), { recursive: true });
+    fs.writeFileSync(path.join(crateDir, 'build', 'index.bundle'), 'x');
+    const config = toPackagerConfig(
+      desktopConfig(),
+      build({
+        crateDir,
+        bundleDir: path.join(crateDir, 'build'),
+        assetsDir: path.join(crateDir, 'build', 'assets'),
+      }),
+    );
+    expect(config.resources).toEqual(['build/index.bundle', 'build/assets']);
   });
 
   test('macOS packages seal the app with an ad-hoc signature', () => {
@@ -281,23 +322,25 @@ describe('toPackagerConfig', () => {
     );
   });
 
-  test('the bundle file and the assets directory ship as resources', () => {
-    // A directory containing this run's output cannot be shipped, so the two
-    // are named. The asset directory has to exist to be listed.
+  test('collected Node addons ship as the node-addons resource folder', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rn-gpui-res-'));
     roots.push(root);
     const crateDir = path.join(root, 'desktop');
-    fs.mkdirSync(path.join(crateDir, 'build', 'assets'), { recursive: true });
+    const addons = path.join(crateDir, 'build', 'node-addons');
+    fs.mkdirSync(addons, { recursive: true });
     fs.writeFileSync(path.join(crateDir, 'build', 'index.bundle'), 'x');
     const config = toPackagerConfig(
       desktopConfig(),
       build({
         crateDir,
         bundleDir: path.join(crateDir, 'build'),
-        assetsDir: path.join(crateDir, 'build', 'assets'),
+        nodeAddonsDir: addons,
       }),
     );
-    expect(config.resources).toEqual(['build/index.bundle', 'build/assets']);
+    expect(config.resources).toEqual([
+      'build/index.bundle',
+      { src: 'build/node-addons', target: 'node-addons' },
+    ]);
   });
 
   test('a missing staged bundle is an error, not a silent omission', () => {
@@ -702,4 +745,35 @@ test('a library reached by two paths is shipped once', () => {
     file => path.basename(file),
   );
   expect(names.filter(name => name === 'libfoo.dylib')).toHaveLength(1);
+});
+
+describe('vcRuntimeLibraries', () => {
+  it('finds the CRT DLLs of the newest installed toolset', () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'vcredist-'));
+    const crt = version =>
+      path.join(
+        base,
+        'Microsoft Visual Studio',
+        '2022',
+        'Enterprise',
+        'VC',
+        'Redist',
+        'MSVC',
+        version,
+        'x64',
+        'Microsoft.VC143.CRT',
+      );
+    for (const version of ['14.40.1', '14.44.2']) {
+      fs.mkdirSync(crt(version), { recursive: true });
+      fs.writeFileSync(path.join(crt(version), 'vcruntime140.dll'), '');
+      fs.writeFileSync(path.join(crt(version), 'msvcp140.dll'), '');
+    }
+    const found = vcRuntimeLibraries({ arch: 'x64', env: {}, roots: [base] });
+    expect(found.map(file => path.basename(file))).toEqual([
+      'msvcp140.dll',
+      'vcruntime140.dll',
+    ]);
+    expect(found[0]).toContain('14.44.2');
+    expect(vcRuntimeLibraries({ arch: 'x64', env: {}, roots: [] })).toEqual([]);
+  });
 });

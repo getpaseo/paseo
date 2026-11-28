@@ -1,14 +1,31 @@
 {
   "name": "@react-native-gpui/worklets",
-  "version": "0.1.0",
-  "description": "GPUI platform bindings for react-native-worklets",
+  "version": "0.13.0-alpha.1",
+  "description": "Adapter for react-native-worklets (MIT): runs worklets on desktop, driven by the renderer's frame clock",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/streetwriters/react-native-gpui-modules.git",
+    "directory": "modules/worklets"
+  },
+  "homepage": "https://github.com/streetwriters/react-native-gpui-modules/tree/main/modules/worklets#readme",
+  "bugs": {
+    "url": "https://github.com/streetwriters/react-native-gpui-modules/issues"
+  },
   "files": [
     "desktop",
     "react-native.config.js",
-    "src"
+    "src",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "!**/*.test.js",
+    "!**/*.test.mjs",
+    "!**/*.test.ts",
+    "!**/*.test.cjs"
   ],
   "peerDependencies": {
-    "react-native": "0.87.1",
+    "react-native": "0.87.x",
     "react-native-worklets": "0.13.x"
   },
   "codegenConfig": {
@@ -16,5 +33,8 @@
     "type": "modules",
     "jsSrcsDir": "src"
   },
-  "license": "MIT"
+  "publishConfig": {
+    "access": "public",
+    "tag": "latest"
+  }
 }

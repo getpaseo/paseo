@@ -2,6 +2,7 @@
   "includePatterns": [
     "ReactCxxPlatform/**",
     "ReactCommonOverrides/**",
+    "ReactCommonOverrides.loom/**",
     "index.desktop.js",
     "src-gpui/**"
   ],
@@ -15,12 +16,61 @@
       "issue": 0
     },
     {
+      "type": "derived",
+      "file": "src-gpui/Libraries/Components/ScrollView/ScrollViewNativeComponent.desktop.js",
+      "baseFile": "packages/react-native/Libraries/Components/ScrollView/ScrollViewNativeComponent.js",
+      "baseHash": "eeee1a603e7211afa2441c4eb10d9f25a8c3bb48",
+      "issue": 0
+    },
+    {
       "type": "platform",
       "file": "src-gpui/Libraries/Utilities/Platform.desktop.js"
     },
     {
       "type": "platform",
       "file": "src-gpui/Libraries/Modal/Modal.desktop.js"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/Libraries/Settings/Settings.desktop.js"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/Libraries/Components/RefreshControl/RefreshControl.desktop.js"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/Libraries/Components/StatusBar/StatusBar.desktop.js"
+    },
+    {
+      "type": "derived",
+      "file": "src-gpui/Libraries/Components/ScrollView/ScrollView.desktop.js",
+      "baseFile": "packages/react-native/Libraries/Components/ScrollView/ScrollView.js",
+      "baseHash": "8f218c6e51209bbe56bba4d3fbb9b6320c718c29",
+      "issue": 0
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/Libraries/StyleSheet/PlatformColorValueTypes.desktop.js"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/Libraries/StyleSheet/PlatformColorValueTypesIOS.desktop.js"
+    },
+    {
+      "type": "derived",
+      "file": "src-gpui/Libraries/Components/TextInput/TextInputState.desktop.js",
+      "baseFile": "packages/react-native/Libraries/Components/TextInput/TextInputState.js",
+      "baseHash": "9ef598defeeaf109527f39b48f77564eba80129a",
+      "issue": 0
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/Libraries/Utilities/useWindowDimensions.desktop.js"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/Libraries/Share/Share.desktop.js"
     },
     {
       "type": "patch",
@@ -34,6 +84,41 @@
       "file": "ReactCommonOverrides/react/renderer/textlayoutmanager/platform/cxx/react/renderer/textlayoutmanager/TextLayoutManager.cpp",
       "baseFile": "packages/react-native/ReactCommon/react/renderer/textlayoutmanager/platform/cxx/react/renderer/textlayoutmanager/TextLayoutManager.cpp",
       "baseHash": "f52700da0048f7dce129267d9edbe8e9f724f955",
+      "issue": 0
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommonOverrides/react/renderer/textlayoutmanager/TextLayoutManager.h",
+      "baseFile": "packages/react-native/ReactCommon/react/renderer/textlayoutmanager/platform/cxx/react/renderer/textlayoutmanager/TextLayoutManager.h",
+      "baseHash": "63f2c1afcbc99cde197f9b306bc56384fd6f2e6c",
+      "issue": 0
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommonOverrides/yoga/algorithm/CalculateLayout.cpp",
+      "baseFile": "packages/react-native/ReactCommon/yoga/yoga/yoga/algorithm/CalculateLayout.cpp",
+      "baseHash": "e9d62492daae89288c04d4ff11756257ae3e43a0",
+      "issue": 0
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommonOverrides/yoga/YGEnums.h",
+      "baseFile": "packages/react-native/ReactCommon/yoga/yoga/yoga/YGEnums.h",
+      "baseHash": "f96abdf2f58c960d3e82d0343733c18e9370c27c",
+      "issue": 0
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommonOverrides/yoga/YGEnums.cpp",
+      "baseFile": "packages/react-native/ReactCommon/yoga/yoga/yoga/YGEnums.cpp",
+      "baseHash": "1e823138684a1381fcd0a042a0b286d8413da589",
+      "issue": 0
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommonOverrides/yoga/enums/Errata.h",
+      "baseFile": "packages/react-native/ReactCommon/yoga/yoga/yoga/enums/Errata.h",
+      "baseHash": "5f59ab16a4b39d4e4452263ce78b1bf6a8a6d93a",
       "issue": 0
     },
     {
@@ -127,6 +212,28 @@
       "issue": 0
     },
     {
+      "type": "patch",
+      "file": "ReactCommonOverrides.loom/react/nativemodule/dom/NativeDOM.cpp",
+      "baseFile": "packages/react-native/ReactCommon/react/nativemodule/dom/NativeDOM.cpp",
+      "baseHash": "190c251544809795faf1be36043d2684d49d8627",
+      "loomBaseFile": "ReactCommon/react/nativemodule/dom/NativeDOM.cpp",
+      "loomBaseHash": "c5d01a411c1e006f42ae68366a4b718825637fafb45fcc6d203a15d8dc2bac07",
+      "issue": 0
+    },
+    {
+      "type": "platform",
+      "file": "ReactCommonOverrides.loom/unistd.h"
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommonOverrides.loom/react/nativemodule/dom/NativeDOM.h",
+      "baseFile": "packages/react-native/ReactCommon/react/nativemodule/dom/NativeDOM.h",
+      "baseHash": "d6acbe5683b2cc276509305f9cafc721ad92a88c",
+      "loomBaseFile": "ReactCommon/react/nativemodule/dom/NativeDOM.h",
+      "loomBaseHash": "a96b02643dbb508ffaba7e0a01e4490009c846e3ee156be2b1cab809465e7935",
+      "issue": 0
+    },
+    {
       "type": "platform",
       "file": "src-gpui/src/private/specs/NativeGpuiDesktop.ts"
     },
@@ -164,6 +271,14 @@
     },
     {
       "type": "platform",
+      "file": "src-gpui/src/private/desktop/scrollerStyle.ts"
+    },
+    {
+      "type": "platform",
+      "file": "src-gpui/src/private/desktop/network.ts"
+    },
+    {
+      "type": "platform",
       "file": "src-gpui/Libraries/NativeComponent/BaseViewConfig.desktop.ts"
     },
     {
@@ -181,6 +296,20 @@
     {
       "type": "platform",
       "file": "src-gpui/src/private/desktop/tray.ts"
+    },
+    {
+      "type": "patch",
+      "file": "ReactCommonOverrides/react/renderer/imagemanager/platform/cxx/react/renderer/imagemanager/ImageManager.cpp",
+      "baseFile": "packages/react-native/ReactCommon/react/renderer/imagemanager/platform/cxx/react/renderer/imagemanager/ImageManager.cpp",
+      "baseHash": "604eb031600c654f84bd021091e764fa107ddd86",
+      "issue": 0
+    },
+    {
+      "type": "derived",
+      "file": "src-gpui/Libraries/ReactNative/RendererProxy.desktop.js",
+      "baseFile": "packages/react-native/Libraries/ReactNative/RendererProxy.js",
+      "baseHash": "83c98fa706b08494398f4e47b06c83b6ae8c7f7e",
+      "issue": 0
     }
   ]
 }

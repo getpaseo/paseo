@@ -21,7 +21,12 @@ split-debuginfo = "packed"
 debug = false
 opt-level = 3
 
+# Here rn-gpui-sys is a workspace member, which `"*"` does not cover; in the
+# tester and in apps it is a dependency, which it does. Its build script hands
+# `DEBUG` to CMake, so without `debug = false` the C++ build of `test:rust` and
+# the tester's would differ and each would reconfigure and recompile all of it.
 [profile.dev.package.rn-gpui-sys]
+debug = false
 opt-level = 0
 
 [profile.release]
@@ -42,8 +47,8 @@ lto = "fat"
 codegen-units = 1
 
 [workspace.dependencies]
-gpui = { git = "https://github.com/streetwriters/gpui-fast", rev = "8da7d89" }
-gpui_platform = { git = "https://github.com/streetwriters/gpui-fast", rev = "8da7d89" }
+gpui = { git = "https://github.com/streetwriters/gpui-fast", rev = "1ad3cc3" }
+gpui_platform = { git = "https://github.com/streetwriters/gpui-fast", rev = "1ad3cc3" }
 cxx = "=1.0.202"
 cxx-build = "=1.0.202"
 cmake = "0.1"
@@ -53,5 +58,5 @@ log = "0.4"
 env_logger = "0.11"
 serde_json = "1"
 futures = "0.3"
-http_client = { git = "https://github.com/streetwriters/gpui-fast", rev = "8da7d89" }
+http_client = { git = "https://github.com/streetwriters/gpui-fast", rev = "1ad3cc3" }
 fontdue = "0.9"

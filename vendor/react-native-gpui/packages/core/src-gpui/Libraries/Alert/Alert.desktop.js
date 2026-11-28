@@ -224,10 +224,16 @@ class Alert {
           preferredButtonKey,
           keyboardType,
           userInterfaceStyle: options?.userInterfaceStyle || undefined,
+          cancelable: options?.cancelable || undefined,
         },
         (id, value) => {
+          if (id < 0) {
+            options?.onDismiss?.();
+            return;
+          }
           const cb = callbacks[id];
-          cb && cb(value);
+          cb &&
+            cb(type === 'login-password' ? JSON.parse(value || '{}') : value);
         },
       );
     }

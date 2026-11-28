@@ -37,6 +37,10 @@ class PlatformTimerRegistryImpl : public PlatformTimerRegistry {
 
   void quit() override;
   static uint64_t pendingDueWithin(uint64_t windowMs) noexcept;
+  static uint64_t pendingDump(
+      uint64_t windowMs,
+      char* buffer,
+      uint64_t capacity) noexcept;
 
  private:
   struct Timer {
@@ -59,5 +63,9 @@ class PlatformTimerRegistryImpl : public PlatformTimerRegistry {
 };
 
 extern "C" uint64_t rn_gpui_pending_timers_due_within(uint64_t windowMs) noexcept;
+extern "C" uint64_t rn_gpui_pending_timers_dump(
+    uint64_t windowMs,
+    char* buffer,
+    uint64_t capacity) noexcept;
 
 } // namespace facebook::react

@@ -15,10 +15,19 @@ export type ShortcutSpec = {
   enabled: boolean;
   /** Whether it still fires while a text input has focus. */
   allowInTextInput: boolean;
+  /** Registered with the system, so it fires with no window of the app focused. */
+  global: boolean;
+};
+
+/** A global shortcut the system would not register. */
+export type ShortcutFailure = {
+  id: string;
+  reason: string;
 };
 
 export type ShortcutInstallResult = {
   installed: number;
+  failed: Array<ShortcutFailure>;
 };
 
 export interface Spec extends TurboModule {

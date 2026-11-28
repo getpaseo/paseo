@@ -4,14 +4,12 @@ Patches carried on top of the pinned `facebook/hermes` commit
 (`10a40b5f1de81d007cba6afe567c4ba7a0b45f5d`; see `hermes.commit` in
 `package.json`).
 
-Two of the local build scripts apply every `patches/*.patch` to the Hermes
-checkout before configuring it, and skip a patch that is already applied:
-`scripts/build-hermes-linux.sh` and `scripts/build-hermes-windows.ps1`. The
+The local build scripts apply every `patches/*.patch` to the Hermes checkout
+before configuring it, and skip a patch that is already applied:
+`scripts/build-hermes-linux.sh`, `scripts/build-hermes-macos.sh` and
+`scripts/build-hermes-windows.ps1`. The
 `hermes-engine` workflow does the same for every platform it builds, which is
 what makes a binary fetched from it equivalent to one built locally.
-`scripts/build-hermes-macos.sh` does **not** apply patches — neither patch
-changes macOS, so it has nothing to do; if a future patch ever does, that script
-has to be taught to apply it.
 
 A patch that does not apply is an error rather than a warning in both scripts: a
 silently unpatched build produces binaries that look right and fail at run time.
@@ -70,3 +68,28 @@ Unlike 0001 this one is not behind an option: it is what makes the Windows
 engine able to load addons at all.
 
 Regenerate it the same way as 0001, from a worktree at the pinned commit.
+
+## 0003-intl-on-the-system-icu.patch
+
+Turns `HERMES_ENABLE_INTL` on for macOS, Windows and Linux with one backend that
+finds the system's ICU at run time. It replaces the loader of
+`0001-linux-load-icu-at-runtime.patch` with one for all three platforms, and
+`HERMES_ICU_RUNTIME_LOAD` now means that on every platform (it needs
+`HERMES_ICU_HEADERS_DIR`, the vendored `third_party/icu`).
+
+- `ICULoader`: one table of the ICU entry points Hermes uses, filled from
+  `icu.dll` (System32), `libicucore` or `libicui18n.so.N`; ICU 64 is the oldest
+  version accepted.
+- The upstream ICU backend (`PlatformIntlICU.cpp`, `impl_icu/*`) uses that table
+  through macros, so its calls are unchanged. Its C++ parts (time zones,
+  `UnicodeString`) are now the C API, `toLocaleLowerCase` and `toLocaleUpperCase`
+  call ICU (upstream returned placeholder strings), `DateTimeFormat.formatToParts`
+  is real, and `NumberFormat` is written on ICU number skeletons
+  (`impl_icu/NumberFormat.cpp`).
+- With no usable ICU each class falls back to plain behaviour instead of failing.
+- macOS no longer uses `PlatformIntlApple.mm`: its `NumberFormat` could not
+  format parts or compact numbers.
+- `Intl.NumberFormat.prototype.formatToParts` is exposed on Apple too, and the
+  option list accepts `roundingMode` and `trailingZeroDisplay`.
+
+Check a rebuilt engine with `scripts/intl-smoke.js`.

@@ -667,6 +667,11 @@ export function ContextMenuHost() {
               }}
               onKeyDown={isDeepest ? handleKeyDown : undefined}
               onLayout={event => handleLevelLayout(index, event)}
+              maxHeight={
+                windowSize == null
+                  ? undefined
+                  : Math.floor(windowSize.height * MAX_HEIGHT_FRACTION)
+              }
               // The left and top come from placement; the opacity hides the
               // measuring pass, which exists only to learn the panel's size and
               // would otherwise flash at the top-left corner.
@@ -694,6 +699,9 @@ export function ContextMenuHost() {
     </Modal>
   );
 }
+
+/** How much of the window's height a menu may take before it scrolls. */
+const MAX_HEIGHT_FRACTION = 0.8;
 
 const styles = StyleSheet.create({
   root: {

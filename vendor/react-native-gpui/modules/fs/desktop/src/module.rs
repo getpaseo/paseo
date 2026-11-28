@@ -62,6 +62,9 @@ pub struct RNFsModule {
     /// Live watchers, keyed the same way.
     pub watchers: Mutex<std::collections::HashMap<u32, crate::watching::Watcher>>,
     pub next_watcher: AtomicU32,
+    /// Running downloads, keyed by the id JS chose, with the flag that stops each.
+    pub downloads: crate::download::Downloads,
+    pub uploads: crate::upload::Uploads,
 }
 
 impl RNFsModule {
@@ -72,6 +75,8 @@ impl RNFsModule {
             next_fd: AtomicU32::new(1),
             watchers: Mutex::new(std::collections::HashMap::new()),
             next_watcher: AtomicU32::new(1),
+            downloads: Default::default(),
+            uploads: Default::default(),
         }
     }
 

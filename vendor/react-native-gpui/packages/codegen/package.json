@@ -1,9 +1,24 @@
 {
   "name": "@react-native-gpui/codegen",
-  "version": "0.1.0",
+  "version": "0.87.0-alpha.2",
   "description": "C++ and Rust code generators for react-native-gpui, plugged into @react-native/codegen.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/streetwriters/react-native-gpui.git",
+    "directory": "packages/codegen"
+  },
+  "homepage": "https://streetwriters.github.io/react-native-gpui/",
+  "bugs": {
+    "url": "https://github.com/streetwriters/react-native-gpui/issues"
+  },
   "files": [
-    "src"
+    "src",
+    "CHANGELOG.md",
+    "!**/*.test.js",
+    "!**/*.test.mjs",
+    "!**/*.test.ts",
+    "!**/*.test.cjs"
   ],
   "type": "module",
   "exports": {
@@ -17,5 +32,9 @@
   },
   "dependencies": {
     "@react-native/codegen": "0.87.1"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "latest"
   }
 }

@@ -26,6 +26,14 @@
       "type": "string",
       "minLength": 1
     },
+    "renderer": {
+      "description": "The renderer that mounts React's output. 'fabric' is React Native's renderer and the default. 'loom' is Loom, an alternative renderer pinned by @react-native-gpui/core; it builds the native runtime from source and does not support Reanimated. The RN_GPUI_RENDERER environment variable overrides this.",
+      "enum": ["fabric", "loom"]
+    },
+    "jsThread": {
+      "description": "Where JavaScript runs with the 'loom' renderer. 'background' runs it on its own thread and is the default. 'main' runs it on the UI thread, so commits apply without a thread hop and a long task blocks painting. Only valid with \"renderer\": \"loom\". Fixed when the app is built; changing it rebuilds the Rust part of the runtime. The RN_GPUI_JS_THREAD environment variable overrides this for a build.",
+      "enum": ["background", "main"]
+    },
     "icon": {
       "description": "One square PNG, recommended 1024x1024, relative to desktop/. Per-OS icon formats are generated from it. When this is unset the CLI uses its own placeholder, so every packaging format can be built.",
       "type": "string",
@@ -68,12 +76,16 @@
           "description": "Whether the window can be resized. Defaults to true.",
           "type": "boolean"
         },
+        "visible": {
+          "description": "Whether the window is shown when the app starts. When false the window is created and the app runs and renders in it, but nothing is shown and no focus is taken until the app calls DesktopWindow.show(). Defaults to true.",
+          "type": "boolean"
+        },
         "restoreState": {
           "description": "Whether the window remembers its size and position between launches. Defaults to true.",
           "type": "boolean"
         },
         "titleBar": {
-          "description": "How the window's title bar is drawn. 'default' keeps the platform's; 'transparent' keeps the window's chrome but lets the app draw under it, which on macOS leaves the traffic lights over the app's own bar; 'hidden' removes it entirely, and the app must draw and move its own bar. On Linux 'transparent' and 'hidden' both ask the compositor for client-side decorations, and a window manager that refuses leaves the native title bar in place. Defaults to 'default'.",
+          "description": "How the window's title bar is drawn. 'default' keeps the platform's; 'transparent' keeps the window's chrome but lets the app draw under it, which on macOS leaves the traffic lights over the app's own bar; 'hidden' removes it entirely, and the app must draw and move its own bar; 'none' removes all system chrome, which on macOS means a borderless window with no border line or system corners. On Linux 'transparent' and 'hidden' both ask the compositor for client-side decorations, and a window manager that refuses leaves the native title bar in place. Defaults to 'default'.",
           "default": "default",
           "oneOf": [
             {
@@ -87,8 +99,25 @@
             {
               "type": "string",
               "enum": ["hidden"]
+            },
+            {
+              "type": "string",
+              "enum": ["none"]
             }
           ]
+        },
+        "background": {
+          "description": "What shows through the window where the app draws nothing opaque. 'transparent' is plain alpha transparency, so the app's own colors decide how much of the desktop shows; 'blurred' blurs what is behind the window; 'mica' is the Windows 11 material and leaves the window opaque elsewhere. The root view of the app has to be transparent too. Defaults to 'opaque'.",
+          "default": "opaque",
+          "enum": ["opaque", "transparent", "blurred", "mica"]
+        },
+        "windowButtons": {
+          "description": "Whether macOS draws the traffic lights. Set it to false for a window the app styles entirely. Windows and Linux ignore it. Defaults to true.",
+          "type": "boolean"
+        },
+        "shadow": {
+          "description": "Whether the window has a shadow: the system's on macOS, and the one a client-decorated window draws around itself on Linux. Defaults to true.",
+          "type": "boolean"
         },
         "trafficLightPosition": {
           "description": "Where the macOS traffic lights sit inside a transparent or hidden title bar, in points from the window's top-left corner. Ignored on Windows and Linux, which have no traffic lights. Defaults to the platform's own position.",
@@ -106,11 +135,37 @@
             }
           }
         },
+        "cornerRadius": {
+          "description": "The corner radius, in points, of a client-decorated window on Linux when the desktop's own cannot be measured. Ignored on Windows and macOS.",
+          "type": "number",
+          "minimum": 0
+        },
+        "windowControlsPosition": {
+          "description": "The side of the title bar the window controls (minimize, maximize, close) use on Linux when the desktop does not say where its own go. Defaults to right. Ignored on Windows and macOS.",
+          "enum": ["left", "right"]
+        },
         "menuBar": {
           "description": "Whether the main window shows a menu bar. Windows and Linux draw one inside the window; on macOS this does nothing, because the bar belongs to the system. Defaults to true.",
           "type": "boolean"
         }
       }
+    },
+    "urlSchemes": {
+      "description": "URL schemes that open this app, e.g. [\"myapp\"]. Packaging registers them with the operating system, and Linking delivers the opened URL as getInitialURL() or a url event.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9+.-]*$"
+      }
+    },
+    "singleInstance": {
+      "description": "Whether launching the app again hands its URL to the running copy and exits, instead of starting a second one. Defaults to true when urlSchemes is set.",
+      "type": "boolean"
+    },
+    "accessory": {
+      "description": "Whether the app runs with no Dock icon (macOS), as a launcher or a menu bar app does. Only an accessory app's windows can show over another app's full-screen Space. The tray block's accessory sets this too. Defaults to false.",
+      "type": "boolean"
     },
     "devMenu": {
       "description": "Whether the development menu is available. Defaults to true in development builds.",
@@ -142,6 +197,27 @@
         "accessory": {
           "description": "Whether the app runs as an accessory, with no Dock icon. Defaults to true.",
           "type": "boolean"
+        },
+        "popoverAnchor": {
+          "description": "Linux on Wayland: the corner of the screen's work area the popover is drawn in. 'auto' puts it at the end of the panel's edge, or centred on the click when the panel reports one. Ignored where the popover opens at the icon. Defaults to 'auto'.",
+          "enum": [
+            "auto",
+            "top-left",
+            "top-right",
+            "bottom-left",
+            "bottom-right",
+            "center"
+          ]
+        },
+        "popoverOffset": {
+          "description": "Linux on Wayland: moves the popover from its corner, in points.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y"],
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" }
+          }
         }
       }
     },

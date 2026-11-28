@@ -67,6 +67,61 @@ export type WatchEvent = {
   path: string;
 };
 
+export type DownloadHeader = {
+  name: string;
+  value: string;
+};
+
+export type DownloadOptions = {
+  id: number;
+  method: string;
+  headers: Array<DownloadHeader>;
+};
+
+/**
+ * What a download resolves with. A non-2xx answer is not an error here: it
+ * comes back with its `status` and a small `body`, and no file is written.
+ */
+export type DownloadResult = {
+  status: number;
+  headers: Array<DownloadHeader>;
+  bytes: number;
+  body?: string;
+};
+
+export type DownloadProgress = {
+  id: number;
+  received: number;
+  // -1 when the server did not say how long the body is.
+  total: number;
+};
+
+export type UploadOptions = {
+  id: number;
+  method: string;
+  headers: Array<DownloadHeader>;
+  // Where in the file the body starts.
+  offset: number;
+  // How many bytes to send; -1 sends everything from `offset`.
+  length: number;
+};
+
+/**
+ * What an upload resolves with. Any status is a result; `body` is the first
+ * part of the response.
+ */
+export type UploadResult = {
+  status: number;
+  headers: Array<DownloadHeader>;
+  body: string;
+};
+
+export type UploadProgress = {
+  id: number;
+  sent: number;
+  total: number;
+};
+
 /**
  * The file system module: one instance, on its own thread, so a slow file never
  * blocks JS or the UI.
@@ -154,9 +209,27 @@ export interface Spec extends TurboModule {
   renameSync(from: string, to: string): boolean;
   copyFileSync(from: string, to: string): boolean;
 
+  download(
+    url: string,
+    path: string,
+    options: DownloadOptions,
+  ): Promise<DownloadResult>;
+  // Returns whether a download with that id was running.
+  cancelDownload(id: number): boolean;
+
+  upload(
+    url: string,
+    path: string,
+    options: UploadOptions,
+  ): Promise<UploadResult>;
+  // Returns whether an upload with that id was running.
+  cancelUpload(id: number): boolean;
+
   getPaths(): KnownPaths;
 
   readonly onWatchEvent: CodegenTypes.EventEmitter<WatchEvent>;
+  readonly onDownloadProgress: CodegenTypes.EventEmitter<DownloadProgress>;
+  readonly onUploadProgress: CodegenTypes.EventEmitter<UploadProgress>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('RNFsModule');

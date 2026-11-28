@@ -7,8 +7,7 @@
  * `desktopWindowControl` prop it replaces.
  *
  * The name must end in `NativeComponent.ts`: React Native's babel plugin turns any
- * such file into a static view config, which is how core's other hand-registered
- * host components (`NativeViewHost`) work too.
+ * such file into a static view config.
  *
  * @format
  */

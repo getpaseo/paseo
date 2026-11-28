@@ -1,12 +1,16 @@
 {
   "name": "@react-native-gpui/hermes",
-  "version": "0.1.1",
+  "version": "0.87.0-alpha.1",
   "description": "Pinned Hermes engine for react-native-gpui: public headers and prebuilt VM and compiler binaries",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/streetwriters/react-native-gpui.git",
     "directory": "packages/hermes"
+  },
+  "homepage": "https://streetwriters.github.io/react-native-gpui/",
+  "bugs": {
+    "url": "https://github.com/streetwriters/react-native-gpui/issues"
   },
   "hermes": {
     "repository": "https://github.com/facebook/hermes",
@@ -15,11 +19,13 @@
       "HERMES_ENABLE_NAPI=ON",
       "HERMES_ENABLE_DEBUGGER=ON",
       "HERMES_ENABLE_TEST_SUITE=OFF",
-      "HERMES_ENABLE_INTL=OFF",
-      "HERMES_ICU_RUNTIME_LOAD=ON  # Linux only; other platforms build without it",
+      "HERMES_ENABLE_INTL=ON",
+      "HERMES_ICU_RUNTIME_LOAD=ON",
+      "HERMES_ICU_HEADERS_DIR=packages/hermes/third_party/icu",
       "HERMES_BUILD_APPLE_FRAMEWORK=OFF"
     ],
-    "workflow": ".github/workflows/hermes-engine.yml"
+    "workflow": ".github/workflows/hermes-engine.yml",
+    "engineRelease": "0.1.3"
   },
   "files": [
     "API",
@@ -30,10 +36,19 @@
     "scripts",
     "react-native.config.js",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md",
+    "!**/*.test.js",
+    "!**/*.test.mjs",
+    "!**/*.test.ts",
+    "!**/*.test.cjs"
   ],
   "scripts": {
     "fetch-binaries": "node scripts/fetch-binaries.mjs",
     "verify-binaries": "node scripts/fetch-binaries.mjs --verify"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "latest"
   }
 }

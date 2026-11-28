@@ -147,7 +147,7 @@ pub fn install(cx: &App) {
             .spawn(async move {
                 #[cfg(feature = "test-driver")]
                 let _activity = ImageLoadActivity;
-                let result = load_dimensions(&uri, client).await;
+                let result = load_dimensions(&uri, client, request_id).await;
                 match result {
                     Ok((width, height)) => ffi::rn_gpui_on_image_load_result(
                         request_id,
@@ -165,8 +165,12 @@ pub fn install(cx: &App) {
 async fn load_dimensions(
     uri: &str,
     client: std::sync::Arc<dyn HttpClient>,
+    request_id: u64,
 ) -> Result<(u32, u32), String> {
-    let bytes = load_bytes(uri, client).await?;
+    let bytes = load_bytes_reporting(uri, client, &mut |loaded, total| {
+        ffi::rn_gpui_on_image_progress(request_id, loaded, total);
+    })
+    .await?;
     image::ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|error| error.to_string())?
@@ -179,6 +183,16 @@ async fn load_dimensions(
 pub(crate) async fn load_bytes(
     uri: &str,
     client: std::sync::Arc<dyn HttpClient>,
+) -> Result<Vec<u8>, String> {
+    load_bytes_reporting(uri, client, &mut |_, _| {}).await
+}
+
+/// `load_bytes`, calling `progress(loaded, total)` as an http body arrives;
+/// `total` is `-1` when the server did not say.
+async fn load_bytes_reporting(
+    uri: &str,
+    client: std::sync::Arc<dyn HttpClient>,
+    progress: &mut (dyn FnMut(i64, i64) + Send),
 ) -> Result<Vec<u8>, String> {
     let bytes = if let Some(bytes) = cached_bytes(uri) {
         bytes
@@ -206,12 +220,31 @@ pub(crate) async fn load_bytes(
         if !response.status().is_success() {
             return Err(format!("image request failed with {}", response.status()));
         }
+        let total = response
+            .headers()
+            .get(gpui::http_client::http::header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(-1);
         let mut bytes = Vec::new();
-        response
-            .body_mut()
-            .read_to_end(&mut bytes)
-            .await
-            .map_err(|error| error.to_string())?;
+        let mut chunk = vec![0u8; 16 * 1024];
+        let mut last_report = std::time::Instant::now();
+        loop {
+            let read = response
+                .body_mut()
+                .read(&mut chunk)
+                .await
+                .map_err(|error| error.to_string())?;
+            if read == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk[..read]);
+            if last_report.elapsed() >= std::time::Duration::from_millis(50) {
+                last_report = std::time::Instant::now();
+                progress(bytes.len() as i64, total);
+            }
+        }
+        progress(bytes.len() as i64, total);
         bytes
     } else {
         std::fs::read(uri).map_err(|error| error.to_string())?

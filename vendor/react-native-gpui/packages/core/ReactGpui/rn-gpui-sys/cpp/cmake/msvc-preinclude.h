@@ -7,6 +7,10 @@
 // (`/FI`), mirroring the `-include cstdint` the Linux build already needs.
 #pragma once
 
+/* The header is force-included into C sources too (lexbor); the C++ standard
+   headers below make the MSVC C compiler fail with STL1003. */
+#ifdef __cplusplus
+
 /* M_PI and friends are only exposed when this is defined before <cmath>. */
 #ifndef _USE_MATH_DEFINES
 #define _USE_MATH_DEFINES
@@ -57,3 +61,5 @@
 #include <concepts>
 #include <span>
 #include <version>
+
+#endif /* __cplusplus */

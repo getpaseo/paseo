@@ -29,6 +29,7 @@
 #include <react/renderer/animated/AnimatedModule.h>
 #include <glog/logging.h>
 #include <cstdlib>
+#include <unordered_map>
 
 using namespace facebook::react;
 
@@ -57,11 +58,30 @@ ReactCxxTurboModuleProvider::ReactCxxTurboModuleProvider(
       webSocketClientFactory_(std::move(webSocketClientFactory)),
       liveReloadCallback_(std::move(liveReloadCallback)),
       sourceURL_(std::move(sourceURL)),
-      imageLoader_(std::move(imageLoader)) {}
+      imageLoader_(std::move(imageLoader)),
+      modules_(std::make_shared<
+               std::unordered_map<std::string, std::shared_ptr<TurboModule>>>()) {}
 
 std::shared_ptr<TurboModule> ReactCxxTurboModuleProvider::operator()(
     const std::string& name) const {
   react_native_assert(!name.empty() && "TurboModule name must not be empty");
+
+  // JS looks a module up by name every time it asks for it, and the binding
+  // leaves caching to the manager, as the iOS and Android ones do. A module
+  // built again on each lookup would destroy the state its other instances
+  // share when the extra one goes.
+  if (auto cached = modules_->find(name); cached != modules_->end()) {
+    return cached->second;
+  }
+  auto turboModule = create(name);
+  if (turboModule) {
+    modules_->emplace(name, turboModule);
+  }
+  return turboModule;
+}
+
+std::shared_ptr<TurboModule> ReactCxxTurboModuleProvider::create(
+    const std::string& name) const {
 
   for (const auto& turboModuleProvider : turboModuleProviders_) {
     if (turboModuleProvider) {

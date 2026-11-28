@@ -2,8 +2,10 @@
 // Fetches, verifies and caches the prebuilt C++ runtime for react-native-gpui.
 //
 // Usage:
-//   node scripts/prebuilt-binaries.mjs ensure [--triple <rust-triple>]
+//   node scripts/prebuilt-binaries.mjs ensure [--triple <rust-triple>] [--renderer fabric|loom]
 //       Print the cached runtime dir, downloading it first when needed.
+//       --renderer loom takes the runtime built against Loom's React Native
+//       tree (pin file `loom` section); fabric is the default.
 //       Exit 2 when the pin file has no asset for the platform.
 //   node scripts/prebuilt-binaries.mjs fetch [--triple <rust-triple>]
 //       Same as ensure (the host triple by default).
@@ -15,6 +17,7 @@
 //       Remove the cache for this package version.
 //   node scripts/prebuilt-binaries.mjs pin --version <v> --input-hash <h> --tag <t>
 //       --repo <owner/name> --sums <SHA256SUMS.txt> --out <pin.json>
+//       [--loom-input-hash <h>]
 //       Write the pin file from a release's SHA256SUMS.txt (used by CI).
 //
 // stdout carries only the result dir (or the verify result); diagnostics go to
@@ -25,7 +28,9 @@
 //
 // The pin file (packages/core/prebuilt-binaries.json) names the
 // release and per-platform assets: { version, inputHash, repo, tag, assets:
-// { "<platform>": { file, sha256, size } } }. An empty assets map means no
+// { "<platform>": { file, sha256, size } }, loom: { inputHash, loom, assets } }.
+// `loom` describes the same release's Loom archives, named
+// prebuilt-binaries-loom-<platform>.tar.gz. An empty assets map means no
 // prebuilt is published yet.
 
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -212,6 +217,19 @@ function download(url, dest, redirects = 0, headers = {}) {
         res.resume();
         return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
       }
+      const total = Number(res.headers['content-length']);
+      let received = 0;
+      let reported = 0;
+      if (total > 0) {
+        res.on('data', chunk => {
+          received += chunk.length;
+          const percent = Math.floor((received / total) * 10) * 10;
+          if (percent > reported) {
+            reported = percent;
+            log(`downloaded ${percent}%`);
+          }
+        });
+      }
       const out = createWriteStream(dest);
       res.pipe(out);
       out.on('finish', () => resolve());
@@ -261,17 +279,21 @@ function acquireLock(lockPath) {
   throw new Error(`timed out waiting for lock ${lockPath}`);
 }
 
-async function ensureDir(triple, { allowNetwork = true } = {}) {
+async function ensureDir(
+  triple,
+  { allowNetwork = true, renderer = 'fabric' } = {},
+) {
   const pin = readPin();
   const platform = platformFor(triple);
-  const asset = pin.assets?.[platform];
+  const loom = renderer === 'loom';
+  const asset = (loom ? pin.loom : pin)?.assets?.[platform];
   if (!asset) {
     die(
-      `no prebuilt asset for ${platform} in ${path.relative(packageDir, pinPath)} (version ${pin.version}); build from source or publish one`,
+      `no ${renderer} prebuilt asset for ${platform} in ${path.relative(packageDir, pinPath)} (version ${pin.version}); build from source or publish one`,
       2,
     );
   }
-  const dir = cacheDir(pin.version, platform);
+  const dir = cacheDir(pin.version, loom ? `loom-${platform}` : platform);
   if (isComplete(dir)) {
     return dir;
   }
@@ -332,6 +354,7 @@ async function ensureDir(triple, { allowNetwork = true } = {}) {
     }
     rmSync(dir, { recursive: true, force: true });
     renameSync(stage, dir);
+    log(`installed ${platform} runtime in ${dir}`);
     return dir;
   } finally {
     if (temp) rmSync(temp, { force: true });
@@ -370,13 +393,18 @@ async function main() {
   switch (command) {
     case 'ensure':
     case 'fetch': {
-      const dir = await ensureDir(triple);
+      const dir = await ensureDir(triple, {
+        renderer: args.renderer ?? 'fabric',
+      });
       process.stdout.write(`${dir}\n`);
       return;
     }
     case 'path': {
       const pin = readPin();
-      process.stdout.write(`${cacheDir(pin.version, platformFor(triple))}\n`);
+      const platform = platformFor(triple);
+      process.stdout.write(
+        `${cacheDir(pin.version, args.renderer === 'loom' ? `loom-${platform}` : platform)}\n`,
+      );
       return;
     }
     case 'verify': {
@@ -421,7 +449,10 @@ async function main() {
           );
       }
       const sumsDir = path.dirname(path.resolve(sums));
+      const loomInputHash = args.loomInputHash;
       const assets = {};
+      const loomAssets = {};
+      let loomCommit = null;
       let reactNative = null;
       for (const rawLine of readFileSync(sums, 'utf8').split('\n')) {
         // A sums file written on Windows (PowerShell's `Set-Content`, or a
@@ -433,11 +464,14 @@ async function main() {
         // The alternation and the anchoring keep that from being read as a
         // platform named `win32-x64-pdb`.
         const match = line.match(
-          /^([0-9a-f]{64})\s+\*?prebuilt-binaries-([a-z0-9]+-[a-z0-9_]+)\.tar\.gz$/u,
+          /^([0-9a-f]{64})\s+\*?prebuilt-binaries-(loom-)?([a-z0-9]+-[a-z0-9_]+)\.tar\.gz$/u,
         );
         if (!match) continue;
-        const [, sha256, platform] = match;
-        const file = `prebuilt-binaries-${platform}.tar.gz`;
+        const [, sha256, loomPrefix, platform] = match;
+        const loom = loomPrefix !== undefined;
+        if (loom && !loomInputHash) continue;
+        const dirName = loom ? `loom-${platform}` : platform;
+        const file = `prebuilt-binaries-${dirName}.tar.gz`;
         // Only platforms this package knows are published.
         const knownPlatform = Object.keys(TRIPLE_PLATFORMS).some(
           t => TRIPLE_PLATFORMS[t] === platform,
@@ -449,7 +483,7 @@ async function main() {
         const manifest = JSON.parse(
           execFileSync(
             tarCommand(),
-            ['-xzOf', archive, `${platform}/manifest.json`],
+            ['-xzOf', archive, `${dirName}/manifest.json`],
             {
               encoding: 'utf8',
               // The manifest lists every file (about 18k entries), above the default buffer.
@@ -457,18 +491,20 @@ async function main() {
             },
           ),
         );
-        if (manifest.inputHash !== inputHash) {
+        const expectedHash = loom ? loomInputHash : inputHash;
+        if (manifest.inputHash !== expectedHash) {
           die(
-            `${file} was built from input hash ${manifest.inputHash}, not ${inputHash}`,
+            `${file} was built from input hash ${manifest.inputHash}, not ${expectedHash}`,
             1,
           );
         }
         reactNative ??= manifest.reactNative;
+        if (loom) loomCommit ??= manifest.loom;
         // Keyed by platform ("win32-x64"), not triple ("x86_64-pc-windows-msvc"):
         // that is the documented shape at the top of this file and what
         // `ensureDir` looks up (`pin.assets?.[platform]`). Keying by triple here
         // meant a written pin could never be read back.
-        assets[platform] = {
+        (loom ? loomAssets : assets)[platform] = {
           file,
           sha256,
           size: statSync(archive).size,
@@ -476,9 +512,27 @@ async function main() {
       }
       if (Object.keys(assets).length === 0)
         die('no prebuilt archives in SHA256SUMS', 1);
-      const pin = { version, reactNative, inputHash, repo, tag, assets };
+      const pin = {
+        version,
+        reactNative,
+        inputHash,
+        repo,
+        tag,
+        assets,
+        ...(Object.keys(loomAssets).length > 0
+          ? {
+              loom: {
+                inputHash: loomInputHash,
+                loom: loomCommit,
+                assets: loomAssets,
+              },
+            }
+          : {}),
+      };
       writeFileSync(path.resolve(out), `${JSON.stringify(pin, null, 2)}\n`);
-      log(`wrote ${out} with ${Object.keys(assets).length} asset(s)`);
+      log(
+        `wrote ${out} with ${Object.keys(assets).length} asset(s) and ${Object.keys(loomAssets).length} Loom asset(s)`,
+      );
       return;
     }
     default:

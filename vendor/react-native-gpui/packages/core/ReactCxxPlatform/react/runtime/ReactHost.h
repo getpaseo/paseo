@@ -27,6 +27,7 @@
 #include <memory>
 #include <string>
 #include <optional>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace facebook::react {
@@ -136,6 +137,13 @@ class ReactHost {
   std::unique_ptr<SchedulerDelegate> schedulerDelegate_;
   std::unique_ptr<Scheduler> scheduler_;
   std::unique_ptr<SurfaceManager> surfaceManager_;
+  // `surfaceManager_` is gone between the old instance and the new one of a
+  // reload, which runs on its own thread, while the UI thread keeps resizing and
+  // asking about surfaces. Calls from other threads take this, and a size that
+  // arrives in that gap is kept in `latestConstraints_` for the restarted surface.
+  mutable std::mutex surfaceManagerMutex_;
+  std::unordered_map<SurfaceId, std::pair<LayoutConstraints, LayoutContext>>
+      latestConstraints_;
 
   std::shared_ptr<DevServerHelper> devServerHelper_;
   std::shared_ptr<std::string> sourceURL_ = std::make_shared<std::string>();

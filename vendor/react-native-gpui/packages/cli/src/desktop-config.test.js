@@ -67,8 +67,11 @@ describe('defaults', () => {
       title: 'My App',
       resizable: true,
       restoreState: true,
+      visible: true,
     });
     expect(config.devMenu).toBe(true);
+    expect(config.urlSchemes).toEqual([]);
+    expect(config.singleInstance).toBe(false);
     expect(config.tray).toBeUndefined();
     expect(config.bundle.targets).toBe('all');
     expect(config.bundle.resources).toEqual([]);
@@ -264,26 +267,42 @@ describe('secrets', () => {
   });
 });
 
-describe('the app.json migration', () => {
-  test('a non-empty app.json desktop key is refused with the migration', () => {
+describe('renderer', () => {
+  test('defaults to fabric with no JS thread choice', () => {
+    const config = loadDesktopConfig(createProject(), 'macos');
+    expect(config.renderer).toBe('fabric');
+    expect(config.jsThread).toBeUndefined();
+  });
+
+  test('loom runs JavaScript in the background unless told otherwise', () => {
     const root = createProject({
-      appJson: { name: 'MyApp', desktop: { appId: 'com.example.app' } },
+      files: { 'desktop/desktop.json': { renderer: 'loom' } },
+    });
+    expect(loadDesktopConfig(root, 'macos').jsThread).toBe('background');
+    const main = createProject({
+      files: {
+        'desktop/desktop.json': { renderer: 'loom', jsThread: 'main' },
+      },
+    });
+    expect(loadDesktopConfig(main, 'macos').jsThread).toBe('main');
+  });
+
+  test('a JS thread needs the loom renderer', () => {
+    const root = createProject({
+      files: { 'desktop/desktop.json': { jsThread: 'main' } },
     });
     expect(() => loadDesktopConfig(root, 'macos')).toThrow(
-      'move `app.json` desktop.* into `desktop/desktop.json` (see the README)',
+      /jsThread: only available with "renderer": "loom"/,
     );
   });
 
-  test('an empty app.json desktop key is tolerated', () => {
+  test('an unknown renderer lists the choices', () => {
     const root = createProject({
-      appJson: { name: 'MyApp', desktop: {} },
+      files: { 'desktop/desktop.json': { renderer: 'skia' } },
     });
-    expect(() => loadDesktopConfig(root, 'macos')).not.toThrow();
-  });
-
-  test('no app.json desktop key at all is fine', () => {
-    const root = createProject();
-    expect(() => loadDesktopConfig(root, 'macos')).not.toThrow();
+    expect(() => loadDesktopConfig(root, 'macos')).toThrow(
+      /\$\.renderer: expected one of "fabric", "loom"/,
+    );
   });
 });
 

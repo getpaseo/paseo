@@ -236,7 +236,8 @@ impl<'a> InputContext<'a> {
 
     /// Schedules a frame, for a component whose next paint depends on this event.
     pub fn request_frame(&mut self) {
-        self.window.request_animation_frame();
+        // Not `request_animation_frame`, which only works while painting.
+        self.window.refresh();
     }
 
     /// The node this hook was called for.

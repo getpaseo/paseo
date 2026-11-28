@@ -4,6 +4,7 @@ pub mod ffi {
     unsafe extern "C++" {
         include!("GpuiImageLoader.h");
         fn rn_gpui_on_image_load_result(request_id: u64, width: f64, height: f64, error: String);
+        fn rn_gpui_on_image_progress(request_id: u64, loaded: i64, total: i64);
     }
 
     #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -65,8 +66,16 @@ pub mod ffi {
         pub pointer_events: u8, // 0 auto, 1 none, 2 box-none, 3 box-only
         pub cursor: u8,         // RN's `Cursor` ordinal; 0 = auto
         pub shadows: Vec<ShadowF>,
-        pub transform: [f32; 16], // column-major 4x4, resolved with layout
+        pub background_json: String, // gradients with their size, position and repeat; empty = none
+        pub filter_json: String,     // `[[name, amount], ...]` from `filter`; empty = none
+        pub mix_blend_mode: u8,      // RN's `BlendMode` ordinal; 0 = normal
+        pub isolate: bool,           // `isolation: 'isolate'`
+        pub hit_slop: [f32; 4],      // `hitSlop`: left, top, right, bottom
+        pub transform: [f32; 16],    // column-major 4x4, resolved with layout
         pub has_transform: bool,
+        pub backface_hidden: bool, // `backfaceVisibility: 'hidden'`
+        /// Whether `transformOrigin` is in the matrix; when it is not, the view turns about its centre.
+        pub transform_origin_set: bool,
         pub test_id: String,
         pub accessibility_label: String,
         pub accessibility_hint: String,
@@ -106,6 +115,21 @@ pub mod ffi {
         pub desktop_drag_region: bool,
         /// "minimize" | "maximize" | "close" for a custom caption button.
         pub on_context_menu: bool,
+        pub on_wheel: bool,
+        /// A node's group name, and the JSON of each state style prop; empty = not set.
+        pub group: String,
+        pub hover_style: String,
+        pub active_style: String,
+        pub focus_style: String,
+        pub focus_visible_style: String,
+        pub group_hover_style: String,
+        pub group_active_style: String,
+        pub drag_over_style: String,
+        /// Whether the view takes files dropped from the operating system.
+        pub accepts_files: bool,
+        pub tooltip: String,
+        pub draggable: bool,
+        pub droppable: bool,
     }
 
     #[derive(Clone, Debug, Default)]
@@ -120,6 +144,9 @@ pub mod ffi {
         pub letter_spacing: f32,
         pub underline: bool,
         pub strikethrough: bool,
+        pub text_transform: u8, // 0 none, 1 uppercase, 2 lowercase, 3 capitalize
+        pub font_variant: u32,  // RN's FontVariant bitmask
+        pub background_color: u32, // ARGB, 0 = none
     }
 
     #[derive(Clone, Debug, Default)]
@@ -128,6 +155,20 @@ pub mod ffi {
         pub max_lines: i32, // 0 = unlimited
         pub text_align: u8, // 0 natural, 1 left, 2 center, 3 right, 4 justify, 5 start, 6 end
         pub ellipsize: u8,  // 0 tail, 1 head, 2 middle, 3 clip
+        pub adjusts_to_fit: bool,
+        pub selectable: bool,
+        pub min_font_scale: f32, // 0 = no lower bound
+        pub shadow_color: u32,   // ARGB, 0 = none
+        pub shadow_dx: f32,
+        pub shadow_dy: f32,
+        pub shadow_radius: f32,
+        /// An empty single-line input measured for the height of one line of
+        /// its font.
+        pub measure_empty_line: bool,
+        /// A shaped layout of this paragraph (`rn_gpui_prepare_text`) that the
+        /// op owns, and the content width it was shaped for. 0 for none.
+        pub prepared: u64,
+        pub prepared_width: f32,
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,12 +197,12 @@ pub mod ffi {
     pub struct MountOp {
         pub kind: MountKind,
         pub tag: i32,
-        pub parent_tag: i32,           // Insert/Remove/Update, else -1
-        pub index: i32,                // Insert/Remove, else -1
-        pub component: String,         // "View", "Paragraph", "Image", "ScrollView", ...
-        pub native_view_name: String,  // Registered NativeViewFactory key
-        pub native_view_props: String, // JSON object supplied to the native view factory
-        pub frame: RectF,              // layoutMetrics.frame, relative to parent, DIPs
+        pub parent_tag: i32, // Insert/Remove/Update, else -1
+        pub index: i32,      // Insert/Remove, else -1
+        /// "View", "Paragraph", "Image", "ScrollView", ...: interned by the host
+        /// for the life of the process, so an op does not allocate its name.
+        pub component: &'static str,
+        pub frame: RectF, // layoutMetrics.frame, relative to parent, DIPs
         pub props_changed: bool,
         pub view: ViewPropsFlat,
         pub extension_props_json: String,
@@ -183,6 +224,11 @@ pub mod ffi {
         pub has_paragraph: bool,
         pub paragraph: ParagraphFlat, // filled for "Paragraph" from its state's AttributedString
         pub layout_changed: bool,
+        /// What changed in a node whose view props did not (the op then carries
+        /// no whole view). 1 content insets and display, 2 border widths, 4
+        /// border radii, 8 transform (these four are groups of `view`), 16 the
+        /// paragraph's `selectable`, 32 the extension props.
+        pub layout_patch: u8,
     }
 
     #[derive(Clone, Debug, Default)]
@@ -232,10 +278,41 @@ pub mod ffi {
         pub has_value: bool,
     }
 
+    /// What a host component measured under a constraint, if it measures.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct HostMeasure {
+        pub width: f32,
+        pub height: f32,
+        pub measured: bool,
+    }
+
+    /// A paragraph shaped by `rn_gpui_prepare_text`: the handle owns a
+    /// reference to the layout until `rn_gpui_release_prepared`.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct PreparedText {
+        pub handle: u64,
+        pub width: f32,
+        pub height: f32,
+    }
+
     #[derive(Clone, Copy, Debug, Default)]
     pub struct MeasureResult {
         pub width: f32,
         pub height: f32,
+    }
+
+    /// One laid-out row of a paragraph, for `onTextLayout`.
+    #[derive(Default)]
+    pub struct LineFlat {
+        pub text: String,
+        pub x: f32,
+        pub y: f32,
+        pub width: f32,
+        pub height: f32,
+        pub ascender: f32,
+        pub descender: f32,
+        pub cap_height: f32,
+        pub x_height: f32,
     }
 
     extern "Rust" {
@@ -254,6 +331,30 @@ pub mod ffi {
         fn rn_gpui_on_text_input_command(tag: i32, focus: bool);
         fn rn_gpui_request_accessibility_focus(tag: i32);
         fn rn_gpui_on_text_input_clear(tag: i32);
+        /// A wheel event's JS handlers have run: `prevented` is whether one called
+        /// `preventDefault` or `stopPropagation`. Called on the JS thread.
+        fn rn_gpui_on_wheel_done(id: u64, prevented: bool);
+        /// Whether scrollers are drawn the legacy way, always shown.
+        fn rn_gpui_scroller_legacy() -> bool;
+        /// A batch of operations for a native tree, as JSON, from JavaScript.
+        fn rn_gpui_native_root_ops(root: u32, ops: &str);
+        /// Measures a host component under a constraint on the layout thread.
+        /// `props` is the address of the node's props handle.
+        fn rn_gpui_host_measure(
+            index: u32,
+            props: usize,
+            min_width: f32,
+            min_height: f32,
+            max_width: f32,
+            max_height: f32,
+        ) -> HostMeasure;
+        /// Whether surfaces start right to left, and whether left and right
+        /// swap in that direction.
+        fn rn_gpui_layout_direction_rtl() -> bool;
+        fn rn_gpui_swap_left_and_right_in_rtl() -> bool;
+        /// A command Fabric dispatched to a built-in component other than
+        /// `TextInput`; `args_json` is the JSON array of its arguments.
+        fn rn_gpui_on_builtin_command(tag: i32, component: &str, name: &str, args_json: &str);
         /// A command Fabric dispatched to a host component. The generated C++
         /// dispatcher already validated the arguments against the spec and
         /// resolved the command to its index in the spec's `COMMANDS`.
@@ -273,7 +374,19 @@ pub mod ffi {
             max_width: f32,
             max_height: f32,
         ) -> MeasureResult;
+        /// Shapes a paragraph for `max_width` like `rn_gpui_measure_text` and
+        /// returns the layout with it, so the main thread paints it without
+        /// shaping. Thread-safe.
+        fn rn_gpui_prepare_text(p: &ParagraphFlat, max_width: f32) -> PreparedText;
+        /// Another reference to a prepared layout, for an op to carry.
+        fn rn_gpui_retain_prepared(handle: u64) -> u64;
+        fn rn_gpui_release_prepared(handle: u64);
+        /// Called on the JS/Fabric thread when a paragraph asks for `onTextLayout`.
+        fn rn_gpui_measure_lines(p: &ParagraphFlat, max_width: f32) -> Vec<LineFlat>;
         fn rn_gpui_log(level: i32, message: &str);
+        /// Whether `rn_gpui_log` at `level` is written anywhere, so a caller
+        /// can skip formatting a message nobody reads.
+        fn rn_gpui_log_enabled(level: i32) -> bool;
         fn rn_gpui_on_surface_stopped(surface_id: i32);
     }
 
@@ -332,9 +445,51 @@ pub mod ffi {
         /// Pushes a size a host component measured into its shadow node's state,
         /// which is what Yoga reads, and asks for the commit that re-measures.
         fn reportHostComponentSize(tag: i32, width: f32, height: f32);
+        /// Pushes the size a native root laid its tree out at into its shadow
+        /// node's state, where it becomes Yoga's size for the box.
+        fn reportNativeRootSize(
+            tag: i32,
+            height: f32,
+            has_width: bool,
+            width: f32,
+            min_width: f32,
+        ) -> bool;
+        /// Pushes the size the native layout gave a slot's placeholder into the
+        /// slot's shadow node's state, where it becomes the content's size.
+        fn reportNativeSlotSize(
+            tag: i32,
+            has_width: bool,
+            width: f32,
+            has_height: bool,
+            height: f32,
+        ) -> bool;
         /// Pushes the insets a container reported for its chrome into its shadow
         /// node's state, where they become Yoga padding around the children.
         fn reportHostComponentInsets(tag: i32, top: f32, right: f32, bottom: f32, left: f32);
+    }
+
+    // SAFETY: the signatures match the declarations in `GpuiCppHostBridge.h`.
+    unsafe extern "C++" {
+        include!("GpuiCppHostBridge.h");
+
+        /// Creates the C++ view of a `cpp` host component node and gives it its
+        /// first props. Zero when no C++ implementation is registered.
+        fn rn_gpui_cpp_host_create(index: u32, tag: i32, props: usize) -> u64;
+        fn rn_gpui_cpp_host_update(id: u64, props: usize);
+        /// Creates the node's native view. `kind` is 0 for a composited view,
+        /// 1 for an NSView and 2 for an X11 window; the result is the view.
+        #[allow(clippy::too_many_arguments)]
+        fn rn_gpui_cpp_host_create_view(
+            id: u64,
+            windows_visual: usize,
+            wayland: bool,
+            x11_window: u32,
+            xcb_connection: usize,
+            wayland_display: usize,
+            wayland_surface: usize,
+            kind: &mut u8,
+        ) -> u64;
+        fn rn_gpui_cpp_host_destroy(id: u64);
     }
 
     // SAFETY: the signatures match the declarations in `GpuiDynamic.h`.
@@ -404,6 +559,17 @@ pub mod ffi {
         fn rn_gpui_http_request_cancel(request_id: u64);
     }
 
+    // SAFETY: the signatures match the declarations in `GpuiNetworkConfig.h`.
+    unsafe extern "C++" {
+        include!("GpuiNetworkConfig.h");
+
+        /// Replaces the proxy and DNS settings; returns an error message or an
+        /// empty string.
+        fn rn_gpui_network_configure(mode: &str, rules: &str, bypass: &str, doh: &str) -> String;
+        /// The proxy a request to `url` uses: `DIRECT` or the proxy's URL.
+        fn rn_gpui_network_proxy_for(url: &str) -> String;
+    }
+
     extern "Rust" {
         /// Called by the C++ bridge when a request finishes. Implemented in
         /// `rn-gpui`, which owns the future waiting for it.
@@ -437,6 +603,7 @@ pub mod ffi {
             dev_server_host: &str,
             dev_server_port: u32,
             js_engine: &str,
+            js_thread: &str,
             dev_mode: bool,
         ) -> UniquePtr<GpuiHost>;
         fn load_script(self: Pin<&mut GpuiHost>, bundle_path: &str, source_url: &str) -> bool;
@@ -489,7 +656,15 @@ pub mod ffi {
             scale: f32,
         );
         fn set_window_top_inset(self: Pin<&mut GpuiHost>, top: f32);
+        fn set_app_state(self: Pin<&mut GpuiHost>, state: &str);
+        fn emit_memory_warning(self: &GpuiHost);
         fn set_window_metrics(self: Pin<&mut GpuiHost>, width: f32, height: f32, scale: f32);
+        fn set_display_metrics(
+            self: Pin<&mut GpuiHost>,
+            screen_width: f32,
+            screen_height: f32,
+            font_scale: f32,
+        );
         fn set_system_appearance(self: Pin<&mut GpuiHost>, appearance: &str);
         fn rn_gpui_run_main_task(id: u64);
         fn stop_surface(self: Pin<&mut GpuiHost>, surface_id: i32);
@@ -504,6 +679,9 @@ pub mod ffi {
         fn on_pointer_frame(self: &GpuiHost, timestamp: f64) -> Result<()>;
         /// payload_json is a JSON object string, e.g. {"pageX":10,"pageY":20}
         fn dispatch_event(self: &GpuiHost, tag: i32, event_type: &str, payload_json: &str);
+        /// Delivers a `topWheel` event whose `nativeEvent` can be prevented, then
+        /// reports through `rn_gpui_on_wheel_done` once its handlers have run.
+        fn dispatch_wheel(self: &GpuiHost, tag: i32, id: u64, payload_json: &str);
         fn emit_device_event(self: &GpuiHost, event_name: &str);
         fn emit_device_event_bool(self: &GpuiHost, event_name: &str, value: bool);
         fn emit_device_event_json(self: &GpuiHost, event_name: &str, payload_json: &str);
@@ -532,9 +710,13 @@ pub use rust_module::{
 use std::sync::OnceLock;
 
 pub use ffi::{
-    CornersF, EdgesF, MeasureResult, MountBatch, MountKind, MountOp, ParagraphFlat, RectF, ShadowF,
-    TextFragmentFlat, ViewPropsFlat,
+    CornersF, EdgesF, LineFlat, MeasureResult, MountBatch, MountKind, MountOp, ParagraphFlat,
+    PreparedText, RectF, ShadowF, TextFragmentFlat, ViewPropsFlat,
 };
+
+/// Where JavaScript runs with the Loom renderer: the `jsThread` autolink
+/// recorded, fixed when the app is built.
+pub const JS_THREAD: &str = env!("RN_GPUI_JS_THREAD_BUILT");
 
 pub type MountHandler = Box<dyn Fn(ffi::MountBatch) + Send + Sync>;
 pub type MeasureHandler =
@@ -544,17 +726,36 @@ pub type AnimatedPropsHandler = Box<dyn Fn(ffi::AnimatedPropsFlat) + Send + Sync
 pub type AnimatedActiveHandler = Box<dyn Fn(bool) + Send + Sync>;
 pub type TextInputCommandHandler = Box<dyn Fn(i32, bool) + Send + Sync>;
 pub type TextInputClearHandler = Box<dyn Fn(i32) + Send + Sync>;
+pub type WheelDoneHandler = Box<dyn Fn(u64, bool) + Send + Sync>;
+pub type ScrollerLegacyHandler = Box<dyn Fn() -> bool + Send + Sync>;
+pub type LayoutDirectionHandler = Box<dyn Fn() -> (bool, bool) + Send + Sync>;
+pub static LAYOUT_DIRECTION_HANDLER: OnceLock<LayoutDirectionHandler> = OnceLock::new();
+pub type BuiltinCommandHandler = Box<dyn Fn(i32, &str, &str, &str) + Send + Sync>;
 /// One command for one tag: the command's index and its validated arguments.
 /// Called on the JS/Fabric thread.
 pub type HostCommandHandler = Box<dyn Fn(i32, u32, Vec<ffi::HostCommandArg>) + Send + Sync>;
 pub type AccessibilityFocusHandler = Box<dyn Fn(i32) + Send + Sync>;
 pub static MOUNT_HANDLER: OnceLock<MountHandler> = OnceLock::new();
+pub type LinesHandler = Box<dyn Fn(&ffi::ParagraphFlat, f32) -> Vec<ffi::LineFlat> + Send + Sync>;
+
+pub type PreparedLayout = std::sync::Arc<dyn std::any::Any + Send + Sync>;
+pub type PrepareHandler =
+    Box<dyn Fn(&ffi::ParagraphFlat, f32) -> (PreparedLayout, ffi::MeasureResult) + Send + Sync>;
+pub static PREPARE_HANDLER: OnceLock<PrepareHandler> = OnceLock::new();
+pub static LINES_HANDLER: OnceLock<LinesHandler> = OnceLock::new();
 pub static MEASURE_HANDLER: OnceLock<MeasureHandler> = OnceLock::new();
 pub static SURFACE_STOPPED_HANDLER: OnceLock<SurfaceStoppedHandler> = OnceLock::new();
 pub static ANIMATED_PROPS_HANDLER: OnceLock<AnimatedPropsHandler> = OnceLock::new();
 pub static ANIMATED_ACTIVE_HANDLER: OnceLock<AnimatedActiveHandler> = OnceLock::new();
 pub static TEXT_INPUT_COMMAND_HANDLER: OnceLock<TextInputCommandHandler> = OnceLock::new();
 pub static TEXT_INPUT_CLEAR_HANDLER: OnceLock<TextInputClearHandler> = OnceLock::new();
+pub static WHEEL_DONE_HANDLER: OnceLock<WheelDoneHandler> = OnceLock::new();
+pub static SCROLLER_LEGACY_HANDLER: OnceLock<ScrollerLegacyHandler> = OnceLock::new();
+pub type NativeRootOpsHandler = Box<dyn Fn(u32, &str) + Send + Sync>;
+pub static NATIVE_ROOT_OPS_HANDLER: OnceLock<NativeRootOpsHandler> = OnceLock::new();
+pub type HostMeasureHandler = Box<dyn Fn(u32, usize, [f32; 4]) -> Option<(f32, f32)> + Send + Sync>;
+pub static HOST_MEASURE_HANDLER: OnceLock<HostMeasureHandler> = OnceLock::new();
+pub static BUILTIN_COMMAND_HANDLER: OnceLock<BuiltinCommandHandler> = OnceLock::new();
 pub static HOST_COMMAND_HANDLER: OnceLock<HostCommandHandler> = OnceLock::new();
 pub static ACCESSIBILITY_FOCUS_HANDLER: OnceLock<AccessibilityFocusHandler> = OnceLock::new();
 pub type MainTaskHandler = Box<dyn Fn(u64) + Send + Sync>;
@@ -690,6 +891,63 @@ fn rn_gpui_on_text_input_clear(tag: i32) {
     }
 }
 
+fn rn_gpui_host_measure(
+    index: u32,
+    props: usize,
+    min_width: f32,
+    min_height: f32,
+    max_width: f32,
+    max_height: f32,
+) -> ffi::HostMeasure {
+    let measured = HOST_MEASURE_HANDLER
+        .get()
+        .and_then(|handler| handler(index, props, [min_width, min_height, max_width, max_height]));
+    match measured {
+        Some((width, height)) => ffi::HostMeasure {
+            width,
+            height,
+            measured: true,
+        },
+        None => ffi::HostMeasure::default(),
+    }
+}
+
+fn rn_gpui_native_root_ops(root: u32, ops: &str) {
+    if let Some(handler) = NATIVE_ROOT_OPS_HANDLER.get() {
+        handler(root, ops);
+    }
+}
+
+fn rn_gpui_scroller_legacy() -> bool {
+    SCROLLER_LEGACY_HANDLER
+        .get()
+        .is_some_and(|handler| handler())
+}
+
+fn rn_gpui_on_wheel_done(id: u64, prevented: bool) {
+    if let Some(handler) = WHEEL_DONE_HANDLER.get() {
+        handler(id, prevented);
+    }
+}
+
+fn rn_gpui_layout_direction_rtl() -> bool {
+    LAYOUT_DIRECTION_HANDLER
+        .get()
+        .is_some_and(|handler| handler().0)
+}
+
+fn rn_gpui_swap_left_and_right_in_rtl() -> bool {
+    LAYOUT_DIRECTION_HANDLER
+        .get()
+        .map_or(true, |handler| handler().1)
+}
+
+fn rn_gpui_on_builtin_command(tag: i32, component: &str, name: &str, args_json: &str) {
+    if let Some(handler) = BUILTIN_COMMAND_HANDLER.get() {
+        handler(tag, component, name, args_json);
+    }
+}
+
 fn rn_gpui_on_host_command(tag: i32, command: u32, args: Vec<ffi::HostCommandArg>) {
     if let Some(handler) = HOST_COMMAND_HANDLER.get() {
         handler(tag, command, args);
@@ -743,6 +1001,56 @@ fn rn_gpui_measure_text(
         Some(handler) => handler(p, max_width, max_height),
         None => ffi::MeasureResult::default(),
     }
+}
+
+fn rn_gpui_prepare_text(p: &ffi::ParagraphFlat, max_width: f32) -> ffi::PreparedText {
+    let Some(handler) = PREPARE_HANDLER.get() else {
+        return ffi::PreparedText::default();
+    };
+    let (layout, measured) = handler(p, max_width);
+    ffi::PreparedText {
+        handle: Box::into_raw(Box::new(layout)) as u64,
+        width: measured.width,
+        height: measured.height,
+    }
+}
+
+fn rn_gpui_retain_prepared(handle: u64) -> u64 {
+    if handle == 0 {
+        return 0;
+    }
+    // SAFETY: a nonzero handle is a live `Box<PreparedLayout>` this module made.
+    let layout = unsafe { &*(handle as *const PreparedLayout) };
+    Box::into_raw(Box::new(layout.clone())) as u64
+}
+
+fn rn_gpui_release_prepared(handle: u64) {
+    if handle != 0 {
+        // SAFETY: as above, and released once.
+        drop(unsafe { Box::from_raw(handle as *mut PreparedLayout) });
+    }
+}
+
+/// Takes ownership of the layout an op carries, once.
+pub fn take_prepared(handle: u64) -> Option<PreparedLayout> {
+    // SAFETY: as above; the caller does not use `handle` again.
+    (handle != 0).then(|| *unsafe { Box::from_raw(handle as *mut PreparedLayout) })
+}
+
+fn rn_gpui_measure_lines(p: &ffi::ParagraphFlat, max_width: f32) -> Vec<ffi::LineFlat> {
+    match LINES_HANDLER.get() {
+        Some(handler) => handler(p, max_width),
+        None => Vec::new(),
+    }
+}
+
+fn rn_gpui_log_enabled(level: i32) -> bool {
+    log::log_enabled!(match level {
+        0 => log::Level::Debug,
+        1 => log::Level::Info,
+        2 => log::Level::Warn,
+        _ => log::Level::Error,
+    })
 }
 
 fn rn_gpui_log(level: i32, message: &str) {

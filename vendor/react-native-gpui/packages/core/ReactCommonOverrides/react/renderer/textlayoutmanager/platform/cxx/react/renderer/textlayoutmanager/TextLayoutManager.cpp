@@ -68,4 +68,28 @@ TextMeasurement TextLayoutManager::measure(
       .attachments = std::move(attachments)};
 }
 
+LinesMeasurements TextLayoutManager::measureLines(
+    const AttributedStringBox& attributedStringBox,
+    const ParagraphAttributes& paragraphAttributes,
+    const Size& size) const {
+  LinesMeasurements lines;
+  const auto* table = rngpui::gpuiTextMeasureTable();
+  if (table == nullptr || table->measureLines == nullptr) {
+    return lines;
+  }
+  for (auto& line : table->measureLines(
+           attributedStringBox.getValue(), paragraphAttributes, size.width)) {
+    lines.emplace_back(
+        std::move(line.text),
+        Rect{
+            .origin = {.x = line.x, .y = line.y},
+            .size = {.width = line.width, .height = line.height}},
+        line.descender,
+        line.capHeight,
+        line.ascender,
+        line.xHeight);
+  }
+  return lines;
+}
+
 } // namespace facebook::react

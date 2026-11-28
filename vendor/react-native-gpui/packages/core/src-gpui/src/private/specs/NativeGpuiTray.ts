@@ -6,6 +6,11 @@ export type TraySize = {
   height: number;
 };
 
+export type TrayOffset = {
+  x: number;
+  y: number;
+};
+
 export type TrayOptions = {
   id?: string;
   tooltip?: string;
@@ -18,6 +23,8 @@ export type TrayOptions = {
   menuOnLeftClick?: boolean;
   quitOnLastWindowClosed?: boolean;
   hideWindowOnClose?: boolean;
+  popoverAnchor?: string;
+  popoverOffset?: TrayOffset;
 };
 
 export type TrayHandle = {
@@ -53,6 +60,13 @@ export interface Spec extends TurboModule {
   traySetIcon(icon: string, template: boolean): Promise<void>;
   traySetTitle(title: string | null): Promise<void>;
   traySetMenu(items: Array<Object> | null): Promise<void>;
+  trayShowPopover(): Promise<void>;
+  trayHidePopover(): Promise<void>;
+  trayTogglePopover(): Promise<void>;
+  traySetPopoverPosition(
+    anchor: string | null,
+    offset: TrayOffset | null,
+  ): Promise<void>;
 
   addListener(eventName: string): void;
   removeListeners(count: number): void;

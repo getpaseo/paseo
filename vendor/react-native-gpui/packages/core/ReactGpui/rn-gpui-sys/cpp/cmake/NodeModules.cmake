@@ -1,7 +1,7 @@
 # Finds an installed package without assuming a repository layout.
 #
 # Every package lives at `node_modules/<name>` in an app, but this repository
-# keeps its own packages at different depths (`packages/core`, `modules/fonts`),
+# keeps its own packages at different depths (`packages/core`, `packages/hermes`),
 # so counting parent directories can only be right in one of the two. The walk
 # starts at the project root and goes up, which covers a package hoisted to an
 # ancestor `node_modules` (npm workspaces) as well as one sitting beside the app

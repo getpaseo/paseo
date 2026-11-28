@@ -94,6 +94,20 @@ impl NativeGpuiAppMenuSpec for AppMenuModule {
         .map_err(module_error)
     }
 
+    async fn menu_set_dock_menu(&self, items: Option<Vec<Value>>) -> Result<(), ModuleError> {
+        let items = json_items(items);
+        if let Some(items) = &items {
+            crate::desktop::icon::preload_menu(items).await;
+        }
+        on_main(move |cx| {
+            app_menu::set_dock_menu(cx, items.as_ref())?;
+            Ok(serde_json::Value::Null)
+        })
+        .await?
+        .map(|_| ())
+        .map_err(module_error)
+    }
+
     async fn menu_update(&self, id: String, patch: MenuItemPatch) -> Result<(), ModuleError> {
         on_main(move |cx| {
             app_menu::update_item(cx, &id, &value_json(patch.into_value()))?;
@@ -112,6 +126,46 @@ impl NativeGpuiAppMenuSpec for AppMenuModule {
         let window_id = window_id.map(|id| id as u32).unwrap_or(MAIN_WINDOW_KEY);
         on_main(move |cx| {
             app_menu::set_menu_bar_visible(cx, window_id, visible)?;
+            Ok(serde_json::Value::Null)
+        })
+        .await?
+        .map(|_| ())
+        .map_err(module_error)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn menu_set_menu_bar_slot(
+        &self,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        foreground: f64,
+        hover: f64,
+        window_id: Option<f64>,
+    ) -> Result<(), ModuleError> {
+        let window_id = window_id.map(|id| id as u32).unwrap_or(MAIN_WINDOW_KEY);
+        let slot = crate::desktop::gpui_menu::MenuBarSlot {
+            x: x as f32,
+            y: y as f32,
+            width: width as f32,
+            height: height as f32,
+            foreground: foreground as u32,
+            hover: hover as u32,
+        };
+        on_main(move |cx| {
+            app_menu::set_menu_bar_slot(cx, window_id, Some(slot))?;
+            Ok(serde_json::Value::Null)
+        })
+        .await?
+        .map(|_| ())
+        .map_err(module_error)
+    }
+
+    async fn menu_clear_menu_bar_slot(&self, window_id: Option<f64>) -> Result<(), ModuleError> {
+        let window_id = window_id.map(|id| id as u32).unwrap_or(MAIN_WINDOW_KEY);
+        on_main(move |cx| {
+            app_menu::set_menu_bar_slot(cx, window_id, None)?;
             Ok(serde_json::Value::Null)
         })
         .await?

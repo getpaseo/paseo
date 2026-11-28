@@ -20,6 +20,7 @@ export {
   isDesktopAvailable,
   platform,
   request,
+  useClientDecorations,
 } from './src-gpui/src/private/desktop';
 
 export type {
@@ -30,6 +31,8 @@ export type {
 export {
   DesktopWindow,
   useDesktopWindow,
+  useWindowFocus,
+  useWindowState,
 } from './src-gpui/src/private/desktop/windows';
 
 export type {
@@ -47,9 +50,14 @@ export {
   useDesktopWindowId,
 } from './src-gpui/src/private/desktop/windowContext';
 
+export { default as ScrollBar } from './src-gpui/src/private/specs/DesktopScrollBarNativeComponent';
 export { TitleBar } from './src-gpui/src/private/desktop/TitleBar';
 export { WindowControl } from './src-gpui/src/private/desktop/WindowControl';
 
+export type {
+  NativeProps as ScrollBarProps,
+  ScrollBarEvent,
+} from './src-gpui/src/private/specs/DesktopScrollBarNativeComponent';
 export type { TitleBarProps } from './src-gpui/src/private/desktop/TitleBar';
 export type {
   WindowControlAction,
@@ -65,12 +73,24 @@ export {
 } from './src-gpui/src/private/desktop/contextMenu';
 
 export { PerfMonitor } from './src-gpui/src/private/desktop/perfMonitor';
+export { Network } from './src-gpui/src/private/desktop/network';
 
 export {
   shortcutId,
   Shortcut,
   Shortcuts,
 } from './src-gpui/src/private/desktop/shortcuts';
+
+export { NativeRoot } from './src-gpui/src/private/desktop/nativeRoot/NativeRoot';
+export type { NativeRootProps } from './src-gpui/src/private/desktop/nativeRoot/NativeRoot';
+export { NativeVirtualList } from './src-gpui/src/private/desktop/nativeRoot/NativeVirtualList';
+export type {
+  NativeVirtualListHandle,
+  NativeVirtualListProps,
+  ScrollAlign,
+} from './src-gpui/src/private/desktop/nativeRoot/NativeVirtualList';
+export { NativeSlot } from './src-gpui/src/private/desktop/nativeRoot/NativeSlot';
+export type { NativeSlotProps } from './src-gpui/src/private/desktop/nativeRoot/NativeSlot';
 
 export {
   ShortcutScope,
@@ -82,6 +102,7 @@ export type {
   InstalledShortcut,
   ShortcutDefinition,
   ShortcutEvent,
+  ShortcutFailure,
   ShortcutHandler,
   ShortcutResolution,
 } from './src-gpui/src/private/desktop/shortcuts';
@@ -91,6 +112,19 @@ export type {
   ShortcutScopeProps,
 } from './src-gpui/src/private/desktop/useShortcut';
 
+export {
+  DragDrop,
+  DragPreview,
+  useDragAutoScroll,
+  useDragState,
+  useIsDragging,
+} from './src-gpui/src/private/desktop/dragDrop';
+export type {
+  DragAutoScrollOptions,
+  DragPreviewProps,
+  DragState,
+} from './src-gpui/src/private/desktop/dragDrop';
+export { App } from './src-gpui/src/private/desktop/app';
 export { Tray } from './src-gpui/src/private/desktop/tray';
 
 export type {
@@ -99,10 +133,16 @@ export type {
 } from './src-gpui/src/private/desktop/tray';
 
 export type { PerfMetrics } from './src-gpui/src/private/desktop/perfMonitor';
+export type {
+  NetworkSettings,
+  ProxyConfig,
+} from './src-gpui/src/private/desktop/network';
 
 export type {
   DesktopContextMenuEvent,
   DesktopContextMenuEventData,
+  DesktopWheelEvent,
+  DesktopWheelEventData,
 } from './types';
 export type {
   ContextMenuOpenEvent,
