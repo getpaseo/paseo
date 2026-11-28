@@ -1,3 +1,8 @@
+import {
+  NativeBrowserCommandRequestSchema,
+  NativeBrowserFrameRequestSchema,
+  NativeBrowserEventsRequestSchema,
+} from "../browser-native.js";
 import { describe, expect, test } from "vitest";
 
 import {
@@ -817,5 +822,35 @@ describe("browser automation execute RPC schemas", () => {
         },
       ],
     });
+  });
+});
+
+describe("native Desktop DevTools IPC requests", () => {
+  const guest = { browserId: BROWSER_ID, workspaceId: "workspace" };
+  test("accepts arbitrary guest CDP domains without narrowing to an automation command list", () => {
+    const input = { ...guest, method: "CSS.getMatchedStylesForNode", params: { nodeId: 12 } };
+    expect(NativeBrowserCommandRequestSchema.parse(input)).toEqual(input);
+  });
+  test("rejects missing guest identity and malformed protocol methods at the IPC boundary", () => {
+    expect(NativeBrowserCommandRequestSchema.safeParse({ method: "DOM.getDocument" }).success).toBe(
+      false,
+    );
+    expect(
+      NativeBrowserCommandRequestSchema.safeParse({ ...guest, method: "not a command" }).success,
+    ).toBe(false);
+    expect(
+      NativeBrowserCommandRequestSchema.safeParse({
+        ...guest,
+        method: "DOM.getDocument",
+        params: [],
+      }).success,
+    ).toBe(false);
+  });
+  test("validates frame freshness and preserves non-destructive event reads", () => {
+    expect(NativeBrowserFrameRequestSchema.safeParse({ ...guest, notBefore: -1 }).success).toBe(
+      false,
+    );
+    const input = { ...guest, method: "Debugger.paused", clear: false };
+    expect(NativeBrowserEventsRequestSchema.parse(input)).toEqual(input);
   });
 });

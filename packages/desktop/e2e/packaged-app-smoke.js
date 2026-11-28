@@ -96,7 +96,10 @@ function getMacMainExecutablePath(appPath) {
 }
 
 function getLaunchCommand(executablePath, args) {
-  if (process.platform !== "linux") {
+  if (
+    process.platform !== "linux" ||
+    process.env.PASEO_DESKTOP_SMOKE_USE_EXISTING_DISPLAY === "1"
+  ) {
     return {
       command: executablePath,
       args,
