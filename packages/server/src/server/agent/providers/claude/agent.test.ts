@@ -4489,6 +4489,70 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
+  test("settles the first tool call after a compaction whose summary is synthetic", async () => {
+    // Claude Code 2.1.330 sends the compaction summary as a user message marked isSynthetic
+    // (seen live after /compact), so it is skipped before it can consume the compaction state.
+    const session = await createSessionForTurns([
+      [
+        createCompactingStatus(),
+        createCompactBoundary({ compact_metadata: { trigger: "auto", pre_tokens: 167_000 } }),
+        {
+          type: "user",
+          parent_tool_use_id: null,
+          isSynthetic: true,
+          message: {
+            role: "user",
+            content: "This session is being continued from a previous conversation.",
+          },
+          uuid: "compact-summary-1",
+          session_id: "session-1",
+        },
+        {
+          type: "assistant",
+          parent_tool_use_id: null,
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: "toolu-after-compact",
+                name: "Bash",
+                input: { command: "ls" },
+              },
+            ],
+          },
+          uuid: "assistant-after-compact",
+          session_id: "session-1",
+        },
+        {
+          type: "user",
+          parent_tool_use_id: null,
+          message: {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "toolu-after-compact", content: "a.go" }],
+          },
+          uuid: "tool-result-after-compact",
+          session_id: "session-1",
+        },
+        createSuccessResult(),
+      ],
+    ]);
+
+    try {
+      const events = await collectStreamEvents(session, "keep working");
+      const statuses = events.flatMap((event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === "toolu-after-compact"
+          ? [event.item.status]
+          : [],
+      );
+      expect(statuses).toEqual(["running", "completed"]);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("reports the plan mode Claude enters on its own with EnterPlanMode", async () => {
     // Claude Code announces a mode it switched to itself as a status message
     // carrying the new permissionMode, right after the EnterPlanMode tool call.

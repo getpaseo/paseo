@@ -2672,7 +2672,6 @@ class ClaudeAgentSession implements AgentSession {
   private lastOptionsModel: string | null = null;
   private lastRuntimeModel: string | null = null;
   private readonly resultMeter = new ClaudeResultMeter();
-  private compacting = false;
   private compactionMarkerOpen = false;
   private queryPumpPromise: Promise<void> | null = null;
   private queryRestartNeeded = false;
@@ -5383,7 +5382,6 @@ class ClaudeAgentSession implements AgentSession {
       }
       const status = toObjectRecord(message)?.status;
       if (status === "compacting") {
-        this.compacting = true;
         // Claude Code repeats this status every 30 seconds until the compaction
         // finishes. Each repeat used to open its own marker, and the app only ever
         // resolves one of them, so the rest stayed on "Compacting..." forever.
@@ -5469,11 +5467,10 @@ class ClaudeAgentSession implements AgentSession {
     message: Extract<SDKMessage, { type: "user" }>,
     events: AgentStreamEvent[],
   ): Promise<void> {
-    if (isSyntheticUserEntry(message)) {
-      return;
-    }
-    if (this.compacting) {
-      this.compacting = false;
+    // The compaction summary is skipped by what it is, never by being the next user message:
+    // Claude marks it synthetic (isCompactSummary in older streams), and a position-based skip
+    // swallowed the first tool result after every compaction instead.
+    if (isSyntheticUserEntry(message) || toObjectRecord(message)?.isCompactSummary === true) {
       return;
     }
     const messageId =
