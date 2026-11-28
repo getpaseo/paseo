@@ -4373,9 +4373,27 @@ describe("Pi catalog model labels", () => {
       label: "Qwen3 IQ3_S (tail skip: on, 52/56)",
     },
     {
+      name: "drops a trailing bracketed tag from the model name",
+      model: {
+        provider: "amd-tokenlab",
+        id: "Qwen3.8-27B",
+        name: "Qwen3.8-27B [CI: 68.1]",
+      },
+      label: "Qwen3.8-27B",
+    },
+    {
       name: "drops the vendor prefix from an upstream model name",
       model: { provider: "openrouter", id: "openai/gpt-5.5", name: "OpenAI: GPT-5.5" },
       label: "GPT-5.5",
+    },
+    {
+      name: "drops a vendor prefix that carries a bracketed tag",
+      model: {
+        provider: "openrouter",
+        id: "tokenlab/Qwen3.8-27B",
+        name: "[free] TokenLab: Qwen3.8-27B",
+      },
+      label: "Qwen3.8-27B",
     },
     {
       name: "shortens a path-like name to its last segment",
