@@ -50,6 +50,40 @@ index 1794b53..eca5e57 100644
 +    return InputConnectionCompat.createWrapper(ic, outAttrs, callback)
    }
  }
+diff --git a/node_modules/@mattermost/react-native-paste-input/ios/NSData+MimeType.m b/node_modules/@mattermost/react-native-paste-input/ios/NSData+MimeType.m
+--- a/node_modules/@mattermost/react-native-paste-input/ios/NSData+MimeType.m
++++ b/node_modules/@mattermost/react-native-paste-input/ios/NSData+MimeType.m
+@@ -9,3 +9,11 @@
+ #import "NSData+MimeType.h"
+-
++
++static BOOL hasTIFFSignature(NSData *data) {
++  if (data.length < 4) return NO;
++  const uint8_t *bytes = data.bytes;
++  // TIFF and BigTIFF use magic 42 and 43 in the indicated byte order.
++  return (bytes[0] == 'I' && bytes[1] == 'I' && (bytes[2] == 42 || bytes[2] == 43) && bytes[3] == 0) ||
++         (bytes[0] == 'M' && bytes[1] == 'M' && bytes[2] == 0 && (bytes[3] == 42 || bytes[3] == 43));
++}
++
+ @implementation NSData (MimeType)
+@@ -13,2 +21,3 @@
+ -(NSString *)mimeType {
++  if (self.length == 0) return @"";
+   uint8_t c;
+@@ -28,3 +37,3 @@
+     case 0x4D:
+-      return @"image/tiff";
++      return hasTIFFSignature(self) ? @"image/tiff" : @"";
+       break;
+@@ -36,2 +45,3 @@
+ -(NSString *)extension {
++  if (self.length == 0) return @"";
+   uint8_t c;
+@@ -51,3 +61,3 @@
+     case 0x4D:
+-      return @"tiff";
++      return hasTIFFSignature(self) ? @"tiff" : @"";
+       break;
 diff --git a/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js b/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js
 index 51b9dfa..501badf 100644
 --- a/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js

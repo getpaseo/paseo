@@ -49,6 +49,57 @@ for (const platform of ["ios", "android"]) {
   });
 }
 
+test(
+  "the native paste fallback distinguishes dictated text from TIFF bytes",
+  { skip: process.platform !== "darwin" },
+  () => {
+    const output = mkdtempSync(path.join(tmpdir(), "paste-input-tiff-"));
+    const ios = path.resolve("node_modules/@mattermost/react-native-paste-input/ios");
+    const binary = path.join(output, "test");
+    try {
+      const compiled = spawnSync(
+        "xcrun",
+        [
+          "clang",
+          "-x",
+          "objective-c",
+          "-",
+          path.join(ios, "NSData+MimeType.m"),
+          "-I",
+          ios,
+          "-framework",
+          "Foundation",
+          "-o",
+          binary,
+        ],
+        {
+          encoding: "utf8",
+          input: `#import "NSData+MimeType.h"
+int main(void) {
+  @autoreleasepool {
+    for (NSString *text in @[@"I'm using Flow ", @"Meet me", @"II", @"MM", @""]) {
+      NSData *data = [text dataUsingEncoding:NSUTF8StringEncoding];
+      if (data.extension.length || data.mimeType.length) return 1;
+    }
+    const uint8_t headers[][4] = {{'I','I',42,0}, {'M','M',0,42}, {'I','I',43,0}, {'M','M',0,43}};
+    for (int i = 0; i < 4; ++i) {
+      NSData *data = [NSData dataWithBytes:headers[i] length:4];
+      if (![data.extension isEqualToString:@"tiff"] || ![data.mimeType isEqualToString:@"image/tiff"]) return 2;
+    }
+  }
+  return 0;
+}`,
+        },
+      );
+      assert.equal(compiled.status, 0, compiled.stderr);
+      const result = spawnSync(binary, [], { encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr);
+    } finally {
+      rmSync(output, { recursive: true, force: true });
+    }
+  },
+);
+
 function createCheckout() {
   const root = mkdtempSync(path.join(tmpdir(), "postinstall-patches-"));
   writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "checkout" }));
