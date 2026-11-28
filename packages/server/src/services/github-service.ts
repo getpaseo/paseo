@@ -1739,6 +1739,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           return data;
         },
         batchSize: GITHUB_POLL_BATCH_MAX,
+        knownActivityRevisions: (url) => watching.get(url)?.callbacks.knownActivityRevisions?.(),
         onChecks: (url, headSha, contexts) => checks.get(url)!({ headSha, contexts }),
         firstBatchSize,
         isObserved,

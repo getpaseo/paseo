@@ -450,12 +450,17 @@ test("reconciles legacy ID-only baselines once without replaying every old comme
   vi.useFakeTimers();
   const home = await createTestHome();
   const { activity: _activity, ...snapshot } = initial;
-  await writeFile(join(home, "change-request-watches.json"), JSON.stringify([{
-    url,
-    snapshot,
-    seenActivity: ["first", "second"],
-    watchers: [{ agentId: "owner" }],
-  }]));
+  await writeFile(
+    join(home, "change-request-watches.json"),
+    JSON.stringify([
+      {
+        url,
+        snapshot,
+        seenActivity: ["first", "second"],
+        watchers: [{ agentId: "owner" }],
+      },
+    ]),
+  );
   const h = createHarness(home);
   const activity = ["first", "second"].map((id) => ({
     id,

@@ -91,13 +91,17 @@ function describeUpdate(group: WatchGroup, next: ChangeRequestSnapshot) {
       // Reconcile once per watch, rather than replaying every historical comment.
       reconciledLegacyActivity = true;
     } else {
-      changes.push(activity.message ?? `${known ? "Updated" : "New"} ${activity.kind}: ${activity.url}`);
+      changes.push(
+        activity.message ?? `${known ? "Updated" : "New"} ${activity.kind}: ${activity.url}`,
+      );
     }
     seen.add(activity.id);
     if (activity.updatedAt !== undefined) activityUpdatedAt[activity.id] = activity.updatedAt;
   }
   if (reconciledLegacyActivity) {
-    changes.push(`Existing review activity reconciled after watcher upgrade; recheck current status: ${group.url}`);
+    changes.push(
+      `Existing review activity reconciled after watcher upgrade; recheck current status: ${group.url}`,
+    );
   }
   if (next.state !== "open") changes.push(`Change request ${next.state}.`);
   return { changes, seenActivity: [...seen], activityUpdatedAt };
@@ -288,6 +292,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
     void ready.catch(() => undefined);
     const release = source.observe(url, {
       knownActivity: () => new Set(groups.get(url)?.seenActivity),
+      knownActivityRevisions: () => groups.get(url)?.activityUpdatedAt,
       snapshot: (snapshot) =>
         serialize(async () => {
           if (closed || observations.get(url) !== observation) return;

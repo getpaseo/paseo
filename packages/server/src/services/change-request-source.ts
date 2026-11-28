@@ -39,6 +39,7 @@ export interface ChangeRequestSource {
       error(error: unknown): void;
       /** Activity the daemon has committed to its baseline. */
       knownActivity?(): ReadonlySet<string>;
+      knownActivityRevisions?(): Readonly<Record<string, string>> | undefined;
     },
   ): () => void;
 }

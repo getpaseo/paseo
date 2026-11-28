@@ -5190,13 +5190,85 @@ describe("exact GitHub pull request observations", () => {
       vi.useRealTimers();
     }
   });
+  it("reads edits in update order and stops paging after the committed revision", async () => {
+    vi.useFakeTimers();
+    const empty = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
+    const url = "https://github.com/owner/repo/pull/42";
+    const edited = { id: "edited", url, updatedAt: "2026-11-27T12:00:00Z" };
+    const known = { id: "known", url, updatedAt: "2026-11-27T11:00:00Z" };
+    const older = { id: "older", url, updatedAt: "2026-11-27T10:00:00Z" };
+    const rateLimit = {
+      limit: 5000,
+      remaining: 4900,
+      resetAt: new Date(Date.now() + 100_000).toISOString(),
+    };
+    const runner = createRunner([
+      JSON.stringify({
+        data: {
+          rateLimit,
+          request0: {
+            pullRequest: {
+              state: "OPEN",
+              headRefOid: "abc",
+              reviewDecision: null,
+              statusCheckRollup: null,
+              comments: {
+                nodes: [older, known, edited],
+                pageInfo: { hasNextPage: true, endCursor: "older-comments" },
+              },
+              reviews: empty,
+              reviewThreads: empty,
+            },
+          },
+        },
+      }),
+    ]);
+    const service = createGitHubService({ runner: runner.runner, resolveGhPath: async () => "gh" });
+    const received: unknown[] = [];
+    const errors: unknown[] = [];
+    try {
+      service.changeRequests.observe(url, {
+        knownActivityRevisions: () => ({
+          edited: "2026-11-27T09:00:00Z",
+          known: known.updatedAt,
+          older: older.updatedAt,
+        }),
+        async snapshot(snapshot) {
+          received.push(snapshot);
+        },
+        error(error) {
+          errors.push(error);
+        },
+      });
+      await vi.advanceTimersByTimeAsync(25);
+      expect(errors).toEqual([]);
+      expect(received[0]).toMatchObject({
+        activity: expect.arrayContaining([{ ...edited, kind: "comment" }]),
+      });
+      expect(runner.calls).toHaveLength(1);
+      expect(runner.calls[0]?.args.at(-1)).toContain(
+        "orderBy: { field: UPDATED_AT, direction: ASC }",
+      );
+    } finally {
+      service.dispose?.();
+      vi.useRealTimers();
+    }
+  });
   it("observes revisions of known comments on older pages and edited review activity", async () => {
     vi.useFakeTimers();
     const empty = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
     const address = "https://github.com/owner/repo/pull/42";
-    const recent = { id: "recent", url: `${address}#issuecomment-2`, updatedAt: "2026-11-27T10:00:00Z" };
+    const recent = {
+      id: "recent",
+      url: `${address}#issuecomment-2`,
+      updatedAt: "2026-11-27T10:00:00Z",
+    };
     const old = { id: "old", url: `${address}#issuecomment-1` };
-    const rateLimit = { limit: 5000, remaining: 4900, resetAt: new Date(Date.now() + 100_000).toISOString() };
+    const rateLimit = {
+      limit: 5000,
+      remaining: 4900,
+      resetAt: new Date(Date.now() + 100_000).toISOString(),
+    };
     const responses: string[] = [];
     for (const updatedAt of ["2026-11-27T09:00:00Z", "2026-11-27T11:00:00Z"]) {
       responses.push(
@@ -5215,17 +5287,33 @@ describe("exact GitHub pull request observations", () => {
                 },
                 reviews: {
                   ...empty,
-                  nodes: [{ id: "review", url: `${address}#pullrequestreview-1`, submittedAt: updatedAt, updatedAt }],
+                  nodes: [
+                    {
+                      id: "review",
+                      url: `${address}#pullrequestreview-1`,
+                      submittedAt: updatedAt,
+                      updatedAt,
+                    },
+                  ],
                 },
                 reviewThreads: {
                   ...empty,
-                  nodes: [{
-                    id: "thread",
-                    comments: {
-                      ...empty,
-                      nodes: [{ id: "inline", url: `${address}#discussion_r1`, publishedAt: updatedAt, updatedAt }],
+                  nodes: [
+                    {
+                      id: "thread",
+                      comments: {
+                        ...empty,
+                        nodes: [
+                          {
+                            id: "inline",
+                            url: `${address}#discussion_r1`,
+                            publishedAt: updatedAt,
+                            updatedAt,
+                          },
+                        ],
+                      },
                     },
-                  }],
+                  ],
                 },
               },
             },
@@ -5246,18 +5334,38 @@ describe("exact GitHub pull request observations", () => {
     try {
       service.changeRequests.observe(address, {
         knownActivity: () => new Set(["recent", "old", "review", "inline"]),
-        async snapshot(snapshot) { received.push(snapshot); },
-        error(error) { errors.push(error); },
+        async snapshot(snapshot) {
+          received.push(snapshot);
+        },
+        error(error) {
+          errors.push(error);
+        },
       });
       await vi.advanceTimersByTimeAsync(25);
-      expect(received[0]?.activity).toContainEqual({ ...old, updatedAt: "2026-11-27T09:00:00Z", kind: "comment" });
+      expect(received[0]?.activity).toContainEqual({
+        ...old,
+        updatedAt: "2026-11-27T09:00:00Z",
+        kind: "comment",
+      });
       await vi.advanceTimersByTimeAsync(20_000);
       expect(errors).toEqual([]);
-      expect(received[1]?.activity).toEqual(expect.arrayContaining([
-        { ...old, updatedAt: "2026-11-27T11:00:00Z", kind: "comment" },
-        { id: "review", url: `${address}#pullrequestreview-1`, updatedAt: "2026-11-27T11:00:00Z", kind: "review" },
-        { id: "inline", url: `${address}#discussion_r1`, updatedAt: "2026-11-27T11:00:00Z", kind: "inline comment" },
-      ]));
+      expect(received[1]?.activity).toEqual(
+        expect.arrayContaining([
+          { ...old, updatedAt: "2026-11-27T11:00:00Z", kind: "comment" },
+          {
+            id: "review",
+            url: `${address}#pullrequestreview-1`,
+            updatedAt: "2026-11-27T11:00:00Z",
+            kind: "review",
+          },
+          {
+            id: "inline",
+            url: `${address}#discussion_r1`,
+            updatedAt: "2026-11-27T11:00:00Z",
+            kind: "inline comment",
+          },
+        ]),
+      );
     } finally {
       service.dispose?.();
       vi.useRealTimers();

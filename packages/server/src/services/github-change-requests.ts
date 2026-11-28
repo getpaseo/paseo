@@ -126,7 +126,7 @@ function connection(name: string, fields: string, cursor?: string, size = PAGE_S
 }
 
 function conversation(cursor?: string) {
-  return `comments(last: ${PAGE_SIZE}${cursor ? `, before: ${JSON.stringify(cursor)}` : ""}) {
+  return `comments(last: ${PAGE_SIZE}, orderBy: { field: UPDATED_AT, direction: ASC }${cursor ? `, before: ${JSON.stringify(cursor)}` : ""}) {
     pageInfo { hasNextPage: hasPreviousPage endCursor: startCursor }
     nodes { id url updatedAt }
   }`;
@@ -160,6 +160,7 @@ interface ReadOptions {
   firstBatchSize: number;
   onChecks(url: string, headSha: string, contexts: unknown[]): void;
   isObserved(url: string): boolean;
+  knownActivityRevisions(url: string): Readonly<Record<string, string>> | undefined;
 }
 
 const pullRequestResult = z
@@ -172,7 +173,7 @@ const threadFields = `id ${connection("comments", inlineFields, undefined, 10)}`
 
 export async function readGitHubChangeRequests(
   urls: string[],
-  { read, batchSize, firstBatchSize, onChecks, isObserved }: ReadOptions,
+  { read, batchSize, firstBatchSize, onChecks, isObserved, knownActivityRevisions }: ReadOptions,
 ): Promise<Map<string, ChangeRequestSnapshot | Error>> {
   const snapshots = new Map<string, ChangeRequestSnapshot>();
   const failed = new Map<string, Error>();
@@ -267,6 +268,8 @@ export async function readGitHubChangeRequests(
             },
           );
         }
+        const revisions = knownActivityRevisions(url);
+        let committedUpdate: string | undefined;
         schedulePages(
           url,
           pr.comments,
@@ -275,8 +278,15 @@ export async function readGitHubChangeRequests(
             for (const item of comments) {
               snapshot.activity.push({ ...item, kind: "comment" });
             }
-            // Edits do not move old comments to the newest page. Read metadata
-            // across the connection; the durable watcher deduplicates revisions.
+            // Walk from newest to oldest. Finish reading all comments that
+            // share the committed timestamp, even if they span pages.
+            for (const { id, updatedAt } of comments.toReversed()) {
+              if (updatedAt === undefined) continue;
+              if (committedUpdate === undefined && revisions?.[id] === updatedAt) {
+                committedUpdate = updatedAt;
+              }
+              if (committedUpdate !== undefined && updatedAt < committedUpdate) return false;
+            }
           },
           (cursor) => pullRequest(url, conversation(cursor)),
           (value) =>
