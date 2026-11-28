@@ -17,6 +17,13 @@ const STEER_DEFAULT_MIGRATION = "steer-default";
 const MOBILE_CONTENT_16_MIGRATION = "mobile-content-16";
 
 /**
+ * Android materialized the "enter" send shortcut while it hid the selector and Return only ever
+ * inserted a newline, so a stored "enter" there was never a choice. Flipping it to "mod-enter"
+ * once keeps Return a newline when the setting starts to apply; picking "enter" afterwards sticks.
+ */
+const ANDROID_MOD_ENTER_SEND_MIGRATION = "android-mod-enter-send";
+
+/**
  * Brings stored settings up to date, returning what the caller should use. Owns both writes so
  * the marker can only ever be written after the settings it describes: a failed marker write
  * leaves the migration to re-run harmlessly, while a failed settings write must leave the marker
@@ -26,7 +33,7 @@ export async function migrateAppSettings(
   settings: AppSettings,
   storage: KeyValueStorage,
   stored?: PersistedAppSettings,
-  options: { native?: boolean } = {},
+  options: { native?: boolean; android?: boolean } = {},
 ): Promise<AppSettings> {
   const migrationMarker = await readValidatedJson(
     storage,
@@ -47,6 +54,13 @@ export async function migrateAppSettings(
   if (options.native && !applied.has(MOBILE_CONTENT_16_MIGRATION)) {
     migrated = migrated.contentFontSize === 15 ? { ...migrated, contentFontSize: 16 } : migrated;
     applied.add(MOBILE_CONTENT_16_MIGRATION);
+    addedMigration = true;
+  }
+
+  if (options.android && !applied.has(ANDROID_MOD_ENTER_SEND_MIGRATION)) {
+    migrated =
+      migrated.sendShortcut === "enter" ? { ...migrated, sendShortcut: "mod-enter" } : migrated;
+    applied.add(ANDROID_MOD_ENTER_SEND_MIGRATION);
     addedMigration = true;
   }
 

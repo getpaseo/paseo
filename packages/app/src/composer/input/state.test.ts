@@ -7,6 +7,7 @@ import {
   resolveComposerSurfacePresentation,
   resolveComposerSurfaceText,
   resolveGlyphRailOffset,
+  resolveHardwareKeyboardSubmitChords,
   resolveMessageInputEnterAction,
   resolveRetainedSelection,
   resolveAlternateSendAction,
@@ -525,6 +526,23 @@ describe("resolveMessageInputEnterAction", () => {
         expect(sendAction.calls).toEqual(["send"]);
       },
     );
+  });
+});
+
+describe("resolveHardwareKeyboardSubmitChords", () => {
+  it("takes plain and modified Return when Enter sends", () => {
+    expect(resolveHardwareKeyboardSubmitChords("enter")).toEqual([
+      "Enter",
+      "Control+Enter",
+      "Meta+Enter",
+    ]);
+  });
+
+  it("leaves plain Return with the text control when the modifier sends", () => {
+    expect(resolveHardwareKeyboardSubmitChords("mod-enter")).toEqual([
+      "Control+Enter",
+      "Meta+Enter",
+    ]);
   });
 });
 

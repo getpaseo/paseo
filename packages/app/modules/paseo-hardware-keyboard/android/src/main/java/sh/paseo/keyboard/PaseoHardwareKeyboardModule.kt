@@ -24,6 +24,9 @@ private const val TERMINAL_INPUT_NATIVE_ID = "paseo-terminal-input"
 internal object HardwareKeyboard {
   var module: PaseoHardwareKeyboardModule? = null
   @Volatile var overlayKeys: Set<String> = emptySet()
+  // The Return chords the focused composer sends with, published by JavaScript and taken
+  // before the IME by HardwareKeyboardSubmitView.
+  @Volatile var submitChords: Set<String> = emptySet()
   private val windows = mutableMapOf<Window, KeyboardWindowCallback>()
   val dispatcher = WindowKeyDispatcher<KeyEvent>()
   private val consumedPresses = mutableSetOf<Int>()
@@ -159,7 +162,7 @@ class PaseoHardwareKeyboardModule : Module(), ExtraWindowEventListener, InputMan
   override fun onExtraWindowDestroy(window: Window) { HardwareKeyboard.release(window) }
   override fun definition() = ModuleDefinition {
     Name("PaseoHardwareKeyboard")
-    Events("onHardwareKeyboardShortcut", "onHardwareKeyboardPresenceChanged")
+    Events("onHardwareKeyboardShortcut", "onHardwareKeyboardPresenceChanged", "onHardwareKeyboardSubmit")
     OnCreate {
       HardwareKeyboard.module = this@PaseoHardwareKeyboardModule
       val context = appContext.reactContext
@@ -180,6 +183,7 @@ class PaseoHardwareKeyboardModule : Module(), ExtraWindowEventListener, InputMan
       if (HardwareKeyboard.module === this@PaseoHardwareKeyboardModule) {
         HardwareKeyboard.module = null
         HardwareKeyboard.overlayKeys = emptySet()
+        HardwareKeyboard.submitChords = emptySet()
         UiThreadUtil.runOnUiThread { if (HardwareKeyboard.module == null) HardwareKeyboard.releaseAll() }
       }
     }
@@ -187,6 +191,16 @@ class PaseoHardwareKeyboardModule : Module(), ExtraWindowEventListener, InputMan
     Function("setOverlayKeys") { keys: List<String> ->
       HardwareKeyboard.overlayKeys = keys.filter { it in setOf("Escape", "Enter", "ArrowUp", "ArrowDown") }.toSet()
     }
+    Function("setHardwareKeyboardSubmitChords") { chords: List<String> ->
+      HardwareKeyboard.submitChords = chords.toSet()
+    }
+    View(HardwareKeyboardSubmitView::class) {}
   }
   internal fun emit(event: Map<String, Any>) { sendEvent("onHardwareKeyboardShortcut", event) }
+  internal fun emitSubmit(event: KeyEvent) {
+    sendEvent("onHardwareKeyboardSubmit", mapOf(
+      "shiftKey" to event.isShiftPressed, "ctrlKey" to event.isCtrlPressed,
+      "metaKey" to event.isMetaPressed, "altKey" to event.isAltPressed,
+    ))
+  }
 }

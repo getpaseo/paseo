@@ -14,9 +14,13 @@ Keyboard navigation needs the sidebar's filtered workspace model even when its v
 panel is hidden. Retain that model while keyboard navigation is active; gating it on
 panel visibility leaves number shortcuts with no targets after a compact startup.
 
-Composer send-key customization remains a separate capability. Native retains its
-existing Return submission path; advertising its web-only customization would expose
-settings the native composer does not implement.
+Composer send keys are a separate capability from bindings. The Send shortcut setting
+applies on web and Android. The web text area cannot tell a touch keyboard's Return from
+a hardware one, so it sends only in a wide layout. The Android key source sees hardware
+presses only, so it sends at any width, as iOS does with hardware Return. Android
+defaults to Ctrl+Enter because its composer only ever inserted a newline on Return. iOS
+retains its existing Return submission path and does not show the setting, since
+advertising it there would expose a choice its composer does not implement.
 
 ## Native sources
 
@@ -28,9 +32,36 @@ top overlay's Enter and arrows, and the Shift or Option shortcuts whose binding 
 active in the current focus scope, such as Shift+Tab in the composer.
 `sources/native.ts` computes the claims from the published bindings and recomputes
 them when the focus scope changes. Cmd and Ctrl combos are never claimed, because
-text controls do not type them. Android takes no claims: a focused `EditText`
+text controls do not type them. Android takes no shortcut claims: a focused `EditText`
 types nothing for these combos. Keep the stream as the sole shortcut emitter: a command-owned
 press is still observed by the window.
+
+Android does take the composer's send chords, because its `EditText` would type Return
+as a newline. While the composer can send, it publishes the chords from
+`resolveHardwareKeyboardSubmitChords`, which derives them from the same
+`resolveMessageInputEnterAction` the web composer uses.
+
+The chords are taken before the IME, not in the window callback. Some IMEs consume a
+physical Return before the window sees it. #6979's diagnostics show Xiaoyi synthesizing a
+soft one (`FLAG_SOFT_KEYBOARD`, device -1), indistinguishable from an on-screen key. With
+Samsung Keyboard on a Galaxy Z Fold8 (One UI 9.0), the window callback never received a
+hardware Return either, while Ctrl+Return passed through untouched.
+The composer input's container is therefore `HardwareKeyboardSubmitView`, a
+`ReactViewGroup` that keeps React Native's layout and overrides `dispatchKeyEventPreIme`.
+As an ancestor of the focused input it sees each hardware press before the IME, and only
+hardware presses. It takes a press that matches a published chord unless the top overlay
+owns Return, consumes it through key-up, and emits one submit event per physical press;
+the composer then runs the same Enter handling as the web text area, autocomplete first.
+Shift+Return and soft-keyboard Return stay with the text control.
+
+Android keyboards keep the last Hangul syllable or predicted word composing while the user
+types, so a composition alone does not mean Return belongs to the IME. Plain Return stays
+with the IME only when the composition awaits conversion: kana, Han or Bopomofo text, or a
+Japanese or Chinese IME subtype, because pinyin composes Latin letters
+(`compositionAwaitsConversion`). A Ctrl or Meta chord never confirms a candidate. Whenever
+the view sends during a composition, it first commits the composition as typed: it drops
+the composing spans and restarts input, which resets the IME so it neither keeps composing
+into the sent text nor inserts it again.
 
 The source spike used an iPad Pro 11-inch (M4) simulator on iOS 18.6 with a
 `UITextView` first responder. Both `UIWindow.sendEvent` and the root controller's

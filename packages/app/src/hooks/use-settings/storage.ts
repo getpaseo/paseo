@@ -24,6 +24,7 @@ import {
   type SidebarRowItems,
 } from "@/components/sidebar/display-preferences/row-items";
 import { isNative } from "@/constants/platform";
+import { Platform } from "react-native";
 import {
   DEFAULT_CONTENT_MAX_WIDTH,
   FONT_SIZE,
@@ -77,6 +78,12 @@ export const DEFAULT_CODE_FONT_SIZE = 12; // == FONT_SIZE.code
 export const MIN_CODE_FONT_SIZE = 9;
 export const MAX_CODE_FONT_SIZE = 22; // line-height 1.5×22=33 stays safe
 export const MAX_FONT_FAMILY_LENGTH = 200;
+/** Return has always inserted a newline in the Android composer, so a hardware keyboard sends with Ctrl+Enter there. */
+export function defaultSendShortcut(android: boolean): SendShortcut {
+  return android ? "mod-enter" : "enter";
+}
+
+export const DEFAULT_SEND_SHORTCUT = defaultSendShortcut(Platform.OS === "android");
 export { DEFAULT_CONTENT_MAX_WIDTH };
 const WIDE_CONTENT_MAX_WIDTH = 1200;
 const legacyContentMaxWidthSchema = clampedNumber(600, 4000);
@@ -175,7 +182,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   chatDisplay: "collapseTurns",
   chatOutlineEnabled: true,
   vimKeybindings: false,
-  sendShortcut: "enter",
+  sendShortcut: DEFAULT_SEND_SHORTCUT,
   filePanelAssociations: {},
   openInSidePane: DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES,
   pullRequestOpenLocation: "explorer",
@@ -284,7 +291,7 @@ const StoredAppSettingsSchema = z
     compactToolCalls: z.boolean().optional().catch(undefined),
     chatOutlineEnabled: z.boolean().catch(true),
     vimKeybindings: z.boolean().catch(false),
-    sendShortcut: z.enum(["enter", "mod-enter"]).catch("enter"),
+    sendShortcut: z.enum(["enter", "mod-enter"]).catch(DEFAULT_SEND_SHORTCUT),
     filePanelAssociations: z.record(z.string(), z.string()).catch({}),
     openInSidePane: z
       .object({
@@ -410,7 +417,10 @@ export async function loadAppSettingsFromStorage(deps: SettingsDeps): Promise<Ap
       await writeAppSettings(deps.storage, read.stored, read.settings);
     }
     const { needsWrite: _needsWrite, ...stored } = read.stored;
-    return await migrateAppSettings(read.settings, deps.storage, stored, { native: isNative });
+    return await migrateAppSettings(read.settings, deps.storage, stored, {
+      native: isNative,
+      android: Platform.OS === "android",
+    });
   } catch (error) {
     console.error("[AppSettings] Failed to load settings:", error);
     throw error;
