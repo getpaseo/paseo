@@ -216,22 +216,33 @@ describe("resolveAgentPrompt uploaded images", () => {
     return home;
   }
 
-  it("resolves uploadedImages inside paseoHome/uploads into native image prompt blocks", async () => {
+  it("resolves uploaded_file attachments with role='image' inside paseoHome/uploads into native image prompt blocks while keeping plain uploaded_file attachments intact", async () => {
     const home = await makeHome();
     const rawBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const imagePath = join(home, "uploads", "upload_1", "photo.png");
     await writeFile(imagePath, rawBytes);
+    const plainFileAttachment = {
+      type: "uploaded_file" as const,
+      id: "upload_plain",
+      fileName: "report.pdf",
+      mimeType: "application/pdf",
+      size: 512,
+      path: join(home, "uploads", "upload_plain", "report.pdf"),
+    };
 
     const prompt = await resolveAgentPrompt({
       paseoHome: home,
       text: "What is in this image?",
-      uploadedImages: [
+      attachments: [
+        plainFileAttachment,
         {
+          type: "uploaded_file",
           id: "upload_1",
           fileName: "photo.png",
           mimeType: "image/png",
           size: rawBytes.byteLength,
           path: imagePath,
+          role: "image",
         },
       ],
     });
@@ -250,6 +261,7 @@ describe("resolveAgentPrompt uploaded images", () => {
           path: imagePath,
         },
       },
+      plainFileAttachment,
     ]);
   });
 
@@ -262,13 +274,15 @@ describe("resolveAgentPrompt uploaded images", () => {
     const prompt = await resolveAgentPrompt({
       paseoHome: home,
       text: "   ",
-      uploadedImages: [
+      attachments: [
         {
+          type: "uploaded_file",
           id: "upload_1",
           fileName: "only.jpg",
           mimeType: "image/jpeg",
           size: rawBytes.byteLength,
           path: imagePath,
+          role: "image",
         },
       ],
     });
@@ -303,10 +317,12 @@ describe("resolveAgentPrompt uploaded images", () => {
     await symlink(secretPath, symlinkPath);
 
     const baseImage = {
+      type: "uploaded_file" as const,
       id: "upload_1",
       fileName: "bad.png",
       mimeType: "image/png",
       size: 16,
+      role: "image" as const,
     };
 
     // 1. ../ traversal out of uploads/
@@ -314,7 +330,7 @@ describe("resolveAgentPrompt uploaded images", () => {
       resolveAgentPrompt({
         paseoHome: home,
         text: "leak",
-        uploadedImages: [{ ...baseImage, path: join(home, "uploads", "..", "local-credential") }],
+        attachments: [{ ...baseImage, path: join(home, "uploads", "..", "local-credential") }],
       }),
     ).rejects.toThrow(/outside/i);
 
@@ -323,7 +339,7 @@ describe("resolveAgentPrompt uploaded images", () => {
       resolveAgentPrompt({
         paseoHome: home,
         text: "leak",
-        uploadedImages: [{ ...baseImage, path: secretPath }],
+        attachments: [{ ...baseImage, path: secretPath }],
       }),
     ).rejects.toThrow(/outside/i);
 
@@ -332,7 +348,7 @@ describe("resolveAgentPrompt uploaded images", () => {
       resolveAgentPrompt({
         paseoHome: home,
         text: "leak",
-        uploadedImages: [{ ...baseImage, path: siblingPath }],
+        attachments: [{ ...baseImage, path: siblingPath }],
       }),
     ).rejects.toThrow(/outside/i);
 
@@ -341,7 +357,7 @@ describe("resolveAgentPrompt uploaded images", () => {
       resolveAgentPrompt({
         paseoHome: home,
         text: "leak",
-        uploadedImages: [{ ...baseImage, path: symlinkPath }],
+        attachments: [{ ...baseImage, path: symlinkPath }],
       }),
     ).rejects.toThrow(/outside/i);
 
@@ -350,7 +366,7 @@ describe("resolveAgentPrompt uploaded images", () => {
       resolveAgentPrompt({
         paseoHome: home,
         text: "dir",
-        uploadedImages: [{ ...baseImage, path: join(home, "uploads", "upload_1") }],
+        attachments: [{ ...baseImage, path: join(home, "uploads", "upload_1") }],
       }),
     ).rejects.toThrow(/not a file|regular file/i);
   });

@@ -123,7 +123,6 @@ function buildCreateAgentOptions({
   composerState,
   text,
   attachments,
-  uploadedImages,
   workspaceDirectory,
   workspaceId,
   provider,
@@ -136,7 +135,6 @@ function buildCreateAgentOptions({
   };
   text: string;
   attachments: NonNullable<CreateAgentRequestOptions["attachments"]>;
-  uploadedImages: NonNullable<CreateAgentRequestOptions["uploadedImages"]> | null;
   workspaceDirectory: string;
   workspaceId: string;
   provider: CreateAgentRequestOptions["provider"];
@@ -154,7 +152,6 @@ function buildCreateAgentOptions({
       ? { systemPrompt: composerState.selectedSystemPrompt }
       : {}),
     ...(text.trim() ? { initialPrompt: text.trim() } : {}),
-    ...(uploadedImages && uploadedImages.length > 0 ? { uploadedImages } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),
   };
 }
@@ -330,7 +327,7 @@ export function WorkspaceSetupDialog() {
             supportsForgeAttachments: supportsForgeSearch,
           }),
         });
-        const uploadedImages =
+        const uploadedImageAttachments =
           wirePayload.images.length > 0
             ? await uploadImageAttachments({
                 client: withConnectedClient(),
@@ -342,8 +339,7 @@ export function WorkspaceSetupDialog() {
         const { workspaceId: _workspaceId, ...agentInput } = buildCreateAgentOptions({
           composerState,
           text,
-          attachments: wirePayload.attachments,
-          uploadedImages: uploadedImages ?? null,
+          attachments: [...wirePayload.attachments, ...(uploadedImageAttachments ?? [])],
           workspaceDirectory: cwd,
           workspaceId: "",
           provider: composerState.selectedProvider,

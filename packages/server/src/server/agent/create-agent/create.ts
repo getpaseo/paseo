@@ -10,7 +10,7 @@ import type {
   CreatePaseoWorktreeWorkflowFn,
   CreatePaseoWorktreeWorkflowResult,
 } from "../../worktree-session.js";
-import type { AgentAttachment, FirstAgentContext, UploadedImage } from "../../messages.js";
+import type { AgentAttachment, FirstAgentContext } from "../../messages.js";
 import type { AgentManager, CreateAgentOptions, ManagedAgent } from "../agent-manager.js";
 import type { AgentPromptInput, AgentRunOptions, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentStorage } from "../agent-storage.js";
@@ -68,7 +68,6 @@ export interface CreateAgentFromSessionInput {
   clientMessageId?: string;
   outputSchema?: Record<string, unknown>;
   images?: Array<{ data: string; mimeType: string }>;
-  uploadedImages?: UploadedImage[];
   attachments?: AgentAttachment[];
   labels: Record<string, string>;
   metadata?: CreateAgentOptions["metadata"];
@@ -254,7 +253,6 @@ async function resolveSessionCreateAgent(
     paseoHome: dependencies.paseoHome,
     text: trimmedPrompt ?? "",
     images: input.images,
-    uploadedImages: input.uploadedImages,
     attachments: input.attachments,
   });
   const hasPromptContent = Array.isArray(prompt) ? prompt.length > 0 : prompt.length > 0;

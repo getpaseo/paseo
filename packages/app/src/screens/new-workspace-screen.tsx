@@ -519,10 +519,14 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
   const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
     format: attachmentSubmitFormat,
   });
-  const uploadedImages =
+  const uploadedImageAttachments =
     wirePayload.images.length > 0
       ? await uploadImageAttachments({ client: input.resolveClient(), images: wirePayload.images })
       : undefined;
+  const mergedAttachments = [
+    ...(wirePayload.attachments ?? []),
+    ...(uploadedImageAttachments ?? []),
+  ];
   let navigated = false;
   const delivery: { outcome: SubmitOutcome } = { outcome: "background" };
   const initialAgent: NonNullable<CreateWorkspaceRequestOptions["agent"]> = {
@@ -540,8 +544,7 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
     ...(Object.keys(composerState.metadata).length > 0 ? { metadata: composerState.metadata } : {}),
     initialPrompt: text,
     clientMessageId: `${input.draftId}:initial-message`,
-    uploadedImages: uploadedImages?.length ? uploadedImages : undefined,
-    attachments: wirePayload.attachments?.length ? wirePayload.attachments : undefined,
+    attachments: mergedAttachments.length > 0 ? mergedAttachments : undefined,
   };
   const execute = async (): Promise<AgentSnapshotPayload> => {
     const { agent } = await ensureWorkspace({

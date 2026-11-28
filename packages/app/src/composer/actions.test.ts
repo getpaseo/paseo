@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AgentAttachment, ForgeSearchItem, UploadedImage } from "@getpaseo/protocol/messages";
+import type {
+  AgentAttachment,
+  ForgeSearchItem,
+  UploadedFileAttachment,
+} from "@getpaseo/protocol/messages";
 import type {
   AttachmentMetadata,
   ComposerAttachment,
@@ -182,7 +186,6 @@ interface FakeSendCall {
     messageId: string;
     activeTurnBehavior?: "interrupt" | "steer";
     images?: Array<{ data: string; mimeType: string }>;
-    uploadedImages?: UploadedImage[];
     attachments: AgentAttachment[];
   };
 }
@@ -309,13 +312,17 @@ function createFakeQueue(
   return fake;
 }
 
-const passthroughUploadImages = async (images: AttachmentMetadata[]): Promise<UploadedImage[]> =>
+const passthroughUploadImages = async (
+  images: AttachmentMetadata[],
+): Promise<UploadedFileAttachment[]> =>
   images.map((image) => ({
+    type: "uploaded_file",
     id: `upload_${image.id}`,
     fileName: image.fileName ?? `${image.id}.png`,
     mimeType: image.mimeType,
     size: image.byteSize ?? 0,
     path: `/home/user/.paseo/uploads/upload_${image.id}/${image.fileName ?? `${image.id}.png`}`,
+    role: "image",
   }));
 
 describe("cancelComposerAgent", () => {
@@ -593,26 +600,27 @@ describe("dispatchComposerAgentMessage", () => {
     expect(call.agentId).toBe("agent");
     expect(call.text).toBe("send attachments");
     expect(call.options.images).toBeUndefined();
-    expect(call.options.uploadedImages).toEqual([
+    const expectedPrAttachment = {
+      type: "forge_change_request",
+      mimeType: "application/paseo-forge-change-request",
+      forge: "github",
+      number: 202,
+      title: "Refactor composer attachments",
+      url: "https://github.com/acme/paseo/pull/202",
+      body: "PR body",
+      baseRefName: "main",
+      headRefName: "composer-attachments",
+    };
+    expect(call.options.attachments).toEqual([
+      expectedPrAttachment,
       {
+        type: "uploaded_file",
         id: "upload_img-2",
         fileName: "img-2.png",
         mimeType: "image/png",
         size: 42,
         path: "/home/user/.paseo/uploads/upload_img-2/img-2.png",
-      },
-    ]);
-    expect(call.options.attachments).toEqual([
-      {
-        type: "forge_change_request",
-        mimeType: "application/paseo-forge-change-request",
-        forge: "github",
-        number: 202,
-        title: "Refactor composer attachments",
-        url: "https://github.com/acme/paseo/pull/202",
-        body: "PR body",
-        baseRefName: "main",
-        headRefName: "composer-attachments",
+        role: "image",
       },
     ]);
 
@@ -623,7 +631,7 @@ describe("dispatchComposerAgentMessage", () => {
     expect(userMessage.kind).toBe("user_message");
     expect(userMessage.text).toBe("send attachments");
     expect(userMessage.images).toEqual([image]);
-    expect(userMessage.attachments).toEqual(call.options.attachments);
+    expect(userMessage.attachments).toEqual([expectedPrAttachment]);
     expect(userMessage.id).toBe(call.options.messageId);
     expect(userMessage.clientMessageId).toBe(call.options.messageId);
     expect(userMessage.messageId).toBeUndefined();
@@ -694,7 +702,6 @@ describe("dispatchComposerAgentMessage", () => {
     });
 
     expect(client.calls[0]?.options.images).toBeUndefined();
-    expect(client.calls[0]?.options.uploadedImages).toBeUndefined();
     expect(client.calls[0]?.options.attachments).toEqual([]);
   });
 
@@ -714,7 +721,6 @@ describe("dispatchComposerAgentMessage", () => {
 
     expect(client.calls[0]?.options.attachments).toEqual([review.attachment]);
     expect(client.calls[0]?.options.images).toBeUndefined();
-    expect(client.calls[0]?.options.uploadedImages).toBeUndefined();
   });
 
   it("serializes browser_element workspace attachments as text attachments at the wire boundary", async () => {

@@ -242,7 +242,7 @@ test("DaemonClient uploads a >24 MiB multi-photo batch sequentially with support
     const photoCount = 13;
     const photoSize = 2 * 1024 * 1024;
     const expectedPhotos: Uint8Array[] = [];
-    const uploadedImages = [];
+    const uploadedImageAttachments = [];
     for (let index = 0; index < photoCount; index += 1) {
       const bytes = new Uint8Array(photoSize);
       bytes.fill((index + 1) & 0xff);
@@ -258,18 +258,15 @@ test("DaemonClient uploads a >24 MiB multi-photo batch sequentially with support
       });
       expect(upload.error).toBeNull();
       expect(upload.file).not.toBeNull();
-      uploadedImages.push({
-        id: upload.file!.id,
-        fileName: upload.file!.fileName,
-        mimeType: upload.file!.mimeType,
-        size: upload.file!.size,
-        path: upload.file!.path,
+      uploadedImageAttachments.push({
+        ...upload.file!,
+        role: "image" as const,
       });
     }
 
     await client.sendAgentMessage(agent.id, "Describe all 13 photos", {
       messageId: "msg-batch-13",
-      uploadedImages,
+      attachments: uploadedImageAttachments,
     });
 
     // No single WebSocket frame should ever approach 16 MiB (each FileChunk is ~128 KiB).
@@ -280,6 +277,7 @@ test("DaemonClient uploads a >24 MiB multi-photo batch sequentially with support
     expect(promptBlocks[0]).toEqual({ type: "text", text: "Describe all 13 photos" });
     const imageBlocks = promptBlocks.filter((block) => block.type === "image");
     expect(imageBlocks).toHaveLength(photoCount);
+    expect(promptBlocks.filter((block) => block.type === "uploaded_file")).toHaveLength(0);
     for (let index = 0; index < photoCount; index += 1) {
       const block = imageBlocks[index] as { type: "image"; data: string; mimeType: string };
       expect(block.mimeType).toBe("image/jpeg");
@@ -302,13 +300,13 @@ test("DaemonClient uploads a >24 MiB multi-photo batch sequentially with support
       expect(userRow.item.images?.[0]?.fileName).toBe("photo-1.jpg");
     }
 
-    // New agent creation with uploadedImages also delivers native vision image blocks.
+    // New agent creation with uploaded image attachments also delivers native vision image blocks.
     const createdWithImage = await client.createAgent({
       provider: "claude",
       cwd: tmpCwd(),
       initialPrompt: "Inspect first photo",
       clientMessageId: "msg-create-1",
-      uploadedImages: [uploadedImages[0]!],
+      attachments: [uploadedImageAttachments[0]!],
     });
     expect(createdWithImage.id).toBeTruthy();
     expect(receivedPrompts).toHaveLength(2);
@@ -318,13 +316,15 @@ test("DaemonClient uploads a >24 MiB multi-photo batch sequentially with support
     // Security invariant: reject paths outside paseoHome/uploads.
     await expect(
       client.sendAgentMessage(agent.id, "Leak secret", {
-        uploadedImages: [
+        attachments: [
           {
+            type: "uploaded_file",
             id: "evil",
             fileName: "local-credential",
             mimeType: "image/png",
             size: 32,
             path: path.join(daemon.paseoHome, "local-credential"),
+            role: "image",
           },
         ],
       }),

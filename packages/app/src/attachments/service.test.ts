@@ -201,18 +201,22 @@ describe("attachment service", () => {
     ]);
     expect(uploaded).toEqual([
       {
+        type: "uploaded_file",
         id: "upload_first.jpg",
         fileName: "first.jpg",
         mimeType: "image/jpeg",
         size: new TextEncoder().encode("img-1:bytes").byteLength,
         path: "/home/user/.paseo/uploads/upload_first.jpg/first.jpg",
+        role: "image",
       },
       {
+        type: "uploaded_file",
         id: "upload_second.png",
         fileName: "second.png",
         mimeType: "image/png",
         size: new TextEncoder().encode("img-2:bytes").byteLength,
         path: "/home/user/.paseo/uploads/upload_second.png/second.png",
+        role: "image",
       },
     ]);
   });

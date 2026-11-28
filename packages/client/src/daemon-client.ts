@@ -509,7 +509,6 @@ export interface SendMessageOptions {
    */
   activeTurnBehavior?: AgentActiveTurnBehavior;
   images?: Array<{ data: string; mimeType: string }>;
-  uploadedImages?: SendAgentMessageRequest["uploadedImages"];
   attachments?: SendAgentMessageRequest["attachments"];
 }
 
@@ -537,7 +536,6 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   clientMessageId?: string;
   outputSchema?: Record<string, unknown>;
   images?: CreateAgentRequestMessage["images"];
-  uploadedImages?: CreateAgentRequestMessage["uploadedImages"];
   attachments?: CreateAgentRequestMessage["attachments"];
   /** @deprecated Use createWorkspace({ source, agent, idempotencyKey }); rejected by createAgent. */
   git?: GitSetupOptions;
@@ -3570,26 +3568,30 @@ export class DaemonClient {
   ): Promise<AgentSnapshotPayload> {
     const requestId = this.createRequestId(options.requestId);
     const config = resolveAgentConfig(options);
+
     const message = SessionInboundMessageSchema.parse({
       type: "create_agent_request",
       requestId,
       config,
-      env: options.env,
-      workspaceId: options.workspaceId,
-      callerAgentId: options.callerAgentId,
-      initialPrompt: options.initialPrompt || undefined,
+      ...(options.env ? { env: options.env } : {}),
+      ...(options.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
+      ...(options.callerAgentId !== undefined ? { callerAgentId: options.callerAgentId } : {}),
+      ...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
       idempotencyKey: options.idempotencyKey,
-      clientMessageId: options.clientMessageId || undefined,
-      outputSchema: options.outputSchema,
-      images: options.images?.length ? options.images : undefined,
-      uploadedImages: options.uploadedImages?.length ? options.uploadedImages : undefined,
-      attachments: options.attachments?.length ? options.attachments : undefined,
-      git: options.git,
-      worktree: options.worktree,
-      autoArchive: options.autoArchive,
-      background: options.background,
-      worktreeName: options.worktreeName || undefined,
-      labels: options.labels && Object.keys(options.labels).length > 0 ? options.labels : undefined,
+      ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
+      ...(options.outputSchema ? { outputSchema: options.outputSchema } : {}),
+      ...(options.images && options.images.length > 0 ? { images: options.images } : {}),
+      ...(options.attachments && options.attachments.length > 0
+        ? { attachments: options.attachments }
+        : {}),
+      ...(options.git ? { git: options.git } : {}),
+      ...(options.worktree ? { worktree: options.worktree } : {}),
+      ...(options.autoArchive !== undefined ? { autoArchive: options.autoArchive } : {}),
+      ...(options.background !== undefined ? { background: options.background } : {}),
+      ...(options.worktreeName ? { worktreeName: options.worktreeName } : {}),
+      ...(options.labels && Object.keys(options.labels).length > 0
+        ? { labels: options.labels }
+        : {}),
     });
 
     const status = await this.sendRequest({
@@ -4316,7 +4318,6 @@ export class DaemonClient {
       ...(messageId ? { messageId } : {}),
       activeTurnBehavior,
       images: options.images,
-      uploadedImages: options.uploadedImages,
       attachments: options.attachments,
     });
     const payload = await this.sendRequest({
@@ -8460,7 +8461,6 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     workspaceId: _workspaceId,
     initialPrompt: _initialPrompt,
     images: _images,
-    uploadedImages: _uploadedImages,
     git: _git,
     worktreeName: _worktreeName,
     requestId: _requestId,

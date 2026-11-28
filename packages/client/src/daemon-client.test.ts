@@ -8912,7 +8912,7 @@ test("uploadFile flushes unpaced transports (supportsDrain=false) via session pi
   await expect(upload).resolves.toEqual({ requestId: "req-unpaced", file, error: null });
 });
 
-test("sendAgentMessage and createAgent forward uploadedImages without leaking them into config", async () => {
+test("sendAgentMessage and createAgent forward uploaded image attachments with role='image' without leaking into config", async () => {
   const mock = createMockTransport();
   const client = new DaemonClient({
     url: "ws://test",
@@ -8927,24 +8927,26 @@ test("sendAgentMessage and createAgent forward uploadedImages without leaking th
   mock.triggerOpen({ features: { creationLifecycle: true } });
   await connection;
 
-  const uploadedImage = {
+  const uploadedImageAttachment = {
+    type: "uploaded_file" as const,
     id: "upload_1",
     fileName: "photo.jpg",
     mimeType: "image/jpeg",
     size: 2048,
     path: "/tmp/paseo/uploads/upload_1/photo.jpg",
+    role: "image" as const,
   };
 
   const sendPromise = client.sendAgentMessage("agent-1", "Describe", {
     messageId: "msg-1",
-    uploadedImages: [uploadedImage],
+    attachments: [uploadedImageAttachment],
   });
   const sendMsg = parseSentFrame(mock.sent.at(-1)!);
   expect(sendMsg).toMatchObject({
     type: "send_agent_message_request",
     agentId: "agent-1",
     text: "Describe",
-    uploadedImages: [uploadedImage],
+    attachments: [uploadedImageAttachment],
   });
   expect(sendMsg.images).toBeUndefined();
   mock.triggerMessage(
@@ -8965,7 +8967,7 @@ test("sendAgentMessage and createAgent forward uploadedImages without leaking th
     cwd: "/tmp/repo",
     workspaceId: "ws-1",
     initialPrompt: "Inspect",
-    uploadedImages: [uploadedImage],
+    attachments: [uploadedImageAttachment],
   });
   await vi.waitFor(() => {
     expect(parseSentFrame(mock.sent.at(-1)!).type).toBe("agent.create.request");
@@ -8973,9 +8975,9 @@ test("sendAgentMessage and createAgent forward uploadedImages without leaking th
   const createMsg = parseSentFrame(mock.sent.at(-1)!);
   expect(createMsg).toMatchObject({
     type: "agent.create.request",
-    uploadedImages: [uploadedImage],
+    attachments: [uploadedImageAttachment],
   });
-  expect((createMsg.config as Record<string, unknown>).uploadedImages).toBeUndefined();
+  expect((createMsg.config as Record<string, unknown>).attachments).toBeUndefined();
   mock.triggerMessage(
     wrapSessionMessage({
       type: "agent.create.response",

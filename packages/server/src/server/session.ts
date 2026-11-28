@@ -730,13 +730,12 @@ function resolveWorkspaceLabelService(
 }
 
 function hasInitialCreationPrompt(
-  request?: Pick<AgentCreateRequest, "initialPrompt" | "images" | "uploadedImages" | "attachments">,
+  request?: Pick<AgentCreateRequest, "initialPrompt" | "images" | "attachments">,
 ): boolean {
   return Boolean(
     request &&
-    ((request.uploadedImages?.length ?? 0) > 0 ||
-      buildAgentPrompt(request.initialPrompt?.trim() ?? "", request.images, request.attachments)
-        .length > 0),
+    buildAgentPrompt(request.initialPrompt?.trim() ?? "", request.images, request.attachments)
+      .length > 0,
   );
 }
 
@@ -5058,7 +5057,6 @@ export class Session {
       worktree,
       autoArchive,
       images,
-      uploadedImages,
       attachments,
       env,
     } = msg;
@@ -5132,7 +5130,6 @@ export class Session {
           clientMessageId,
           outputSchema,
           images,
-          uploadedImages,
           attachments,
           labels: resolvedIntent.intent.labels,
           metadata: msg.metadata,
@@ -9308,7 +9305,6 @@ export class Session {
         paseoHome: this.paseoHome,
         text: msg.text,
         images: msg.images,
-        uploadedImages: msg.uploadedImages,
         attachments: msg.attachments,
       });
       this.sessionLogger.trace(

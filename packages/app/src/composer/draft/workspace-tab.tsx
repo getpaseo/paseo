@@ -189,16 +189,16 @@ async function submitDraftCreateRequest(input: {
     composerState,
   });
 
-  const attachmentsArray = Array.isArray(attachments) ? attachments : undefined;
-  const uploadedImages = await uploadImageAttachments({ client, images });
+  const attachmentsArray = Array.isArray(attachments) ? attachments : [];
+  const uploadedImageAttachments = await uploadImageAttachments({ client, images });
+  const mergedAttachments = [...attachmentsArray, ...(uploadedImageAttachments ?? [])];
   const request = {
     config,
     workspaceId,
     initialPrompt: text,
     clientMessageId: attempt.clientMessageId,
     ...(Object.keys(composerState.metadata).length > 0 ? { metadata: composerState.metadata } : {}),
-    ...(uploadedImages && uploadedImages.length > 0 ? { uploadedImages } : {}),
-    ...(attachmentsArray && attachmentsArray.length > 0 ? { attachments: attachmentsArray } : {}),
+    ...(mergedAttachments.length > 0 ? { attachments: mergedAttachments } : {}),
   };
   const result = await client.createAgent({
     ...request,

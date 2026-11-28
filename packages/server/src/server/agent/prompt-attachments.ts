@@ -1,5 +1,9 @@
 import { getForgeDefinitionOrNeutral } from "@getpaseo/protocol/forge-manifest";
-import type { AgentAttachment, UploadedImage } from "@getpaseo/protocol/messages";
+import type {
+  AgentAttachment,
+  UploadedFileAttachment,
+  UploadedImage,
+} from "@getpaseo/protocol/messages";
 import { readUploadedImageFile } from "../file-upload/index.js";
 import type { AgentPromptContentBlock, AgentPromptInput } from "./agent-sdk-types.js";
 
@@ -49,26 +53,48 @@ export function buildAgentPrompt(
   return blocks;
 }
 
+function isUploadedImageAttachment(
+  attachment: AgentAttachment,
+): attachment is UploadedFileAttachment & { role: "image" } {
+  return attachment.type === "uploaded_file" && attachment.role === "image";
+}
+
 export async function resolveAgentPrompt(input: {
   paseoHome?: string;
   text: string;
   images?: Array<{ data: string; mimeType: string }>;
-  uploadedImages?: UploadedImage[];
   attachments?: AgentAttachment[];
 }): Promise<AgentPromptInput> {
   const resolvedImages: ResolvedPromptImage[] = [...(input.images ?? [])];
-  if (input.uploadedImages && input.uploadedImages.length > 0) {
+  const uploadedImageAttachments: Array<UploadedFileAttachment & { role: "image" }> = [];
+  const remainingAttachments: AgentAttachment[] = [];
+  for (const attachment of input.attachments ?? []) {
+    if (isUploadedImageAttachment(attachment)) {
+      uploadedImageAttachments.push(attachment);
+    } else {
+      remainingAttachments.push(attachment);
+    }
+  }
+
+  if (uploadedImageAttachments.length > 0) {
     if (!input.paseoHome) {
       throw new Error("paseoHome is required to resolve uploaded image attachments.");
     }
-    for (const uploadedImage of input.uploadedImages) {
+    for (const attachment of uploadedImageAttachments) {
+      const uploadedImage: UploadedImage = {
+        id: attachment.id,
+        fileName: attachment.fileName,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        path: attachment.path,
+      };
       const file = await readUploadedImageFile({
         paseoHome: input.paseoHome,
         uploadedImage,
       });
       resolvedImages.push({
         data: file.bytes.toString("base64"),
-        mimeType: uploadedImage.mimeType,
+        mimeType: attachment.mimeType,
         uploadedImage: {
           ...uploadedImage,
           size: file.size,
@@ -77,7 +103,7 @@ export async function resolveAgentPrompt(input: {
       });
     }
   }
-  return buildAgentPrompt(input.text, resolvedImages, input.attachments);
+  return buildAgentPrompt(input.text, resolvedImages, remainingAttachments);
 }
 
 export function renderPromptAttachmentAsText(attachment: AgentAttachment): string {

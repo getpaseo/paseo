@@ -21,15 +21,13 @@ export async function requestWorkspaceDraftAgent(
   client: DaemonClient,
   request: WorkspaceDraftAgentRequest,
 ): Promise<AgentSnapshotPayload> {
-  const uploadedImages = await uploadImageAttachments({ client, images: request.images });
+  const uploadedImageAttachments = await uploadImageAttachments({ client, images: request.images });
+  const mergedAttachments = [...(request.attachments ?? []), ...(uploadedImageAttachments ?? [])];
   return await client.createAgent({
     config: request.config,
     workspaceId: request.workspaceId,
     clientMessageId: request.clientMessageId,
     ...(request.text ? { initialPrompt: request.text } : {}),
-    ...(uploadedImages && uploadedImages.length > 0 ? { uploadedImages } : {}),
-    ...(request.attachments && request.attachments.length > 0
-      ? { attachments: request.attachments }
-      : {}),
+    ...(mergedAttachments.length > 0 ? { attachments: mergedAttachments } : {}),
   });
 }

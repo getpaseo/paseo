@@ -1,4 +1,4 @@
-import type { UploadedFileAttachment, UploadedImage } from "@getpaseo/protocol/messages";
+import type { UploadedFileAttachment } from "@getpaseo/protocol/messages";
 import { collectRetainedAttachmentIds } from "@/attachments/gc-retention";
 import { getAttachmentStore } from "@/attachments/store";
 import type { AttachmentMetadata, SaveAttachmentInput } from "@/attachments/types";
@@ -160,16 +160,19 @@ export async function readAttachmentBytes(attachment: AttachmentMetadata): Promi
 /**
  * Uploads persisted image attachments sequentially via `file.upload.request` so multi-photo
  * batches drain cleanly between files instead of queueing concurrently on mobile sockets.
+ * Each uploaded image is marked with `role: "image"` inside `uploaded_file` so current daemons
+ * resolve it into a native vision block + timeline thumbnail, while older daemons (v0.1.91-v0.18.1)
+ * strip the unknown `role` field and still deliver the uploaded file path instead of dropping it.
  */
 export async function uploadImageAttachments(input: {
   client: ImageUploadClient;
   images: readonly AttachmentMetadata[] | undefined;
-}): Promise<UploadedImage[] | undefined> {
+}): Promise<UploadedFileAttachment[] | undefined> {
   if (!input.images || input.images.length === 0) {
     return undefined;
   }
 
-  const uploaded: UploadedImage[] = [];
+  const uploaded: UploadedFileAttachment[] = [];
   for (const attachment of input.images) {
     const fileName = resolveUploadedImageFileName(attachment);
     const bytes = await readAttachmentBytes(attachment);
@@ -185,11 +188,8 @@ export async function uploadImageAttachments(input: {
       throw new Error(response.error ?? "Upload failed.");
     }
     uploaded.push({
-      id: response.file.id,
-      fileName: response.file.fileName,
-      mimeType: response.file.mimeType,
-      size: response.file.size,
-      path: response.file.path,
+      ...response.file,
+      role: "image",
     });
   }
 

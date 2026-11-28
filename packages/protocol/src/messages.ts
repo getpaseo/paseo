@@ -1347,6 +1347,7 @@ export const UploadedFileAttachmentSchema = z.object({
   mimeType: z.string(),
   size: z.number().int().nonnegative(),
   path: z.string(),
+  role: z.literal("image").optional(),
 });
 
 export const AgentAttachmentSchema = z.discriminatedUnion("type", [
@@ -1400,7 +1401,6 @@ export const SendAgentMessageSchema = z.object({
   messageId: z.string().optional(), // Client-provided ID for deduplication
   activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
   images: z.array(ImageAttachmentSchema).optional(),
-  uploadedImages: z.array(UploadedImageSchema).optional(),
   attachments: AgentAttachmentsSchema,
 });
 
@@ -1573,7 +1573,6 @@ export const SendAgentMessageRequestSchema = z.object({
   /** queue needs an agent sender. */
   activeTurnBehavior: AgentActiveTurnBehaviorSchema.optional(),
   images: z.array(ImageAttachmentSchema).optional(),
-  uploadedImages: z.array(UploadedImageSchema).optional(),
   attachments: AgentAttachmentsSchema,
 });
 
@@ -1954,7 +1953,6 @@ export const CreateAgentRequestMessageSchema = z.object({
   clientMessageId: z.string().optional(),
   outputSchema: z.record(z.string(), z.unknown()).optional(),
   images: z.array(ImageAttachmentSchema).optional(),
-  uploadedImages: z.array(UploadedImageSchema).optional(),
   attachments: AgentAttachmentsSchema,
   git: GitSetupOptionsSchema.optional(),
   worktree: CreateAgentWorktreeTargetSchema.optional(),

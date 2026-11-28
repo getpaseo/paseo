@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import {
   AgentCreateRequestSchema,
@@ -457,13 +458,15 @@ describe("shared messages attachments", () => {
     });
   });
 
-  it("preserves optional uploadedImages across send and create request schemas", () => {
-    const uploadedImage = {
+  it("preserves optional role='image' on uploaded_file attachments and stays wire-compatible with v0.1.91-v0.18.1 daemons", () => {
+    const uploadedImageAttachment = {
+      type: "uploaded_file" as const,
       id: "upload_abc",
       fileName: "photo.jpg",
       mimeType: "image/jpeg",
       size: 4096,
       path: "/home/user/.paseo/uploads/upload_abc/photo.jpg",
+      role: "image" as const,
     };
 
     const sendReq = SendAgentMessageRequestSchema.parse({
@@ -471,39 +474,58 @@ describe("shared messages attachments", () => {
       requestId: "req-img",
       agentId: "agent-1",
       text: "Inspect this photo",
-      uploadedImages: [uploadedImage],
+      attachments: [uploadedImageAttachment],
     });
-    expect(sendReq.uploadedImages).toEqual([uploadedImage]);
+    expect(sendReq.attachments).toEqual([uploadedImageAttachment]);
 
     const legacySend = SendAgentMessageSchema.parse({
       type: "send_agent_message",
       agentId: "agent-1",
       text: "Inspect this photo",
-      uploadedImages: [uploadedImage],
+      attachments: [uploadedImageAttachment],
     });
-    expect(legacySend.uploadedImages).toEqual([uploadedImage]);
+    expect(legacySend.attachments).toEqual([uploadedImageAttachment]);
 
     const createReq = CreateAgentRequestMessageSchema.parse({
       type: "create_agent_request",
       requestId: "req-create-img",
       config: { provider: "claude", cwd: "/tmp/repo" },
-      uploadedImages: [uploadedImage],
+      attachments: [uploadedImageAttachment],
     });
-    expect(createReq.uploadedImages).toEqual([uploadedImage]);
+    expect(createReq.attachments).toEqual([uploadedImageAttachment]);
 
     const agentCreateReq = AgentCreateRequestSchema.parse({
       type: "agent.create.request",
       requestId: "req-agent-create-img",
       config: { provider: "claude", cwd: "/tmp/repo" },
-      uploadedImages: [uploadedImage],
+      attachments: [uploadedImageAttachment],
     });
-    expect(agentCreateReq.uploadedImages).toEqual([uploadedImage]);
+    expect(agentCreateReq.attachments).toEqual([uploadedImageAttachment]);
 
     const workspaceAgent = WorkspaceInitialAgentSchema.parse({
       config: { provider: "claude", cwd: "/tmp/repo" },
-      uploadedImages: [uploadedImage],
+      attachments: [uploadedImageAttachment],
     });
-    expect(workspaceAgent.uploadedImages).toEqual([uploadedImage]);
+    expect(workspaceAgent.attachments).toEqual([uploadedImageAttachment]);
+
+    // Older daemons (v0.1.91 through v0.18.1) parse uploaded_file without the optional role field:
+    // Zod strips only the unknown role hint and preserves the complete uploaded_file attachment.
+    const legacyUploadedFileSchema = z.object({
+      type: z.literal("uploaded_file"),
+      id: z.string(),
+      fileName: z.string(),
+      mimeType: z.string(),
+      size: z.number().int().nonnegative(),
+      path: z.string(),
+    });
+    expect(legacyUploadedFileSchema.parse(sendReq.attachments?.[0])).toEqual({
+      type: "uploaded_file",
+      id: "upload_abc",
+      fileName: "photo.jpg",
+      mimeType: "image/jpeg",
+      size: 4096,
+      path: "/home/user/.paseo/uploads/upload_abc/photo.jpg",
+    });
   });
 
   it("preserves optional uploaded images on user_message timeline items and stays optional", () => {

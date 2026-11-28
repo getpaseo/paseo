@@ -757,7 +757,7 @@ async function waitForCapturedLog(
       // 13 photos × 2 MiB = 26 MiB (> 24 MiB) uploaded sequentially over encrypted relay
       const photoCount = 13;
       const photoSize = 2 * 1024 * 1024;
-      const uploadedImages = [];
+      const uploadedImageAttachments = [];
       for (let index = 0; index < photoCount; index += 1) {
         const bytes = new Uint8Array(photoSize);
         bytes.fill((index + 17) & 0xff);
@@ -772,18 +772,15 @@ async function waitForCapturedLog(
         });
         expect(upload.error).toBeNull();
         expect(upload.file).not.toBeNull();
-        uploadedImages.push({
-          id: upload.file!.id,
-          fileName: upload.file!.fileName,
-          mimeType: upload.file!.mimeType,
-          size: upload.file!.size,
-          path: upload.file!.path,
+        uploadedImageAttachments.push({
+          ...upload.file!,
+          role: "image" as const,
         });
       }
 
       await client.sendMessage(agent.id, "Check all 13 relay photos", {
         messageId: "relay-batch-13",
-        uploadedImages,
+        attachments: uploadedImageAttachments,
       });
 
       // Every frame stayed tiny (well under 16 MiB OkHttp and 32 MiB relay caps).

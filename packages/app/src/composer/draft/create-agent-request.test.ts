@@ -31,7 +31,7 @@ describe("requestWorkspaceDraftAgent", () => {
     __setAttachmentStoreForTests(null);
   });
 
-  it("uploads draft images sequentially via uploadFile and sends uploadedImages instead of inline base64", async () => {
+  it("uploads draft images sequentially via uploadFile and sends them in attachments with role='image' instead of inline base64", async () => {
     const firstBytes = new Uint8Array([1, 2, 3, 4]);
     const secondBytes = new Uint8Array([5, 6, 7]);
     __setAttachmentStoreForTests(createFakeStore({ img1: firstBytes, img2: secondBytes }));
@@ -89,20 +89,24 @@ describe("requestWorkspaceDraftAgent", () => {
     expect(createAgent).toHaveBeenCalledTimes(1);
     const createCall = createAgent.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(createCall.images).toBeUndefined();
-    expect(createCall.uploadedImages).toEqual([
+    expect(createCall.attachments).toEqual([
       {
+        type: "uploaded_file",
         id: "upload_first.jpg",
         fileName: "first.jpg",
         mimeType: "image/jpeg",
         size: 4,
         path: "/home/user/.paseo/uploads/upload_first.jpg/first.jpg",
+        role: "image",
       },
       {
+        type: "uploaded_file",
         id: "upload_second.png",
         fileName: "second.png",
         mimeType: "image/png",
         size: 3,
         path: "/home/user/.paseo/uploads/upload_second.png/second.png",
+        role: "image",
       },
     ]);
   });
