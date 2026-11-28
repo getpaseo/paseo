@@ -1,7 +1,7 @@
 import { useHosts, useHostRuntimeLastError } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useState, type ComponentType } from "react";
 import { useTranslation } from "react-i18next";
-import { View, Text, Pressable, ScrollView } from "react-native";
+import { View, Text, Pressable, ScrollView, type LayoutChangeEvent } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useRouter } from "expo-router";
 import { FolderOpen, Inbox, Plug, Smartphone } from "lucide-react-native";
@@ -22,6 +22,7 @@ import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { PairDeviceModal } from "@/devices";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import { WINDOW_CONTENT_DATASET } from "@/components/desktop/titlebar-drag-region";
+import { isNarrowHomePane } from "./open-project-layout";
 
 export function OpenProjectScreen() {
   const { t } = useTranslation();
@@ -33,6 +34,10 @@ export function OpenProjectScreen() {
   const chooseHost = useHostChooser();
   const localServerId = useLocalDaemonServerId();
   const [isPairDeviceOpen, setIsPairDeviceOpen] = useState(false);
+  const [isNarrowPane, setIsNarrowPane] = useState(true);
+  const handleContentLayout = useCallback((event: LayoutChangeEvent) => {
+    setIsNarrowPane(isNarrowHomePane(event.nativeEvent.layout.width));
+  }, []);
 
   const isCompactLayout = useIsCompactFormFactor();
 
@@ -66,7 +71,7 @@ export function OpenProjectScreen() {
         contentContainerStyle={styles.scrollContent}
         dataSet={WINDOW_CONTENT_DATASET}
       >
-        <View style={styles.content}>
+        <View style={styles.content} onLayout={handleContentLayout}>
           <View style={styles.logo}>
             <PaseoLogo size={52} />
           </View>
@@ -75,6 +80,7 @@ export function OpenProjectScreen() {
           ))}
           <View style={styles.tiles}>
             <HomeTile
+              narrow={isNarrowPane}
               icon={FolderOpen}
               title={t("openProject.tiles.addProject.title")}
               description={t("openProject.tiles.addProject.description")}
@@ -83,6 +89,7 @@ export function OpenProjectScreen() {
               accent
             />
             <HomeTile
+              narrow={isNarrowPane}
               icon={Inbox}
               title={t("openProject.tiles.importSession.title")}
               description={t("openProject.tiles.importSession.description")}
@@ -90,6 +97,7 @@ export function OpenProjectScreen() {
               testID="open-project-import-session"
             />
             <HomeTile
+              narrow={isNarrowPane}
               icon={Plug}
               title={t("openProject.tiles.setupProviders.title")}
               description={t("openProject.tiles.setupProviders.description")}
@@ -98,6 +106,7 @@ export function OpenProjectScreen() {
             />
             {localServerId ? (
               <HomeTile
+                narrow={isNarrowPane}
                 icon={Smartphone}
                 title={t("openProject.tiles.pairDevice.title")}
                 description={t("openProject.tiles.pairDevice.description")}
@@ -132,6 +141,7 @@ function HostError({ serverId, label }: { serverId: string; label: string }) {
 }
 
 interface HomeTileProps {
+  narrow: boolean;
   icon: ComponentType<{ size: number; color: string }>;
   title: string;
   description: string;
@@ -140,7 +150,15 @@ interface HomeTileProps {
   accent?: boolean;
 }
 
-function HomeTile({ icon: Icon, title, description, onPress, testID, accent }: HomeTileProps) {
+function HomeTile({
+  narrow,
+  icon: Icon,
+  title,
+  description,
+  onPress,
+  testID,
+  accent,
+}: HomeTileProps) {
   // useUnistyles is acceptable here: leaf component, off the hot path (home screen renders once).
   const { theme } = useUnistyles();
   const [hovered, setHovered] = useState(false);
@@ -152,10 +170,11 @@ function HomeTile({ icon: Icon, title, description, onPress, testID, accent }: H
   const pressableStyle = useCallback(
     ({ pressed }: { pressed: boolean }) => [
       styles.tile,
+      narrow ? styles.tileNarrow : styles.tileWide,
       hovered && styles.tileHovered,
       pressed && styles.tilePressed,
     ],
-    [hovered],
+    [hovered, narrow],
   );
 
   return (
@@ -216,14 +235,20 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[3],
   },
   tile: {
-    width: { xs: "100%", md: 220 },
-    minHeight: { xs: 0, md: 132 },
     padding: theme.spacing[4],
     backgroundColor: theme.colors.surface1,
     borderWidth: 1,
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.xl,
     gap: theme.spacing[3],
+  },
+  tileNarrow: {
+    width: "100%",
+    flexDirection: "row",
+  },
+  tileWide: {
+    width: 220,
+    minHeight: 132,
   },
   tileHovered: {
     backgroundColor: theme.colors.surface2,
@@ -233,6 +258,7 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.85,
   },
   tileText: {
+    flexShrink: 1,
     gap: theme.spacing[1],
   },
   tileTitle: {

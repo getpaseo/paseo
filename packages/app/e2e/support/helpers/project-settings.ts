@@ -383,3 +383,35 @@ export async function installDaemonConnectionGate(
     },
   };
 }
+
+export async function expectHomeCardsStacked(page: Page): Promise<void> {
+  const first = page.getByTestId("open-project-submit");
+  const second = page.getByTestId("open-project-import-session");
+  const third = page.getByTestId("open-project-setup-providers");
+  await expect(third).toBeVisible();
+  await expect
+    .poll(async () => {
+      const boxes = await Promise.all([
+        first.boundingBox(),
+        second.boundingBox(),
+        third.boundingBox(),
+      ]);
+      return (
+        boxes.every((box) => box && Math.abs(box.x - boxes[0]!.x) < 1) &&
+        boxes[1]!.y > boxes[0]!.y &&
+        boxes[2]!.y > boxes[1]!.y
+      );
+    })
+    .toBe(true);
+}
+
+export async function expectHomeCardsInColumns(page: Page): Promise<void> {
+  const first = page.getByTestId("open-project-submit");
+  const second = page.getByTestId("open-project-import-session");
+  await expect
+    .poll(async () => {
+      const [a, b] = await Promise.all([first.boundingBox(), second.boundingBox()]);
+      return Boolean(a && b && b.x > a.x && Math.abs(b.y - a.y) < 1);
+    })
+    .toBe(true);
+}
