@@ -112,14 +112,24 @@
         return index;
       }
 
-      function appendProfileHarnessWebview({ browserId, partition, sourceUrl }) {
+      function appendProfileHarnessWebview({
+        browserId,
+        workspaceId,
+        partition,
+        sourceUrl,
+        prepareBrowserWebview,
+      }) {
         const webview = createHarnessWebview({ browserId, partition, sourceUrl });
         const attached = new Promise((resolve) => {
-          webview.addEventListener(
-            "did-attach",
-            () => resolve({ browserId, webContentsId: webview.getWebContentsId() }),
-            { once: true },
-          );
+          prepareBrowserWebview(webview, {
+            browserId,
+            workspaceId,
+            initialUrl: sourceUrl,
+            profileHost: {
+              profilePartition: partition,
+              registerAttachedBrowser: async (identity) => resolve(identity),
+            },
+          });
         });
         host.appendChild(webview);
         webviews.push(webview);
@@ -127,23 +137,8 @@
         return attached;
       }
 
-      const profilePartition = params.get("profilePartition");
-      const profileBrowserIds = (params.get("profileBrowserIds") || "").split(",").filter(Boolean);
-      let profileAttachSequence = Promise.resolve();
-      if (profilePartition && profileBrowserIds.length > 0) {
-        profileAttachSequence = (async () => {
-          for (const browserId of profileBrowserIds) {
-            await appendProfileHarnessWebview({
-              browserId,
-              partition: profilePartition,
-              sourceUrl: params.get("targetUrl") || "bright.html",
-            });
-          }
-        })();
-      } else {
-        for (let index = 0; index < webviewCount; index += 1) {
-          appendHarnessWebview(params.get("targetUrl") || "bright.html");
-        }
+      for (let index = 0; index < webviewCount; index += 1) {
+        appendHarnessWebview(params.get("targetUrl") || "bright.html");
       }
 
       function applyHostParking() {
@@ -405,9 +400,9 @@
           return appendHarnessWebview(sourceUrl || params.get("targetUrl") || "bright.html");
         },
         async profileIdentities() {
-          await profileAttachSequence;
           return await Promise.all(profileAttachPromises);
         },
+        addProfileWebview: appendProfileHarnessWebview,
         addPermanentWebview(sourceUrl, stateName) {
           const index = appendHarnessWebview(sourceUrl || params.get("targetUrl") || "bright.html");
           applyPermanentParkingState(stateName || permanentParkingState);

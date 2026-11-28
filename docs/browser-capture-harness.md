@@ -55,8 +55,8 @@ window movement, including button clicks and a portal over the titlebar. Leave
 the mouse idle during this group. It reads the app's production CSS and writes
 screenshots and window bounds to the output directory.
 
-The browser profile group runs two Electron processes in sequence. It verifies that each
-renderer-side `did-attach` identity maps to the correct main-process guest, that two live
+The browser profile group runs two Electron processes in sequence. It loads the app's
+production webview preparation module and verifies that ready guest identities map to the correct main-process guests, that two live
 tabs share cookies and local storage through one persistent session, and that the data is
 still present after the first Electron process exits and the second starts.
 
