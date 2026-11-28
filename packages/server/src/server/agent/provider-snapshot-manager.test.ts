@@ -4067,3 +4067,96 @@ test("isProviderActiveForUsage rechecks on forceRefresh and enforces a real time
     manager.destroy();
   }
 });
+
+test("listProviderEnvironments returns only enabled locator-configured providers with secrets stripped", async () => {
+  vi.stubEnv("ANTHROPIC_API_KEY", "shell-secret-key");
+  vi.stubEnv("OPENAI_API_KEY", "shell-openai-key");
+  vi.stubEnv("ANTHROPIC_BASE_URL", undefined);
+  vi.stubEnv("CLAUDE_CODE_USE_BEDROCK", undefined);
+  vi.stubEnv("CLAUDE_CODE_USE_VERTEX", undefined);
+  vi.stubEnv("OPENAI_BASE_URL", undefined);
+
+  const manager = new ProviderSnapshotManager({
+    logger: createTestLogger(),
+    providerOverrides: {
+      "claude-work": {
+        extends: "claude",
+        label: "Claude (Work)",
+        env: {
+          CLAUDE_CONFIG_DIR: "/tmp/claude-work",
+          CLAUDE_SECURESTORAGE_CONFIG_DIR: "/tmp/claude-work-secure",
+          ANTHROPIC_API_KEY: "provider-anthropic-secret",
+          ANTHROPIC_AUTH_TOKEN: "provider-auth-token",
+          CLAUDE_CODE_OAUTH_TOKEN: "provider-oauth-token",
+          MY_SECRET: "custom-secret",
+        },
+      },
+      "claude-secret-only": {
+        extends: "claude",
+        label: "Claude (API key only)",
+        env: {
+          ANTHROPIC_API_KEY: "sk-only",
+          MY_SECRET: "custom-only",
+        },
+      },
+      "claude-proxy": {
+        extends: "claude",
+        label: "Claude (Proxy)",
+        env: {
+          CLAUDE_CONFIG_DIR: "/tmp/claude-proxy",
+          ANTHROPIC_BASE_URL: "https://llm-proxy.example",
+        },
+      },
+      "claude-disabled": {
+        extends: "claude",
+        label: "Claude (Disabled)",
+        enabled: false,
+        env: {
+          CLAUDE_CONFIG_DIR: "/tmp/claude-disabled",
+        },
+      },
+      "codex-work": {
+        extends: "codex",
+        label: "Codex (Work)",
+        env: {
+          CODEX_HOME: "/tmp/codex-work",
+          OPENAI_API_KEY: "provider-openai-secret",
+          MY_SECRET: "codex-secret",
+        },
+      },
+      "codex-proxy": {
+        extends: "codex",
+        label: "Codex (Proxy)",
+        env: {
+          CODEX_HOME: "/tmp/codex-proxy",
+          OPENAI_BASE_URL: "https://proxy.example/v1",
+        },
+      },
+    },
+  });
+  try {
+    const envs = manager.listProviderEnvironments();
+    expect(envs.map(({ provider, label }) => ({ provider, label }))).toEqual([
+      { provider: "claude", label: "Claude (Work)" },
+      { provider: "codex", label: "Codex (Work)" },
+    ]);
+    const claudeEnv = envs[0]!.env;
+    expect(claudeEnv.CLAUDE_CONFIG_DIR).toBe("/tmp/claude-work");
+    expect(claudeEnv.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe("/tmp/claude-work-secure");
+    expect(claudeEnv).not.toHaveProperty("ANTHROPIC_API_KEY");
+    expect(claudeEnv).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
+    expect(claudeEnv).not.toHaveProperty("CLAUDE_CODE_OAUTH_TOKEN");
+    expect(claudeEnv).not.toHaveProperty("OPENAI_API_KEY");
+    expect(claudeEnv).not.toHaveProperty("MY_SECRET");
+
+    const codexEnv = envs[1]!.env;
+    expect(codexEnv.CODEX_HOME).toBe("/tmp/codex-work");
+    expect(codexEnv).not.toHaveProperty("OPENAI_API_KEY");
+    expect(codexEnv).not.toHaveProperty("ANTHROPIC_API_KEY");
+    expect(codexEnv).not.toHaveProperty("MY_SECRET");
+  } finally {
+    vi.unstubAllEnvs();
+    await manager.shutdown();
+    manager.destroy();
+  }
+});

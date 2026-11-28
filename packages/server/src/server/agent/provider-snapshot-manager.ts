@@ -20,6 +20,7 @@ import {
   type AgentProvider,
   type FetchCatalogOptions,
   type ProviderSnapshotEntry,
+  type ProviderUsageEnvironment,
 } from "./agent-sdk-types.js";
 import { ProviderCatalogCache } from "./provider-catalog-cache.js";
 import {
@@ -30,10 +31,16 @@ import type { ManagedAgent } from "./agent-manager.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { ManagedProcessRegistry } from "../managed-processes/managed-processes.js";
 import type { OpenCodeBridge } from "./providers/opencode/bridge.js";
-import type {
-  AgentProviderRuntimeSettingsMap,
-  ProviderOverride,
+import {
+  createProviderEnv,
+  type AgentProviderRuntimeSettingsMap,
+  type ProviderOverride,
 } from "./provider-launch-config.js";
+import {
+  filterUsageDiscoveryEnv,
+  hasConfiguredUsageLocatorEnv,
+  targetsForeignUsageEndpoint,
+} from "../plugins/usage-sources/index.js";
 import {
   buildProviderRegistry,
   shutdownAgentClients,
@@ -439,6 +446,25 @@ export class ProviderSnapshotManager {
 
   getAgentManagerProviderState(): AgentManagerProviderState {
     return this.createAgentManagerState(this.generation.definitions, this.providerClients);
+  }
+
+  /** Enabled providers configured with usage-locator env vars, sanitized for host usage discovery. */
+  listProviderEnvironments(): ProviderUsageEnvironment[] {
+    return this.generation.order.flatMap((provider) => {
+      const definition = this.generation.definitions[provider];
+      const runtimeSettings = definition?.configuration?.runtimeSettings;
+      if (!definition?.enabled || !hasConfiguredUsageLocatorEnv(runtimeSettings?.env)) return [];
+      const baseProvider = definition.derivedFromProviderId ?? provider;
+      const effectiveEnv = createProviderEnv({ baseEnv: process.env, runtimeSettings });
+      if (targetsForeignUsageEndpoint(baseProvider, effectiveEnv)) return [];
+      return [
+        {
+          provider: baseProvider,
+          label: definition.label,
+          env: filterUsageDiscoveryEnv(effectiveEnv),
+        },
+      ];
+    });
   }
 
   private createAgentManagerState(

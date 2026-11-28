@@ -1,12 +1,13 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
+import type { ProviderOverride } from "../agent/provider-launch-config.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { BuiltinPluginLoader, resolveBuiltinPluginsRoot } from "./builtin/index.js";
@@ -18,6 +19,79 @@ const fixtureRoot = fileURLToPath(new URL("./test-fixtures/", import.meta.url));
 const subprocessDirectory = fileURLToPath(
   new URL("./test-fixtures/usage-source-directory/", import.meta.url),
 );
+
+async function json(file: string, value: unknown) {
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, JSON.stringify(value));
+}
+
+interface InjectedUsageSourcesOptions {
+  root: string;
+  lookup: { home: string; env: Record<string, string> };
+  /** Source of an `async function fetchApi(url, init)` the readers call instead of the network. */
+  fetchApi: string;
+  /** Optional NDJSON file path where each source logs every scope passed to discover(). */
+  scopeLogPath?: string;
+}
+
+const SOURCE_PROVIDERS = {
+  claude: ["claude", "pi", "omp"],
+  codex: ["codex", "opencode", "pi", "omp"],
+} as const;
+
+async function injectedUsageSources({
+  root,
+  lookup,
+  fetchApi,
+  scopeLogPath,
+}: InjectedUsageSourcesOptions): Promise<BuiltinPluginLoader> {
+  const plugins = path.join(root, "plugins");
+  for (const source of ["codex", "claude"] as const) {
+    const directory = path.join(plugins, `${source}-usage-source`);
+    await cp(path.join(resolveBuiltinPluginsRoot(), `${source}-usage-source`), directory, {
+      recursive: true,
+    });
+    const recordScope = scopeLogPath
+      ? `await appendFile(${JSON.stringify(scopeLogPath)}, JSON.stringify({ source: ${JSON.stringify(source)}, scope }) + '\\n');`
+      : "";
+    await writeFile(
+      path.join(directory, "index.server.ts"),
+      `
+import { appendFile } from 'node:fs/promises';
+import { inputSchema } from './shared/input.js';
+import { discover, fetchUsage } from './server/usage.js';
+const lookup = { home: ${JSON.stringify(lookup.home)}, env: ${JSON.stringify(lookup.env)}, platform: 'linux' };
+${fetchApi}
+export default function contribute(server) {
+  server.registerUsageSource({
+    id: '${source}',
+    label: '${source}',
+    providers: ${JSON.stringify(SOURCE_PROVIDERS[source])},
+    input: inputSchema,
+    discover: async (scope) => {
+      ${recordScope}
+      return discover(scope, lookup${source === "claude" ? ", fetchApi" : ""});
+    },
+    fetch: (input) => fetchUsage(inputSchema.parse(input), fetchApi, lookup),
+  });
+  return () => {};
+}
+`,
+    );
+  }
+  return new BuiltinPluginLoader(plugins, ["codex-usage-source", "claude-usage-source"]);
+}
+
+const API_HOST_ENV = [
+  "ANTHROPIC_BASE_URL",
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_VERTEX",
+  "OPENAI_BASE_URL",
+];
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 test("lists built-in and subprocess usage; validates input and isolates fetch errors", async () => {
   const daemon = await createTestPaseoDaemon({
@@ -163,10 +237,6 @@ test("built-in sources deduplicate cross-harness accounts and fall back without 
   const plugins = path.join(root, "plugins");
   const codexHome = path.join(home, ".codex");
   const env = { CODEX_HOME: codexHome };
-  async function json(file: string, value: unknown) {
-    await mkdir(path.dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify(value));
-  }
   async function codexToken(token: string) {
     await json(path.join(codexHome, "auth.json"), {
       tokens: { access_token: token, account_id: "chatgpt-one" },
@@ -320,7 +390,6 @@ export default function contribute(server) {
 }, 60_000);
 
 test("a killed discovery subprocess logs kimi once and produces no provider card", async () => {
-  const { readFile } = await import("node:fs/promises");
   const { default: pino } = await import("pino");
   const root = await mkdtemp(path.join(os.tmpdir(), "usage-crash-"));
   const log = path.join(root, "daemon.log");
@@ -730,6 +799,321 @@ export default function contribute(server) {
     expect(hostWithMiniMax.find((entry) => entry.id === "minimax:default")?.report.status).toBe(
       "available",
     );
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("#3589: host usage lists each enabled custom provider with strict source scoping and secret stripping", async () => {
+  for (const name of API_HOST_ENV) vi.stubEnv(name, undefined);
+  vi.stubEnv("ANTHROPIC_API_KEY", "shell-anthropic-secret");
+  vi.stubEnv("OPENAI_API_KEY", "shell-openai-secret");
+  const root = await mkdtemp(path.join(os.tmpdir(), "usage-provider-env-"));
+  const home = path.join(root, "home");
+  const scopeLogPath = path.join(root, "scopes.ndjson");
+  const dir = (name: string) => path.join(root, name);
+  await json(path.join(home, ".claude", ".credentials.json"), {
+    claudeAiOauth: { accessToken: "fixture-default" },
+  });
+  await json(path.join(home, ".codex", "auth.json"), {
+    tokens: { access_token: "fixture-codex", account_id: "chatgpt-default" },
+  });
+  for (const name of ["work", "personal", "same", "off"]) {
+    await json(path.join(dir(`claude-${name}`), ".credentials.json"), {
+      claudeAiOauth: { accessToken: `fixture-${name}` },
+    });
+  }
+  await json(path.join(dir("claude-stale"), ".credentials.json"), {
+    claudeAiOauth: { accessToken: "fixture-stale", expiresAt: 1 },
+  });
+  await json(path.join(dir("codex-work"), "auth.json"), {
+    tokens: { access_token: "fixture-codex-work", account_id: "chatgpt-work" },
+  });
+
+  // Third-party spy plugin registering both an unscoped source and an unrelated-provider source.
+  const spyPluginDir = path.join(root, "spy-plugin");
+  await mkdir(spyPluginDir, { recursive: true });
+  await writeFile(
+    path.join(spyPluginDir, "paseo-plugin.json"),
+    JSON.stringify({ id: "spy-usage", requirements: { paseo: ">=0.9.2" } }),
+  );
+  await writeFile(
+    path.join(spyPluginDir, "index.server.ts"),
+    `
+import { appendFile } from 'node:fs/promises';
+import { z } from 'zod';
+export default function contribute(server) {
+  server.registerUsageSource({
+    id: 'spy-unscoped',
+    label: 'Spy Unscoped',
+    input: z.object({}),
+    discover: async (scope) => {
+      await appendFile(${JSON.stringify(scopeLogPath)}, JSON.stringify({ source: 'spy-unscoped', scope }) + '\\n');
+      return [];
+    },
+    fetch: async () => ({ status: 'available', windows: [] }),
+  });
+  server.registerUsageSource({
+    id: 'spy-other',
+    label: 'Spy Other',
+    providers: ['other'],
+    input: z.object({}),
+    discover: async (scope) => {
+      await appendFile(${JSON.stringify(scopeLogPath)}, JSON.stringify({ source: 'spy-other', scope }) + '\\n');
+      return [];
+    },
+    fetch: async () => ({ status: 'available', windows: [] }),
+  });
+  return () => {};
+}
+`,
+  );
+
+  const builtinPlugins = await injectedUsageSources({
+    root,
+    lookup: { home, env: {} },
+    scopeLogPath,
+    fetchApi: `async function fetchApi(url, init) {
+  const token = new Headers(init.headers).get('Authorization');
+  if (String(url).endsWith('/profile')) {
+    const uuid = { 'Bearer fixture-work': 'work', 'Bearer fixture-personal': 'personal', 'Bearer fixture-off': 'off' }[token] || 'default';
+    return new Response(JSON.stringify({ account: { uuid }, organization: { uuid: 'org' } }));
+  }
+  const pct = { 'Bearer fixture-work': 24, 'Bearer fixture-personal': 68, 'Bearer fixture-codex-work': 41 }[token] || 10;
+  return new Response(JSON.stringify({ rate_limit: { primary_window: { used_percent: pct } }, five_hour: { utilization: pct } }));
+}`,
+  });
+  const daemon = await createTestPaseoDaemon({
+    pluginsEnabled: true,
+    builtinPlugins,
+    providerOverrides: {
+      "claude-work": {
+        extends: "claude",
+        label: "Claude (work)",
+        env: {
+          CLAUDE_CONFIG_DIR: dir("claude-work"),
+          ANTHROPIC_API_KEY: "secret-anthropic-work",
+          ANTHROPIC_AUTH_TOKEN: "secret-auth-work",
+          CLAUDE_CODE_OAUTH_TOKEN: "secret-oauth-work",
+          MY_SECRET: "secret-custom-work",
+        },
+      },
+      "claude-personal": {
+        extends: "claude",
+        label: "Claude (personal)",
+        env: {
+          CLAUDE_CONFIG_DIR: dir("claude-personal"),
+          MY_SECRET: "secret-custom-personal",
+        },
+      },
+      "claude-same": {
+        extends: "claude",
+        label: "Claude (same)",
+        env: { CLAUDE_CONFIG_DIR: dir("claude-same") },
+      },
+      "claude-stale": {
+        extends: "claude",
+        label: "Claude (stale)",
+        env: { CLAUDE_CONFIG_DIR: dir("claude-stale") },
+      },
+      "claude-off": {
+        extends: "claude",
+        label: "Claude (off)",
+        enabled: false,
+        env: { CLAUDE_CONFIG_DIR: dir("claude-off") },
+      },
+      "claude-secret-only": {
+        extends: "claude",
+        label: "Claude (API key)",
+        env: {
+          ANTHROPIC_API_KEY: "secret-only-key",
+          MY_SECRET: "secret-only-val",
+        },
+      },
+      "codex-work": {
+        extends: "codex",
+        label: "Codex (work)",
+        env: {
+          CODEX_HOME: dir("codex-work"),
+          OPENAI_API_KEY: "secret-openai-work",
+          MY_SECRET: "secret-codex-custom",
+        },
+      },
+    },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  const listed = async (status: "available" | "unavailable") =>
+    (await client.listUsageReports()).reports.filter((entry) => entry.report.status === status);
+  const availableById = async () =>
+    Object.fromEntries(
+      (await listed("available")).map((entry) => [
+        entry.id,
+        entry.report.status === "available" ? entry.report.windows[0]?.usedPct : undefined,
+      ]),
+    );
+  try {
+    await client.connect();
+    await client.installDirectoryPlugin(spyPluginDir, "spy-usage");
+
+    expect(await availableById()).toEqual({
+      "claude:default.org": 10,
+      "claude:work.org": 24,
+      "claude:personal.org": 68,
+      "codex:chatgpt-default": 10,
+      "codex:chatgpt-work": 41,
+    });
+    expect((await listed("unavailable")).map((entry) => entry.loginErrors)).toEqual([
+      [
+        {
+          harness: "Claude (stale)",
+          report: {
+            status: "unavailable",
+            problem: {
+              kind: "expired",
+              expiresAt: "1970-01-01T00:00:00.001Z",
+              refreshedBy: "claude",
+            },
+          },
+        },
+      ],
+    ]);
+
+    // Verify strict source scoping and zero secret leakage across all recorded discovery calls.
+    const recorded = (await readFile(scopeLogPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            source: string;
+            scope: { kind: string; provider?: string; env?: Record<string, string> };
+          },
+      );
+    const spyScopes = recorded.filter(
+      (entry) => entry.source === "spy-unscoped" || entry.source === "spy-other",
+    );
+    expect(spyScopes.length).toBeGreaterThan(0);
+    expect(spyScopes.every((entry) => entry.scope.kind === "global")).toBe(true);
+
+    const claudeSessions = recorded.filter(
+      (entry) => entry.source === "claude" && entry.scope.kind === "session",
+    );
+    expect(claudeSessions.length).toBeGreaterThan(0);
+    expect(claudeSessions.every((entry) => entry.scope.provider === "claude")).toBe(true);
+
+    const codexSessions = recorded.filter(
+      (entry) => entry.source === "codex" && entry.scope.kind === "session",
+    );
+    expect(codexSessions.length).toBeGreaterThan(0);
+    expect(codexSessions.every((entry) => entry.scope.provider === "codex")).toBe(true);
+
+    const allSessionEnvs = recorded.flatMap((entry) =>
+      entry.scope.kind === "session" && entry.scope.env ? [entry.scope.env] : [],
+    );
+    for (const env of allSessionEnvs) {
+      expect(env).not.toHaveProperty("ANTHROPIC_API_KEY");
+      expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
+      expect(env).not.toHaveProperty("CLAUDE_CODE_OAUTH_TOKEN");
+      expect(env).not.toHaveProperty("OPENAI_API_KEY");
+      expect(env).not.toHaveProperty("MY_SECRET");
+    }
+    const serializedLog = JSON.stringify(recorded);
+    expect(serializedLog).not.toContain("secret-");
+    expect(serializedLog).not.toContain("shell-anthropic-secret");
+    expect(serializedLog).not.toContain("shell-openai-secret");
+
+    await client.patchDaemonConfig({ providers: { "claude-work": { enabled: false } } });
+    expect(Object.keys(await availableById()).sort()).toEqual([
+      "claude:default.org",
+      "claude:personal.org",
+      "codex:chatgpt-default",
+      "codex:chatgpt-work",
+    ]);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("#3589: a provider whose agents talk to another API host has no login in the host list", async () => {
+  vi.stubEnv("ANTHROPIC_BASE_URL", "https://llm-proxy.example");
+  const root = await mkdtemp(path.join(os.tmpdir(), "usage-provider-host-"));
+  await json(path.join(root, "claude-work", ".credentials.json"), {
+    claudeAiOauth: { accessToken: "fixture-work" },
+  });
+  const builtinPlugins = await injectedUsageSources({
+    root,
+    lookup: { home: path.join(root, "home"), env: {} },
+    fetchApi: `async function fetchApi(url) {
+  if (String(url).endsWith('/profile')) {
+    return new Response(JSON.stringify({ account: { uuid: 'work' }, organization: { uuid: 'org' } }));
+  }
+  return new Response(JSON.stringify({ rate_limit: { primary_window: { used_percent: 1 } }, five_hour: { utilization: 1 } }));
+}`,
+  });
+  const daemon = await createTestPaseoDaemon({
+    pluginsEnabled: false,
+    builtinPlugins,
+    providerOverrides: {
+      "claude-work": {
+        extends: "claude",
+        label: "Claude (work)",
+        env: { CLAUDE_CONFIG_DIR: path.join(root, "claude-work") },
+      },
+    },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    expect((await client.listUsageReports()).reports).toEqual([]);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("#3589: an empty default store and disabled built-in provider do not hide configured accounts", async () => {
+  for (const name of API_HOST_ENV) vi.stubEnv(name, undefined);
+  const root = await mkdtemp(path.join(os.tmpdir(), "usage-empty-default-"));
+  const providerOverrides: Record<string, ProviderOverride> = { claude: { enabled: false } };
+  for (let i = 0; i < 5; i++) {
+    const configDir = path.join(root, `account-${i}`);
+    await json(path.join(configDir, ".credentials.json"), {
+      claudeAiOauth: { accessToken: `fixture-independent-${i}` },
+    });
+    providerOverrides[`claude-${i}`] = {
+      extends: "claude",
+      label: `Account ${i}`,
+      env: { CLAUDE_CONFIG_DIR: configDir },
+    };
+  }
+  const builtinPlugins = await injectedUsageSources({
+    root,
+    lookup: { home: path.join(root, "empty-home"), env: {} },
+    fetchApi: `async function fetchApi(url, init) {
+      const token = new Headers(init.headers).get('Authorization');
+      const uuid = token.slice('Bearer fixture-independent-'.length);
+      if (String(url).endsWith('/profile')) return new Response(JSON.stringify({account:{uuid},organization:{uuid:'independent'}}));
+      return new Response(JSON.stringify({five_hour:{utilization:7},seven_day:{utilization:13}}));
+    }`,
+  });
+  const daemon = await createTestPaseoDaemon({
+    pluginsEnabled: false,
+    builtinPlugins,
+    providerOverrides,
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    const reports = (await client.listUsageReports()).reports;
+    expect(reports.map((x) => x.id).sort()).toEqual(
+      [0, 1, 2, 3, 4].map((i) => `claude:${i}.independent`),
+    );
+    expect(reports.every((x) => x.report.status === "available")).toBe(true);
   } finally {
     await client.close();
     await daemon.close();

@@ -736,6 +736,16 @@ export interface AgentUsageSession {
   sessionKey: string;
 }
 
+/** An enabled provider configured with usage-locator env vars, scoped for host usage discovery. */
+export interface ProviderUsageEnvironment {
+  /** Base provider ID (the provider a custom provider extends, or its own ID). */
+  provider: string;
+  /** Provider display label, used to name logins discovered through it. */
+  label: string;
+  /** Non-secret config-directory / locator env vars effective for this provider. */
+  env: Record<string, string>;
+}
+
 export interface AgentSession {
   /** Persist the session's current handle immediately after an interactive resume. */
   readonly persistenceUpdatedOnResume?: boolean;
