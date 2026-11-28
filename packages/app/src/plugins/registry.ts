@@ -137,6 +137,7 @@ export class PluginRegistry {
           timelineTransformers: [],
           timelineRenderers: [],
           notificationOpenHandlers: [],
+          timelineFooters: [],
         };
         const unsubscribeTranslations = installation.i18n.subscribe(() => this.publish());
         installation.lifetime.signal.addEventListener("abort", unsubscribeTranslations, {

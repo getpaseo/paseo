@@ -20,6 +20,7 @@ import type {
   PluginWorkspaceRowBadgeItemContribution as SDKPluginWorkspaceRowBadgeItemContribution,
   PluginScreenContribution as SDKPluginScreenContribution,
   PluginSettingsScreenContribution as SDKPluginSettingsScreenContribution,
+  PluginTimelineFooterContribution,
   PluginTimelineRendererContribution,
   PluginTimelineTransformerContribution,
   PluginNotificationOpenHandler,
@@ -69,6 +70,7 @@ export interface EvaluatedPlugin {
   clientSlashCommands: PluginClientSlashCommandContribution[];
   attachmentSources: PluginAttachmentSourceContribution[];
   themes: PluginThemeContribution[];
+  timelineFooters: PluginTimelineFooterContribution[];
   timelineTransformers: PluginTimelineTransformerContribution[];
   timelineRenderers: PluginTimelineRendererContribution[];
   notificationOpenHandlers: PluginNotificationOpenHandler[];

@@ -38,6 +38,7 @@ function installation(): InstalledPlugin {
     timelineTransformers: [],
     timelineRenderers: [],
     notificationOpenHandlers: [],
+    timelineFooters: [],
   };
 }
 
