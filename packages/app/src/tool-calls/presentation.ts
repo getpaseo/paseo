@@ -74,10 +74,22 @@ function planModeTransitionLabel(input: BuildToolCallPresentationInput): string 
   return detail.label;
 }
 
+function isPlanExitResult(input: BuildToolCallPresentationInput): boolean {
+  return (
+    !input.agentMessage &&
+    input.toolName === "other" &&
+    input.metadata?.kind === "other" &&
+    input.metadata.title === "Plan: Exit" &&
+    input.detail?.type === "plain_text" &&
+    input.detail.label === "Plan: Exit"
+  );
+}
+
 export function buildToolCallPresentation(
   input: BuildToolCallPresentationInput,
 ): ToolCallPresentation {
   const transitionLabel = planModeTransitionLabel(input);
+  const planExit = isPlanExitResult(input);
   let detail = input.detail;
   if (input.agentMessage) {
     detail = buildAgentMessageDisplay(input.agentMessage).detail;
@@ -105,8 +117,8 @@ export function buildToolCallPresentation(
 
   return {
     detail,
-    displayName: transitionLabel ?? displayModel.displayName,
-    summary: transitionLabel ? undefined : displayModel.summary,
+    displayName: transitionLabel ?? (planExit ? "Plan Exit" : displayModel.displayName),
+    summary: transitionLabel || planExit ? undefined : displayModel.summary,
     errorText: displayModel.errorText,
     icon: input.resolveIcon(input.toolName, detail, input.agentMessage),
     isLoadingDetails,

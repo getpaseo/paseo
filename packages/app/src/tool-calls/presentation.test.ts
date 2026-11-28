@@ -36,6 +36,76 @@ function fakeResolveIcon(
 }
 
 describe("tool-call presentation", () => {
+  it.each([
+    "The user does not want to exit plan mode. Continue planning and ask the user what they would like to do.",
+    "The user wants to revise the plan. The user said:\nKeep the existing files unchanged.",
+    "The user chose to abandon the plan entirely. Plan mode has been disabled.",
+  ])("labels a Plan Exit result while preserving its expandable output: %s", (text) => {
+    const detail: ToolCallDetail = {
+      type: "plain_text",
+      label: "Plan: Exit",
+      text,
+      icon: "wrench",
+    };
+    const presentation = buildToolCallPresentation({
+      toolName: "other",
+      status: "completed",
+      error: null,
+      detail,
+      metadata: { kind: "other", title: "Plan: Exit" },
+      resolveIcon: fakeResolveIcon,
+    });
+    expect(presentation).toMatchObject({
+      displayName: "Plan Exit",
+      summary: undefined,
+      detail,
+      hasDetails: true,
+      canOpenDetails: true,
+      isPlan: false,
+    });
+  });
+
+  it.each(["running", "failed"] as const)("preserves a %s Plan Exit result", (status) => {
+    const detail: ToolCallDetail = {
+      type: "plain_text",
+      label: "Plan: Exit",
+      text: "Plan approval response",
+      icon: "wrench",
+    };
+    const error = status === "failed" ? "Approval request failed" : null;
+    const presentation = buildToolCallPresentation({
+      toolName: "other",
+      status,
+      error,
+      detail,
+      metadata: { kind: "other", title: "Plan: Exit" },
+      resolveIcon: fakeResolveIcon,
+    });
+    expect(presentation.displayName).toBe("Plan Exit");
+    expect(presentation.detail).toEqual(detail);
+    expect(presentation.canOpenDetails).toBe(true);
+    if (error) expect(presentation.errorText).toBe(error);
+  });
+
+  it("keeps unrelated plain-text tools on the generic display path", () => {
+    const detail: ToolCallDetail = {
+      type: "plain_text",
+      label: "Plan: Exit",
+      text: "Custom output",
+    };
+    const presentation = buildToolCallPresentation({
+      toolName: "custom_tool",
+      status: "completed",
+      error: null,
+      detail,
+      metadata: { kind: "other", title: "Plan: Exit" },
+      resolveIcon: fakeResolveIcon,
+    });
+    expect(presentation.displayName).toBe("Custom tool");
+    expect(presentation.summary).toBe("Plan: Exit");
+    expect(presentation.detail).toEqual(detail);
+  });
+
   it.each(["Plan mode entered", "Plan mode exited"])(
     "presents %s as a compact status without the path-only disclosure",
     (label) => {

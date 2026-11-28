@@ -37,6 +37,7 @@ Existing Grok timeline browser rows, parent-verified:
 - Plan mode entered and exited rows show no path-only detail and are not expandable.
 - An unrelated Edit README.txt disclosure opens. PLAN_REVIEW_APPROVED content stays rendered.
 - The pending review state remains open.
+- Completed `Plan: Exit` review results display as `Plan Exit` and start collapsed. Clicking expands the real revision output, including quoted lines and feedback; clicking again collapses it. Cancellation, revision, abandonment, running, and failed-result regression cases preserve the output and errors. This title-only normalization keeps these results distinct from a successful `Plan mode exited` status.
 
 Mobile browser emulation, current compact card:
 
@@ -52,7 +53,7 @@ This record makes no claim that any plan was approved on mobile.
 Raw output is in [validation.txt](validation.txt). Entries from before the mobile card refinement are superseded by the checks below.
 
 - Final `npm run format` exited 0.
-- Focused `src/tool-calls/presentation.test.ts`: 23 tests passed.
+- Focused `src/tool-calls/presentation.test.ts`: 29 tests passed after the Plan Exit label correction (the earlier transition-only run had 23).
 - Full `npm run typecheck` and `npm run lint` exited 0 after the timeline transition fix. Lint reported 0 warnings and 0 errors.
 - Regression tests: an exact-match, completed, error-free `other`/`plain_text` metadata normalizer preserves other outputs and failures.
 - Earlier (before the mobile card refinement): `model.test.ts`: 10 passed, 13 skipped.
@@ -91,4 +92,5 @@ Use an empty scratch workspace and an isolated `PASEO_HOME`, not `~/.paseo`.
 - [Desktop selected state](desktop-selected.png)
 - [Desktop long plan end](desktop.png)
 - [Revised mobile browser card](mobile-browser.png)
+- [Plan Exit expanded revision result](plan-exit-expanded.png)
 - [Raw command output](validation.txt)
