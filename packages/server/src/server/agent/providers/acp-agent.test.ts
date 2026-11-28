@@ -39,6 +39,7 @@ import {
 } from "./acp-agent.js";
 import { createIdleRuntimeCleanup } from "../idle-runtime-cleanup/index.js";
 import { AgentManager } from "../agent-manager.js";
+import { StaleProviderSessionError } from "../stale-provider-session-error.js";
 import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill.js";
 import {
   COPILOT_AGENT_FEATURE_OPTION,
@@ -6082,7 +6083,7 @@ describe("ACPAgentSession interrupt settlement and hung-cancel retirement (#3256
   });
 
   test.each(["load", "resume"] as const)(
-    "kills a hung %s-resumable ACP child after grace timeout and transparently respawns on the next prompt",
+    "kills a hung %s-resumable ACP child after grace timeout and transparently reloads through AgentManager on the next prompt",
     async (resumeMode) => {
       const dir = await mkdtemp(path.join(tmpdir(), `paseo-acp-hung-${resumeMode}-`));
       const pidLog = path.join(dir, "pids.log");
@@ -6094,47 +6095,83 @@ describe("ACPAgentSession interrupt settlement and hung-cancel retirement (#3256
         ignoreSigterm: true,
         resumeMode,
       });
-      const session = createLiveSession(dir, scriptPath, {
+      const logger = createTestLogger();
+      const client = new ACPAgentClient({
+        provider: "acp-test",
+        logger,
+        defaultCommand: [process.execPath, scriptPath],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: false,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
         interruptGraceMs: 120,
         interruptKillGraceMs: 120,
       });
-      const events: AgentStreamEvent[] = [];
-      session.subscribe((event) => events.push(event));
+      const manager = new AgentManager({
+        clients: { "acp-test": client },
+        logger,
+      });
 
       try {
-        await session.initializeNewSession();
-        const firstPid = Number((await readFile(pidLog, "utf8")).trim());
+        const agent = await manager.createAgent({ provider: "acp-test", cwd: dir }, undefined, {
+          workspaceId: undefined,
+        });
+        const firstSession = manager.getAgent(agent.id)!.session!;
+        const events: AgentStreamEvent[] = [];
+        firstSession.subscribe((event) => events.push(event));
+        const firstPid = (await readFile(pidLog, "utf8")).trim().split("\n").map(Number).at(-1)!;
 
-        const { turnId } = await session.startTurn("hang-forever");
+        const firstRun = manager.streamAgent(agent.id, "hang-forever");
+        const drainingFirst = (async () => {
+          for await (const _event of firstRun) {
+            // Drain stream until Stop cancels it.
+          }
+        })();
+        await manager.waitForAgentRunStart(agent.id);
         await vi.waitFor(() => expect(hasToolCallEvent(events)).toBe(true));
 
         // Overlapping interrupts coalesce into a single retirement.
-        await Promise.all([session.interrupt(), session.interrupt()]);
+        const [firstCancel, secondCancel] = await Promise.all([
+          manager.cancelAgentRun(agent.id),
+          manager.cancelAgentRun(agent.id),
+        ]);
+        expect(firstCancel).toEqual({ status: "settled" });
+        expect(secondCancel).toEqual({ status: "not_running" });
+        await drainingFirst;
 
         // Hung child (which ignored SIGTERM) was SIGKILLed and retired cleanly.
         expect(() => process.kill(firstPid, 0)).toThrow();
-        expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+        expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
         expect(terminalEvents(events)).toEqual([
-          expect.objectContaining({ type: "turn_canceled", turnId }),
+          expect.objectContaining({ type: "turn_canceled" }),
         ]);
 
-        // Next prompt transparently spawns a fresh child, reloads the session, and succeeds.
-        const result = await session.run("recovered");
+        // Direct reuse of the retired session signals stale so AgentManager reloads it.
+        await expect(firstSession.startTurn("stale-check")).rejects.toBeInstanceOf(
+          StaleProviderSessionError,
+        );
+
+        // Next prompt through AgentManager transparently reloads via session/load or session/resume.
+        const result = await manager.runAgent(agent.id, "recovered");
         expect(result.finalText).toBe("ok:recovered");
 
         const pids = (await readFile(pidLog, "utf8")).trim().split("\n").map(Number);
-        expect(pids).toHaveLength(2);
-        expect(pids[1]).not.toBe(firstPid);
+        const reloadedPid = pids.at(-1)!;
+        expect(reloadedPid).not.toBe(firstPid);
         const methods = (await readFile(methodLog, "utf8"))
           .trim()
           .split("\n")
           .map((line) => JSON.parse(line) as { pid: number; method: string });
         const expectedMethod = resumeMode === "load" ? "session/load" : "session/resume";
         expect(
-          methods.some((entry) => entry.pid === pids[1] && entry.method === expectedMethod),
+          methods.some((entry) => entry.pid === reloadedPid && entry.method === expectedMethod),
         ).toBe(true);
       } finally {
-        await session.close();
+        await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
         await rm(dir, { recursive: true, force: true });
       }
     },

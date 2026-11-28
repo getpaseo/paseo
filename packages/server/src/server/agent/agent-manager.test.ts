@@ -661,7 +661,6 @@ class UnsupportedSteeringSession extends TestAgentSession {
 async function startAndSteerThroughManager(
   session: AgentSession,
   behavior: "steer" | "interrupt" = "steer",
-  options?: { rescueTimeouts?: { interruptSessionMs?: number } },
 ): Promise<{ manager: AgentManager; agentId: string; workdir: string }> {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-steer-dispatch-"));
   const client = new (class extends TestAgentClient {
@@ -669,11 +668,7 @@ async function startAndSteerThroughManager(
       return session;
     }
   })();
-  const manager = new AgentManager({
-    clients: { codex: client },
-    logger,
-    ...(options?.rescueTimeouts ? { rescueTimeouts: options.rescueTimeouts } : {}),
-  });
+  const manager = new AgentManager({ clients: { codex: client }, logger });
   const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
     workspaceId: undefined,
   });
@@ -1702,9 +1697,7 @@ test("does not replace a newer foreground turn after unavailable steer fallback 
 
 test("concurrent interrupting sends each start their own turn in order", async () => {
   const session = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
-  const { manager, agentId, workdir } = await startAndSteerThroughManager(session, "interrupt", {
-    rescueTimeouts: { interruptSessionMs: 20 },
-  });
+  const { manager, agentId, workdir } = await startAndSteerThroughManager(session, "interrupt");
   try {
     const prompts = ["first interrupt", "second interrupt", "third interrupt"];
     await Promise.all(
@@ -1747,9 +1740,7 @@ test("Stop can cancel startup while an interrupting send waits behind it", async
     }
   }
   const session = new SlowStartSession({ provider: "codex", cwd: process.cwd() });
-  const { manager, agentId, workdir } = await startAndSteerThroughManager(session, "interrupt", {
-    rescueTimeouts: { interruptSessionMs: 20 },
-  });
+  const { manager, agentId, workdir } = await startAndSteerThroughManager(session, "interrupt");
   try {
     await startAgentRun(manager, agentId, "slow startup", logger, { replaceRunning: true });
     await entered.promise;
@@ -10662,7 +10653,6 @@ test("acknowledged cancellation settles a pending run before it has a turn id", 
     clients: { codex: new PendingStartClient() },
     registry: new AgentStorage(join(workdir, "agents"), logger),
     logger,
-    rescueTimeouts: { interruptSessionMs: 20 },
     idFactory: () => "00000000-0000-4000-8000-000000000132",
   });
 
@@ -13602,7 +13592,6 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
     clients: { codex: new StaleForegroundClient() },
     registry: storage,
     logger,
-    rescueTimeouts: { interruptSessionMs: 20 },
     idFactory: () => "00000000-0000-4000-8000-000000000500",
   });
 
@@ -16813,6 +16802,57 @@ test("cancelAgentRun default interrupt timeout accommodates a 10s cancel grace p
     expect(manager.getAgent(created.id)?.lifecycle).toBe("running");
 
     finishInterrupt();
+    await expect(cancelPromise).resolves.toEqual({ status: "settled" });
+    await draining;
+    expect(manager.getAgent(created.id)?.lifecycle).toBe("idle");
+  } finally {
+    vi.useRealTimers();
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("cancelAgentRun still force-cancels after 2s when an acknowledged non-ACP interrupt never emits a terminal event (#3256)", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-settlement-2s-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class SilentInterruptSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "silent-interrupt-turn";
+      this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      return { turnId };
+    }
+
+    override async interrupt(): Promise<void> {
+      // Acknowledges immediately, simulating a non-ACP provider whose terminal event is lost.
+    }
+  }
+
+  class SilentInterruptClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new SilentInterruptSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new SilentInterruptClient() },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const stream = manager.streamAgent(created.id, "stuck-non-acp");
+    const draining = drainAsyncGenerator(stream);
+    await manager.waitForAgentRunStart(created.id);
+
+    const cancelPromise = manager.cancelAgentRun(created.id);
+    // Must force-cancel after the 2s settlement rescue timeout, not wait 15s.
+    await vi.advanceTimersByTimeAsync(2_100);
     await expect(cancelPromise).resolves.toEqual({ status: "settled" });
     await draining;
     expect(manager.getAgent(created.id)?.lifecycle).toBe("idle");

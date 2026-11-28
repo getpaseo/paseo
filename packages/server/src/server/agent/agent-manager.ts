@@ -137,6 +137,7 @@ import { buildSessionConfig, extractAttention } from "../persistence-hooks.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 15_000;
+const INTERRUPT_SETTLEMENT_TIMEOUT_MS = 2_000;
 const IMPORTABLE_SESSION_LIST_TIMEOUT_MS = 90_000;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
@@ -3292,6 +3293,26 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<AgentRunResult> {
+    try {
+      return await this.runAgentOnce(agentId, prompt, options);
+    } catch (error) {
+      if (!isStaleProviderSessionError(error)) {
+        throw error;
+      }
+      this.logger.info(
+        { agentId, err: error },
+        "Provider session went stale during runAgent; reopening from persistence",
+      );
+      await this.reloadAgentSession(agentId);
+      return await this.runAgentOnce(agentId, prompt, options);
+    }
+  }
+
+  private async runAgentOnce(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): Promise<AgentRunResult> {
     const events = this.streamAgent(agentId, prompt, options);
     const timeline: AgentTimelineItem[] = [];
     let finalText = "";
@@ -4058,7 +4079,10 @@ export class AgentManager {
       }
       const started = await this.waitWithTimeout({
         operation: Promise.race([admission.run.turnStartedPromise, admission.run.settledPromise]),
-        timeoutMs: this.rescueTimeouts.interruptSessionMs,
+        timeoutMs: Math.min(
+          INTERRUPT_SETTLEMENT_TIMEOUT_MS,
+          this.rescueTimeouts.interruptSessionMs,
+        ),
       });
       if (started === "timed_out") {
         stalledStart = admission.run;
@@ -4277,7 +4301,7 @@ export class AgentManager {
     const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
     const settlement = await this.waitWithTimeout({
       operation: run.settledPromise,
-      timeoutMs: this.rescueTimeouts.interruptSessionMs,
+      timeoutMs: Math.min(INTERRUPT_SETTLEMENT_TIMEOUT_MS, this.rescueTimeouts.interruptSessionMs),
     });
 
     if (!interruptAcknowledged) {

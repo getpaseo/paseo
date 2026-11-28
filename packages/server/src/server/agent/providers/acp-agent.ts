@@ -2096,13 +2096,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private activeInterrupt: Promise<void> | null = null;
   private retiringForInterrupt = false;
   private retiredAfterInterrupt = false;
-  private reopenPromise: Promise<void> | null = null;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private historyPending = false;
   private historyRuntimeReleased = false;
   private replayingHistory = false;
-  private discardReplayedHistory = false;
   private bootstrapThreadEventPending = false;
   private readonly interruptGraceMs: number;
   private readonly interruptKillGraceMs: number;
@@ -2310,7 +2308,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
-    await this.ensureLiveSession();
+    this.assertSessionUsable();
     if (!this.connection || !this.sessionId) {
       throw new Error(`${this.provider} session is not initialized`);
     }
@@ -2479,7 +2477,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async setMode(modeId: string): Promise<void> {
-    await this.ensureLiveSession();
+    this.assertSessionUsable();
     if (!this.connection || !this.sessionId) {
       throw new Error("ACP session not initialized");
     }
@@ -2619,7 +2617,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async setModel(modelId: string | null): Promise<{ model: string | null }> {
-    await this.ensureLiveSession();
+    this.assertSessionUsable();
     if (!this.connection || !this.sessionId) {
       throw new Error("ACP session not initialized");
     }
@@ -2728,7 +2726,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
-    await this.ensureLiveSession();
+    this.assertSessionUsable();
     if (!this.connection || !this.sessionId) {
       throw new Error("ACP session not initialized");
     }
@@ -2788,6 +2786,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
    * The agent manager sends one apply at a time per session.
    */
   async applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
+    this.assertSessionUsable();
     assertChangesAreLive({
       provider: this.config.provider,
       patch: options,
@@ -2859,7 +2858,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private async setConfigFeature(featureId: string, value: unknown): Promise<void> {
-    await this.ensureLiveSession();
+    this.assertSessionUsable();
     if (!this.connection || !this.sessionId) {
       throw new Error("ACP session not initialized");
     }
@@ -3074,7 +3073,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       turnId,
     });
 
-    if (!this.supportsSessionResume()) {
+    if (!this.canResumeSession()) {
       this.pushEvent({
         type: "turn_failed",
         provider: this.provider,
@@ -3083,131 +3082,24 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
-  private supportsSessionResume(): boolean {
-    return Boolean(
-      this.agentCapabilities?.loadSession || this.agentCapabilities?.sessionCapabilities?.resume,
-    );
-  }
-
   private nonResumableRetirementMessage(): string {
     return `Stopped unresponsive ${this.provider} process after cancel timed out. This provider does not support session resume; start a new agent or reload to continue.`;
   }
 
-  private async ensureLiveSession(): Promise<void> {
+  private assertSessionUsable(): void {
     if (this.closed) {
       throw new Error(`${this.provider} session is closed`);
     }
     if (!this.retiredAfterInterrupt) {
       return;
     }
-    if (!this.supportsSessionResume()) {
+    if (!this.canResumeSession()) {
       throw new Error(this.nonResumableRetirementMessage());
     }
-    await this.reopenRetiredSession();
-  }
-
-  private async reopenRetiredSession(): Promise<void> {
-    if (this.reopenPromise) {
-      return this.reopenPromise;
-    }
-    const reopening = this.reopenRetiredSessionInternal().finally(() => {
-      if (this.reopenPromise === reopening) {
-        this.reopenPromise = null;
-      }
-    });
-    this.reopenPromise = reopening;
-    return reopening;
-  }
-
-  private async reopenRetiredSessionInternal(): Promise<void> {
-    if (!this.sessionId) {
-      throw new Error(`${this.provider} session is not initialized`);
-    }
-    const previousMode = this.currentMode;
-    const previousModel = this.currentModel;
-    const previousThinking = this.thinkingOptionId;
-
-    let spawnedChild: ChildProcessWithoutNullStreams | null = null;
-    try {
-      const spawned = await this.spawnProcess();
-      spawnedChild = spawned.child;
-      if (this.closed) {
-        throw new Error(`${this.provider} session is closed`);
-      }
-      this.child = spawned.child;
-      this.connection = spawned.connection;
-      this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
-
-      let response: SessionStateResponse;
-      if (this.agentCapabilities?.loadSession) {
-        this.replayingHistory = true;
-        this.discardReplayedHistory = true;
-        try {
-          response = await this.runACPRequest(() =>
-            this.connection!.loadSession({
-              sessionId: this.sessionId!,
-              cwd: this.config.cwd,
-              mcpServers: this.acpMcpServers(),
-            }),
-          );
-          this.deliverTranslatedEvents(this.flushPendingUserMessage());
-        } finally {
-          this.replayingHistory = false;
-          this.discardReplayedHistory = false;
-        }
-      } else if (this.agentCapabilities?.sessionCapabilities?.resume) {
-        response = await this.runACPRequest(() =>
-          this.connection!.unstable_resumeSession({
-            sessionId: this.sessionId!,
-            cwd: this.config.cwd,
-            mcpServers: this.acpMcpServers(),
-          }),
-        );
-      } else {
-        throw new Error(this.nonResumableRetirementMessage());
-      }
-
-      if (this.closed) {
-        throw new Error(`${this.provider} session is closed`);
-      }
-
-      this.applySessionState(response);
-      await this.inOptionsTransaction(async () => {
-        if (previousMode && previousMode !== this.currentMode) {
-          await this.setModeWithSelection({
-            modeId: previousMode,
-            selection: this.resolveModeSelection(previousMode),
-          });
-        }
-        if (previousModel && previousModel !== this.currentModel) {
-          try {
-            await this.setModelWithSelection({
-              modelId: previousModel,
-              selection: this.resolveModelSelection(previousModel),
-            });
-          } catch (error) {
-            if (!this.isModelSelectionUnavailableError(error)) {
-              throw error;
-            }
-          }
-        }
-        if (previousThinking && previousThinking !== this.thinkingOptionId) {
-          await this.setThinkingOption(previousThinking);
-        }
-      });
-      this.retiredAfterInterrupt = false;
-    } catch (error) {
-      const childToStop = this.child ?? spawnedChild;
-      this.child = null;
-      this.connection = null;
-      this.retiredAfterInterrupt = true;
-      if (childToStop) {
-        await this.terminateChildWithStdioCleanup(childToStop, this.interruptKillGraceMs).catch(
-          () => undefined,
-        );
-      }
-      throw error;
-    }
+    throw new StaleProviderSessionError(
+      this.sessionId ?? this.provider,
+      "after cancel timeout retirement",
+    );
   }
 
   private createActiveTurnWaiter(turnId: string): {
@@ -3390,9 +3282,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private deliverTranslatedEvents(events: AgentStreamEvent[]): void {
     if (this.replayingHistory) {
-      if (this.discardReplayedHistory) {
-        return;
-      }
       for (const event of events) {
         if (event.type === "timeline") {
           this.persistedHistory.push(event.item);
