@@ -150,7 +150,6 @@ interface EntryPayloadParams {
   root: string;
   targetPath: string;
   name: string;
-  kind: ExplorerEntryKind;
 }
 
 export async function listDirectoryEntries({
@@ -169,13 +168,11 @@ export async function listDirectoryEntries({
   const entriesWithNulls = await Promise.all(
     dirents.map(async (dirent) => {
       const targetPath = path.join(directoryPath.requestedPath, dirent.name);
-      const kind: ExplorerEntryKind = dirent.isDirectory() ? "directory" : "file";
       try {
         return await buildEntryPayload({
           root,
           targetPath,
           name: dirent.name,
-          kind,
         });
       } catch (error) {
         // Directories can contain dangling links (e.g. AGENTS.md -> CLAUDE.md).
@@ -855,7 +852,6 @@ async function buildEntryPayload({
   root,
   targetPath,
   name,
-  kind,
 }: EntryPayloadParams): Promise<FileExplorerEntry> {
   const entryPath = await resolveScopedPath({
     root,
@@ -865,7 +861,7 @@ async function buildEntryPayload({
   return {
     name,
     path: normalizeRelativePath({ root, targetPath }),
-    kind,
+    kind: stats.isDirectory() ? "directory" : "file",
     size: stats.size,
     modifiedAt: stats.mtime.toISOString(),
   };
