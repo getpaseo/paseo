@@ -32,6 +32,10 @@ export function retainHorizontalOffsetMapForPaths(
   offsets: ReadonlyMap<string, number>,
   paths: readonly string[],
 ): Map<string, number> {
-  const retained = retainHorizontalOffsetsForPaths(Object.fromEntries(offsets), paths);
-  return new Map(Object.entries(retained));
+  const retained = new Map<string, number>();
+  for (const path of paths) {
+    const offset = offsets.get(path);
+    if (typeof offset === "number") retained.set(path, offset);
+  }
+  return retained;
 }
