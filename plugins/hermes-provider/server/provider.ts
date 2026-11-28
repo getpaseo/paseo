@@ -1,5 +1,6 @@
 import { runAcpProvider } from "@getpaseo/plugin/server/acp";
 import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
+import { hermesAcpOptions } from "./acp-options.js";
 import { legacyModes } from "./legacy-modes.js";
 import { terminalCommand } from "./terminal-command.js";
 
@@ -12,18 +13,7 @@ export function createHermesProvider(): ProviderRegistration {
       description: "Nous Research self-improving AI agent",
       icon: "icon.svg",
       command: ["hermes", "acp"],
-      acpOptions: {
-        autoAcceptMode: {
-          mode: {
-            id: "full-access",
-            label: "Full access",
-            description: "Approve tool requests without asking.",
-            icon: "ShieldOff",
-            colorTier: "dangerous",
-          },
-          nativeMode: "ask",
-        },
-      },
+      acpOptions: hermesAcpOptions,
       transformers: [terminalCommand, legacyModes],
     }),
   };
