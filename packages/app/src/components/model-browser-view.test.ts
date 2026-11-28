@@ -17,7 +17,6 @@ import {
   resolveModelBrowserKeyCommand,
   resolveModelBrowserNavItems,
   resolveModelBrowserProjection,
-  resolveModelBrowserScrolling,
 } from "./model-browser-view";
 
 function provider(
@@ -47,20 +46,6 @@ function modelRow(
     description: modelId,
   };
 }
-
-describe("model browser scrolling", () => {
-  it("participates in native compact bottom-sheet scrolling", () => {
-    expect(resolveModelBrowserScrolling({ isNative: true, isCompact: true })).toBe("sheet");
-  });
-
-  it.each([
-    { platform: "native wide", isNative: true, isCompact: false },
-    { platform: "compact web", isNative: false, isCompact: true },
-    { platform: "wide web", isNative: false, isCompact: false },
-  ])("owns scrolling on $platform surfaces", ({ isNative, isCompact }) => {
-    expect(resolveModelBrowserScrolling({ isNative, isCompact })).toBe("independent");
-  });
-});
 
 describe("model browser initial view", () => {
   const codex = provider("codex", "Codex");
@@ -169,28 +154,10 @@ describe("model browser all view", () => {
         providers,
         profiles: [],
         normalizedQuery: "",
-        isSearchFocused: false,
       }),
     ).toEqual({
       kind: "browse",
     });
-  });
-
-  it("shows every searchable model as soon as empty search receives focus", () => {
-    const view = resolveModelBrowserAllView({
-      providers,
-      profiles: [],
-      normalizedQuery: "",
-      isSearchFocused: true,
-    });
-
-    expect(view.kind).toBe("searchResults");
-    expect(view.kind === "searchResults" ? view.rows.map((row) => row.favoriteKey) : []).toEqual([
-      "claude:opus-5",
-      "claude:sonnet-4.6",
-      "copilot:claude-opus-5",
-      "codex:gpt-5.4",
-    ]);
   });
 
   it("ranks the same model label across every provider that offers it", () => {
@@ -198,7 +165,6 @@ describe("model browser all view", () => {
       providers,
       profiles: [],
       normalizedQuery: "opus",
-      isSearchFocused: true,
     });
 
     expect(view.kind).toBe("searchResults");
@@ -213,7 +179,6 @@ describe("model browser all view", () => {
       providers,
       profiles: [],
       normalizedQuery: "codex",
-      isSearchFocused: true,
     });
 
     expect(view.kind === "searchResults" ? view.rows.map((row) => row.modelId) : []).toEqual([
@@ -227,7 +192,6 @@ describe("model browser all view", () => {
         providers,
         profiles: [],
         normalizedQuery: "zzzz",
-        isSearchFocused: true,
       }),
     ).toEqual({ kind: "noSearchMatches" });
   });
@@ -249,7 +213,6 @@ describe("model browser all view", () => {
         providers: [loading, failed],
         profiles: [],
         normalizedQuery: "opus",
-        isSearchFocused: true,
       }),
     ).toEqual({ kind: "noSearchMatches" });
   });
@@ -268,7 +231,6 @@ describe("model browser profile search", () => {
       providers: [claude],
       profiles,
       normalizedQuery: "review",
-      isSearchFocused: true,
     });
 
     expect(view).toEqual({ kind: "searchResults", profiles: [reviewer], rows: [] });
@@ -279,7 +241,6 @@ describe("model browser profile search", () => {
       providers: [claude],
       profiles,
       normalizedQuery: "opus",
-      isSearchFocused: true,
     });
 
     expect(view.kind === "searchResults" ? view.profiles : []).toEqual([reviewer]);
@@ -319,11 +280,8 @@ describe("model browser keyboard navigation", () => {
       view: { kind: "all" },
       providers,
       profiles,
-      showProfilesSection: true,
       canCreateProfileRow: true,
       normalizedQuery: "",
-      isSearchFocused: false,
-      hasCustomRootBrowseContent: false,
     });
 
     expect(items.map((item) => item.key)).toEqual([
@@ -339,11 +297,8 @@ describe("model browser keyboard navigation", () => {
       view: { kind: "all" },
       providers,
       profiles: [],
-      showProfilesSection: true,
       canCreateProfileRow: true,
       normalizedQuery: "",
-      isSearchFocused: false,
-      hasCustomRootBrowseContent: false,
     });
 
     expect(items.map((item) => item.key)).toEqual([
@@ -353,34 +308,13 @@ describe("model browser keyboard navigation", () => {
     ]);
   });
 
-  it("omits providers when custom root browse content replaces them", () => {
-    const items = resolveModelBrowserNavItems({
-      view: { kind: "all" },
-      providers,
-      profiles,
-      showProfilesSection: true,
-      canCreateProfileRow: true,
-      normalizedQuery: "",
-      isSearchFocused: false,
-      hasCustomRootBrowseContent: true,
-    });
-
-    expect(items.map((item) => item.key)).toEqual([
-      modelBrowserProfileKey("reviewer"),
-      modelBrowserProfileKey("quick"),
-    ]);
-  });
-
   it("orders matching profiles before matching models with model indexes in search results", () => {
     const items = resolveModelBrowserNavItems({
       view: { kind: "all" },
       providers,
       profiles,
-      showProfilesSection: true,
       canCreateProfileRow: true,
       normalizedQuery: "opus",
-      isSearchFocused: true,
-      hasCustomRootBrowseContent: false,
     });
 
     expect(items).toEqual([
@@ -400,11 +334,8 @@ describe("model browser keyboard navigation", () => {
       view: { kind: "provider", providerId: "claude", providerLabel: "Claude Code" },
       providers,
       profiles,
-      showProfilesSection: true,
       canCreateProfileRow: true,
       normalizedQuery: "",
-      isSearchFocused: false,
-      hasCustomRootBrowseContent: false,
     });
 
     expect(items.map((item) => item.key)).toEqual([
@@ -417,11 +348,8 @@ describe("model browser keyboard navigation", () => {
       view: { kind: "provider", providerId: "pi", providerLabel: "Pi" },
       providers: [{ id: "pi", label: "Pi", modelSelection: { kind: "loading" } }],
       profiles: null,
-      showProfilesSection: false,
       canCreateProfileRow: false,
       normalizedQuery: "",
-      isSearchFocused: false,
-      hasCustomRootBrowseContent: false,
     });
     expect(loadingItems).toEqual([]);
   });
@@ -432,11 +360,8 @@ describe("model browser keyboard navigation", () => {
       view,
       providers,
       profiles,
-      showProfilesSection: true,
       canCreateProfileRow: false,
       normalizedQuery: "",
-      isSearchFocused: false,
-      hasCustomRootBrowseContent: false,
     });
 
     expect(
@@ -467,11 +392,8 @@ describe("model browser keyboard navigation", () => {
       view: { kind: "all" },
       providers,
       profiles,
-      showProfilesSection: true,
       canCreateProfileRow: false,
       normalizedQuery: "",
-      isSearchFocused: false,
-      hasCustomRootBrowseContent: false,
     });
 
     expect(
@@ -492,11 +414,8 @@ describe("model browser keyboard navigation", () => {
       view: { kind: "all" },
       providers,
       profiles,
-      showProfilesSection: true,
       canCreateProfileRow: false,
       normalizedQuery: "",
-      isSearchFocused: false,
-      hasCustomRootBrowseContent: false,
     });
 
     expect(
@@ -535,11 +454,8 @@ describe("model browser keyboard navigation", () => {
       view: { kind: "all" },
       providers,
       profiles,
-      showProfilesSection: true,
       canCreateProfileRow: true,
       normalizedQuery: "",
-      isSearchFocused: false,
-      hasCustomRootBrowseContent: false,
     });
     expect(browse.kind).toBe("browse");
     if (browse.kind === "browse") {
@@ -559,11 +475,8 @@ describe("model browser keyboard navigation", () => {
       view: { kind: "provider", providerId: "claude", providerLabel: "Claude Code" },
       providers,
       profiles,
-      showProfilesSection: true,
       canCreateProfileRow: true,
       normalizedQuery: "opus",
-      isSearchFocused: true,
-      hasCustomRootBrowseContent: false,
     });
     expect(providerSearch.kind).toBe("modelList");
     if (providerSearch.kind === "modelList") {
@@ -585,11 +498,8 @@ describe("model browser keyboard navigation", () => {
         view: { kind: "provider", providerId: "pi", providerLabel: "Pi" },
         providers: [{ id: "pi", label: "Pi", modelSelection: { kind: "error", message: "boom" } }],
         profiles: null,
-        showProfilesSection: false,
         canCreateProfileRow: false,
         normalizedQuery: "",
-        isSearchFocused: false,
-        hasCustomRootBrowseContent: false,
       }),
     ).toEqual({
       kind: "providerError",
@@ -603,11 +513,8 @@ describe("model browser keyboard navigation", () => {
         view: { kind: "all" },
         providers,
         profiles,
-        showProfilesSection: true,
         canCreateProfileRow: true,
         normalizedQuery: "zzzz",
-        isSearchFocused: true,
-        hasCustomRootBrowseContent: false,
       }),
     ).toEqual({
       kind: "noSearchMatches",
@@ -620,11 +527,8 @@ describe("model browser keyboard navigation", () => {
       view: { kind: "all" },
       providers,
       profiles: [reviewer],
-      showProfilesSection: true,
       canCreateProfileRow: false,
       normalizedQuery: "",
-      isSearchFocused: false,
-      hasCustomRootBrowseContent: false,
     });
 
     expect(
@@ -649,11 +553,8 @@ describe("model browser keyboard navigation", () => {
       view: { kind: "all" },
       providers,
       profiles: [reviewer],
-      showProfilesSection: true,
       canCreateProfileRow: false,
       normalizedQuery: "",
-      isSearchFocused: false,
-      hasCustomRootBrowseContent: false,
     });
 
     expect(

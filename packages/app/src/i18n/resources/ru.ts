@@ -247,6 +247,9 @@ export const ru: TranslationResources = {
       searchPlaceholder: "Поиск режимов...",
       selectWithValue: "Выбрать режим агента ({{value}})",
     },
+    sheet: {
+      title: "Настройки агента",
+    },
     hints: {
       thinking: "Режим рассуждений",
       model: "Изменить модель",
@@ -1920,6 +1923,12 @@ export const ru: TranslationResources = {
     searchAllPlaceholder: "Поиск по всем моделям...",
     searchPlaceholder: "Поиск моделей...",
     openProviderSettings: "Открыть настройки {{provider}}",
+    searchModelsAndProfilesPlaceholder: "Поиск моделей и профилей...",
+    shownOfTotal: "Показано {{shown}} из {{total}}",
+    olderModels: "Старые модели ({{count}})",
+    allModels: "Все модели ({{count}})",
+    olderTag: "Старая",
+    allModelsTag: "Все модели",
   },
   providerCatalog: {
     title: "Добавить провайдера",
@@ -3420,6 +3429,14 @@ export const ru: TranslationResources = {
         retrying: "Повторная попытка...",
         noSearchMatches: "Ни одна модель не соответствует вашему запросу",
         noneDetected: "Модели не обнаружены",
+        shownInfo:
+          "Отмеченные модели показываются первыми в списках выбора. Поиск по-прежнему находит остальные.",
+        shownCount: "Показаны ({{count}})",
+        allShown: "Показаны все модели",
+        resetShown: "Сбросить",
+        resetShownLabel: "Показывать все модели в списках выбора",
+        shownReset: "Показаны все модели",
+        failedToSaveShown: "Не удалось сохранить показываемые модели",
         noCustom: "Нет пользовательских моделей",
         title: "Модели",
         custom: "Пользовательские модели",

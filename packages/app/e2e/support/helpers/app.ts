@@ -362,8 +362,8 @@ export const selectModel = async (page: Page, model: string) => {
   // Type to search/filter models
   await searchInput.fill(normalizedModel);
 
-  const dialog = page.getByRole("dialog");
-  const exactOption = dialog
+  const viewport = page.getByTestId("combobox-desktop-container").or(page.getByRole("dialog"));
+  const exactOption = viewport
     .getByText(new RegExp(`^${escapeRegex(normalizedModel)}$`, "i"))
     .first();
   const exactVisible = await exactOption.isVisible().catch(() => false);
@@ -375,8 +375,10 @@ export const selectModel = async (page: Page, model: string) => {
     await searchInput.press("Enter");
   }
 
-  // Wait for dropdown to close
-  if (await searchInput.isVisible().catch(() => false)) {
+  // Wait for dropdown to close; when a query has no match, the first Escape clears the query
+  // and the second closes the picker.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (!(await searchInput.isVisible().catch(() => false))) break;
     await page.keyboard.press("Escape").catch(() => undefined);
   }
   await expect(searchInput).not.toBeVisible({ timeout: 5000 });

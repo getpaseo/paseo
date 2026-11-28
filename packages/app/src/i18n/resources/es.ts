@@ -247,6 +247,9 @@ export const es: TranslationResources = {
       searchPlaceholder: "Modos de búsqueda...",
       selectWithValue: "Seleccione el modo de agente ({{value}})",
     },
+    sheet: {
+      title: "Ajustes del agente",
+    },
     hints: {
       thinking: "Modo de pensamiento",
       model: "Cambiar modelo",
@@ -1936,6 +1939,12 @@ export const es: TranslationResources = {
     searchAllPlaceholder: "Buscar en todos los modelos...",
     searchPlaceholder: "Buscar modelos...",
     openProviderSettings: "Abrir configuración de{{provider}}",
+    searchModelsAndProfilesPlaceholder: "Buscar modelos y perfiles...",
+    shownOfTotal: "{{shown}} visibles de {{total}}",
+    olderModels: "Modelos anteriores ({{count}})",
+    allModels: "Todos los modelos ({{count}})",
+    olderTag: "Anterior",
+    allModelsTag: "Todos los modelos",
   },
   providerCatalog: {
     title: "Agregar proveedor",
@@ -3430,6 +3439,14 @@ export const es: TranslationResources = {
         retrying: "Reintentando...",
         noSearchMatches: "Ningún modelo coincide con tu búsqueda",
         noneDetected: "No se detectaron modelos",
+        shownInfo:
+          "Los modelos marcados aparecen primero en los selectores. La búsqueda sigue encontrando el resto.",
+        shownCount: "Visibles ({{count}})",
+        allShown: "Todos los modelos visibles",
+        resetShown: "Restablecer",
+        resetShownLabel: "Mostrar todos los modelos en los selectores",
+        shownReset: "Mostrando todos los modelos",
+        failedToSaveShown: "No se pudieron guardar los modelos visibles",
         noCustom: "No hay modelos personalizados",
         title: "Modelos",
         custom: "Modelos personalizados",

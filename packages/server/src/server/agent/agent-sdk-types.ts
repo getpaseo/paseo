@@ -108,6 +108,8 @@ export interface AgentModelDefinition {
   contextWindowMaxTokens?: number;
   thinkingOptions?: AgentSelectOption[];
   defaultThinkingOptionId?: string;
+  /** A previous-release model. Pickers fold it behind the current models; search still finds it. */
+  legacy?: boolean;
 }
 
 export interface AgentSelectOption {
@@ -149,6 +151,8 @@ export interface ProviderSnapshotEntry {
   docsUrl?: string;
   defaultModeId?: string | null;
   launchWrap?: boolean;
+  /** User-picked model IDs, in display order. Pickers show these first and fold the rest. */
+  shownModels?: string[];
 }
 
 export interface AgentCreateConfigParent {

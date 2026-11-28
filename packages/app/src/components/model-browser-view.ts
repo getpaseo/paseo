@@ -12,16 +12,6 @@ export type ModelBrowserView =
   | { kind: "all" }
   | { kind: "provider"; providerId: string; providerLabel: string };
 
-export function resolveModelBrowserScrolling({
-  isNative,
-  isCompact,
-}: {
-  isNative: boolean;
-  isCompact: boolean;
-}): "sheet" | "independent" {
-  return isNative && isCompact ? "sheet" : "independent";
-}
-
 /** A profile's model reference; used to match profiles back to model rows. */
 export interface ModelProfileRef {
   provider: string;
@@ -83,19 +73,15 @@ export function resolveModelBrowserAllView<T extends SearchableProfileRow>({
   providers,
   profiles,
   normalizedQuery,
-  isSearchFocused,
 }: {
   providers: ProviderSelectorProvider[];
-  /** Profiles the search may offer; empty when the surface shows none. */
   profiles: readonly T[];
   normalizedQuery: string;
-  isSearchFocused: boolean;
 }): ModelBrowserAllView<T> {
-  if (!normalizedQuery && !isSearchFocused) {
+  if (!normalizedQuery) {
     return { kind: "browse" };
   }
-  const allRows = getAllProviderModelRows(providers);
-  const rows = normalizedQuery ? filterAndRankModelRows(allRows, normalizedQuery) : allRows;
+  const rows = filterAndRankModelRows(getAllProviderModelRows(providers), normalizedQuery);
   const matchedProfiles = filterAndRankProfileRows(profiles, normalizedQuery);
   if (rows.length === 0 && matchedProfiles.length === 0) {
     return { kind: "noSearchMatches" };
@@ -206,11 +192,8 @@ export interface ModelBrowserProjectionInput<
   view: ModelBrowserView;
   providers: ProviderSelectorProvider[];
   profiles: readonly TProfile[] | null;
-  showProfilesSection: boolean;
   canCreateProfileRow: boolean;
   normalizedQuery: string;
-  isSearchFocused: boolean;
-  hasCustomRootBrowseContent: boolean;
 }
 
 function toProfileNavItems(rows: readonly NavigableProfileRow[]): ModelBrowserNavItem[] {
@@ -233,30 +216,27 @@ function profileSectionToNavItems<TProfile extends NavigableProfileRow>(
 
 function resolveBrowseProfileSection<TProfile extends NavigableProfileRow>(
   rows: readonly TProfile[] | null,
-  showProfilesSection: boolean,
   canCreateProfileRow: boolean,
 ): ModelBrowserProfileSection<TProfile> {
-  if (!showProfilesSection || rows === null) return { kind: "none" };
+  if (rows === null) return { kind: "none" };
   if (rows.length > 0) return { kind: "profiles", rows: [...rows] };
   return canCreateProfileRow ? { kind: "createProfile" } : { kind: "none" };
 }
 
 function resolveProviderProfileSection<TProfile extends NavigableProfileRow>({
   providerProfiles,
-  showProfilesSection,
   canCreateProfileRow,
   normalizedQuery,
   hasModelRows,
 }: {
   providerProfiles: readonly TProfile[] | null;
-  showProfilesSection: boolean;
   canCreateProfileRow: boolean;
   normalizedQuery: string;
   hasModelRows: boolean;
 }): ModelBrowserProfileSection<TProfile> {
-  if (!showProfilesSection || providerProfiles === null) return { kind: "none" };
+  if (providerProfiles === null) return { kind: "none" };
   if (normalizedQuery.length === 0) {
-    return resolveBrowseProfileSection(providerProfiles, true, canCreateProfileRow);
+    return resolveBrowseProfileSection(providerProfiles, canCreateProfileRow);
   }
   const matched = filterAndRankProfileRows(providerProfiles, normalizedQuery);
   return matched.length > 0
@@ -287,14 +267,12 @@ function resolveProviderProjection<TProfile extends NavigableProfileRow>({
   providerId,
   providers,
   profiles,
-  showProfilesSection,
   canCreateProfileRow,
   normalizedQuery,
 }: {
   providerId: string;
   providers: ProviderSelectorProvider[];
   profiles: readonly TProfile[] | null;
-  showProfilesSection: boolean;
   canCreateProfileRow: boolean;
   normalizedQuery: string;
 }): ModelBrowserProjection<TProfile> {
@@ -315,7 +293,6 @@ function resolveProviderProjection<TProfile extends NavigableProfileRow>({
     profiles !== null ? profiles.filter((row) => row.provider === providerId) : null;
   const profileSection = resolveProviderProfileSection({
     providerProfiles,
-    showProfilesSection,
     canCreateProfileRow,
     normalizedQuery,
     hasModelRows: modelRows.length > 0,
@@ -346,7 +323,6 @@ export function resolveModelBrowserProjection<TProfile extends NavigableProfileR
       providerId: input.view.providerId,
       providers: input.providers,
       profiles: input.profiles,
-      showProfilesSection: input.showProfilesSection,
       canCreateProfileRow: input.canCreateProfileRow,
       normalizedQuery: input.normalizedQuery,
     });
@@ -354,9 +330,8 @@ export function resolveModelBrowserProjection<TProfile extends NavigableProfileR
 
   const allView = resolveModelBrowserAllView({
     providers: input.providers,
-    profiles: input.showProfilesSection && input.profiles ? input.profiles : [],
+    profiles: input.profiles ?? [],
     normalizedQuery: input.normalizedQuery,
-    isSearchFocused: input.isSearchFocused,
   });
 
   if (allView.kind === "noSearchMatches") {
@@ -381,25 +356,15 @@ export function resolveModelBrowserProjection<TProfile extends NavigableProfileR
     };
   }
 
-  const profileSection = resolveBrowseProfileSection(
-    input.profiles,
-    input.showProfilesSection,
-    input.canCreateProfileRow,
-  );
-  const visibleProviders = input.hasCustomRootBrowseContent ? [] : input.providers;
-  const hasResults =
-    input.profiles !== null || input.providers.length > 0 || input.hasCustomRootBrowseContent;
+  const profileSection = resolveBrowseProfileSection(input.profiles, input.canCreateProfileRow);
 
   return {
     kind: "browse",
     profileSection,
-    providers: visibleProviders,
-    showProvidersHeading: input.showProfilesSection && input.profiles !== null,
-    isEmpty: !hasResults,
-    navItems: [
-      ...profileSectionToNavItems(profileSection),
-      ...toProviderNavItems(visibleProviders),
-    ],
+    providers: input.providers,
+    showProvidersHeading: input.profiles !== null,
+    isEmpty: input.profiles === null && input.providers.length === 0,
+    navItems: [...profileSectionToNavItems(profileSection), ...toProviderNavItems(input.providers)],
   };
 }
 

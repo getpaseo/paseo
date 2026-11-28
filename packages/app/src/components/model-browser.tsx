@@ -27,10 +27,6 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import {
-  FlatList as SheetFlatList,
-  ScrollView as SheetScrollView,
-} from "@/components/ui/scroll-view";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
@@ -280,23 +276,15 @@ interface ModelBrowserProps {
   onEditProfile?: (profileId: string) => void;
   onRetryProvider?: (provider: AgentProvider) => void;
   isRetryingProvider?: boolean;
-  scrolling?: "sheet" | "independent";
-  /** Empty focused search shows all model rows instead of the browse root. */
-  searchAllOnFocus?: boolean;
-  /** Replaces provider rows only while the all-provider search is empty. */
-  rootBrowseContent?: React.ReactNode;
-  /** Hide the pinned Profiles section while still using rows for model matching. */
-  showProfilesSection?: boolean;
 }
 
-interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state" | "scrolling"> {
+interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state"> {
   serverId: string | null;
   view: ModelBrowserView;
   providers: ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
   searchQuery: string;
-  isSearchFocused: boolean;
   profiles: AgentProfilePicker | null;
   explicitActiveKey: string | null;
   preferredActiveKey: string | null;
@@ -305,9 +293,6 @@ interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state" | "sc
   registerKeyboardHandler: (handler: ((event: KeyboardInputEvent) => boolean) | null) => void;
   onShowAll: (fromProviderId?: string) => void;
   onDrillDown: (providerId: string, providerLabel: string) => void;
-  scrolling: "sheet" | "independent";
-  searchAllOnFocus: boolean;
-  rootBrowseContent?: React.ReactNode;
 }
 
 type ProviderGlyphTone = "muted" | "foreground";
@@ -359,6 +344,38 @@ function resolveDesktopFixedHeight(
     ),
     DESKTOP_PROVIDER_VIEW_MAX_HEIGHT,
   );
+}
+
+/** The selected model's full label and the shorter one a trigger shows. */
+export function useSelectedModelLabels({
+  providers,
+  selectedProvider,
+  selectedModel,
+  isLoading,
+}: {
+  providers: ProviderSelectorProvider[];
+  selectedProvider: string;
+  selectedModel: string;
+  isLoading: boolean;
+}): { selectedModelLabel: string; triggerLabel: string } {
+  const { t } = useTranslation();
+  const selectedModelLabel = useMemo(
+    () =>
+      resolveSelectedModelLabel({
+        providers,
+        selectedProvider,
+        selectedModel,
+        isLoading,
+      }),
+    [isLoading, providers, selectedModel, selectedProvider],
+  );
+  const triggerLabel = useMemo(() => {
+    const isPlaceholder =
+      selectedModelLabel === t("modelSelector.loading") ||
+      selectedModelLabel === t("modelSelector.selectModel");
+    return isPlaceholder ? selectedModelLabel : buildSelectedTriggerLabel(selectedModelLabel);
+  }, [selectedModelLabel, t]);
+  return { selectedModelLabel, triggerLabel };
 }
 
 export function useModelBrowser({
@@ -520,23 +537,12 @@ export function useModelBrowser({
     view,
   ]);
 
-  const selectedModelLabel = useMemo(
-    () =>
-      resolveSelectedModelLabel({
-        providers,
-        selectedProvider,
-        selectedModel,
-        isLoading,
-      }),
-    [isLoading, providers, selectedModel, selectedProvider],
-  );
-
-  const triggerLabel = useMemo(() => {
-    const isPlaceholder =
-      selectedModelLabel === t("modelSelector.loading") ||
-      selectedModelLabel === t("modelSelector.selectModel");
-    return isPlaceholder ? selectedModelLabel : buildSelectedTriggerLabel(selectedModelLabel);
-  }, [selectedModelLabel, t]);
+  const { selectedModelLabel, triggerLabel } = useSelectedModelLabels({
+    providers,
+    selectedProvider,
+    selectedModel,
+    isLoading,
+  });
 
   const desktopFixedHeight = useMemo(
     () => resolveDesktopFixedHeight(view, providers),
@@ -701,9 +707,9 @@ function ModelBrowserPressable({
   );
 }
 
-type ModelBrowserRowTone = "default" | "elevated" | "drillDown";
+export type ModelBrowserRowTone = "default" | "elevated" | "drillDown";
 
-function ModelBrowserRow({
+export function ModelBrowserRow({
   label,
   description,
   leadingSlot,
@@ -835,14 +841,17 @@ function ModelRowProfileAction({
   );
 }
 
-function ModelRow({
+export function ModelRow({
   row,
   serverId,
   isSelected,
   isActive = false,
   showProviderLabel = false,
+  tag,
   onPress,
   onFocus,
+  activeItemRef,
+  onActiveLayout,
   profiledRows,
   onCreateProfile,
   onEditProfile,
@@ -853,8 +862,12 @@ function ModelRow({
   isSelected: boolean;
   isActive?: boolean;
   showProviderLabel?: boolean;
+  /** A short note beside the label, such as the fold a search result comes from. */
+  tag?: string;
   onPress: () => void;
   onFocus?: () => void;
+  activeItemRef?: RefObject<View | null>;
+  onActiveLayout?: () => void;
   profiledRows: AgentProfilePickerRowModel[];
   onCreateProfile?: (seed: AgentProfileSeed) => Promise<AgentProfile | null> | void;
   onEditProfile?: (profileId: string) => void;
@@ -986,6 +999,8 @@ function ModelRow({
         accessibilitySelected={isSelected}
         navRow
         active={isActive}
+        rowRef={isActive ? activeItemRef : undefined}
+        onLayout={isActive ? onActiveLayout : undefined}
         testID={`model-row-${row.provider}-${row.modelId}`}
       >
         <View style={styles.browserRowContent}>
@@ -994,6 +1009,13 @@ function ModelRow({
             <Text numberOfLines={1} style={styles.browserRowLabel}>
               {row.modelLabel}
             </Text>
+            {tag ? (
+              <View style={styles.browserRowTag}>
+                <Text numberOfLines={1} style={styles.browserRowTagText}>
+                  {tag}
+                </Text>
+              </View>
+            ) : null}
             {description ? (
               <Text numberOfLines={1} style={styles.browserRowDescription}>
                 {description}
@@ -1355,7 +1377,7 @@ function GroupedProviderRows({
   );
 }
 
-function IndependentScrollBoundary({ children }: { children: React.ReactElement }) {
+export function IndependentScrollBoundary({ children }: { children: React.ReactElement }) {
   // Prevent the parent sheet from cancelling Android's native scroll when the
   // finger crosses this viewport; receiving ACTION_UP is what preserves fling.
   const nativeScrollGesture = useMemo(
@@ -1498,7 +1520,6 @@ function ModelRowList({
   onSelect,
   showProviderLabel = false,
   header,
-  scrolling,
   profiledLookup,
   onCreateProfile,
   onEditProfile,
@@ -1514,13 +1535,11 @@ function ModelRowList({
   onSelect: (provider: string, modelId: string) => void;
   showProviderLabel?: boolean;
   header?: React.ReactElement;
-  scrolling: "sheet" | "independent";
   profiledLookup: Map<string, AgentProfilePickerRowModel[]>;
   onCreateProfile?: (seed: AgentProfileSeed) => Promise<AgentProfile | null> | void;
   onEditProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
 }) {
-  const isCompact = useIsCompactFormFactor();
   const { activeKey } = useContext(ModelBrowserNavContext);
   const renderItem = useCallback(
     ({ item }: { item: ProviderSelectionModelRow }) => (
@@ -1548,49 +1567,20 @@ function ModelRowList({
       showProviderLabel,
     ],
   );
-  const keyExtractor = useCallback((row: ProviderSelectionModelRow) => row.favoriteKey, []);
-
-  if (scrolling === "independent") {
-    return (
-      <IndependentModelList
-        rows={rows}
-        renderItem={renderItem}
-        header={header}
-        activeKey={activeKey}
-        activeModelIndex={activeModelIndex}
-        hasActiveHeaderItem={hasActiveHeaderItem}
-        shouldRevealActive={shouldRevealActive}
-      />
-    );
-  }
-
-  if (isCompact && isNative) {
-    return (
-      <SheetFlatList
-        data={rows}
-        extraData={activeKey}
-        renderItem={renderItem}
-        ListHeaderComponent={header}
-        keyExtractor={keyExtractor}
-        style={styles.virtualizedModelList}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.virtualizedModelListContent}
-      />
-    );
-  }
-
   return (
-    <View>
-      {header}
-      {rows.map((row) => (
-        <View key={row.favoriteKey}>{renderItem({ item: row })}</View>
-      ))}
-    </View>
+    <IndependentModelList
+      rows={rows}
+      renderItem={renderItem}
+      header={header}
+      activeKey={activeKey}
+      activeModelIndex={activeModelIndex}
+      hasActiveHeaderItem={hasActiveHeaderItem}
+      shouldRevealActive={shouldRevealActive}
+    />
   );
 }
 
-function ProviderErrorEmptyState({
+export function ProviderErrorEmptyState({
   providerId,
   message,
   onRetryProvider,
@@ -1614,6 +1604,54 @@ function ProviderErrorEmptyState({
           {isRetryingProvider ? t("modelSelector.retrying") : t("modelSelector.retry")}
         </Button>
       ) : null}
+    </View>
+  );
+}
+
+export function ModelBrowserLoadingState() {
+  const { t } = useTranslation();
+  return (
+    <View style={styles.emptyState}>
+      <View style={styles.rowSpinner}>
+        <ThemedLoadingSpinner size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
+      </View>
+      <Text style={styles.emptyStateText}>{t("modelSelector.loadingShort")}</Text>
+    </View>
+  );
+}
+
+export function ModelBrowserNoProviders() {
+  const { t } = useTranslation();
+  return (
+    <View style={styles.emptyState} testID="model-browser-no-providers">
+      <ThemedAlertTriangle size={ICON_SIZE.md} uniProps={foregroundMutedMapping} />
+      <Text style={styles.emptyStateText}>{t("providerSelection.readiness.noProviders")}</Text>
+    </View>
+  );
+}
+
+export function ModelSearchNoMatches({ query }: { query: string }) {
+  const { t } = useTranslation();
+  return (
+    <View style={styles.emptyState} testID="model-search-empty">
+      <ThemedSearch size={ICON_SIZE.md} uniProps={foregroundMutedMapping} />
+      <Text style={styles.emptyStateText}>{t("modelSelector.noMatchesForQuery", { query })}</Text>
+    </View>
+  );
+}
+
+/** A muted label above a group of rows, with an optional action on its right. */
+export function ModelBrowserSectionHeading({
+  title,
+  action,
+}: {
+  title: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <View style={styles.sectionHeading}>
+      <Text style={styles.sectionHeadingText}>{title}</Text>
+      {action ? <View style={styles.sectionHeadingAction}>{action}</View> : null}
     </View>
   );
 }
@@ -1714,8 +1752,6 @@ function ModelBrowserBrowseView({
   projection,
   activeNavIndex,
   listKey,
-  rootBrowseContent,
-  scrolling,
   onApplyProfile,
   onEditProfiles,
   onDrillDown,
@@ -1724,8 +1760,6 @@ function ModelBrowserBrowseView({
   projection: Extract<ModelBrowserProjection<AgentProfilePickerRowModel>, { kind: "browse" }>;
   activeNavIndex: number;
   listKey: string;
-  rootBrowseContent?: React.ReactNode;
-  scrolling: "sheet" | "independent";
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
   onDrillDown: (providerId: string, providerLabel: string) => void;
@@ -1757,27 +1791,26 @@ function ModelBrowserBrowseView({
           onApplyProfile={onApplyProfile}
           onEditProfiles={onEditProfiles}
         />
-        {rootBrowseContent ??
-          (projection.providers.length > 0 ? (
-            <View>
-              {projection.showProvidersHeading ? (
-                <View style={styles.sectionHeading}>
-                  <Text style={styles.sectionHeadingText}>{t("modelSelector.providers")}</Text>
-                </View>
-              ) : null}
-              <GroupedProviderRows
-                providers={projection.providers}
-                serverId={serverId}
-                onDrillDown={onDrillDown}
-              />
-            </View>
-          ) : null)}
+        {projection.providers.length > 0 ? (
+          <View>
+            {projection.showProvidersHeading ? (
+              <View style={styles.sectionHeading}>
+                <Text style={styles.sectionHeadingText}>{t("modelSelector.providers")}</Text>
+              </View>
+            ) : null}
+            <GroupedProviderRows
+              providers={projection.providers}
+              serverId={serverId}
+              onDrillDown={onDrillDown}
+            />
+          </View>
+        ) : null}
         {projection.isEmpty ? <ModelSearchEmptyState /> : null}
       </View>
     </ModelBrowserNavContext.Provider>
   );
 
-  return scrolling === "independent" ? (
+  return (
     <IndependentProviderList
       scrollRef={browseScrollRef}
       onLayout={browseReveal.onViewportLayout}
@@ -1785,24 +1818,6 @@ function ModelBrowserBrowseView({
     >
       {allProvidersContent}
     </IndependentProviderList>
-  ) : (
-    <SheetScrollView
-      ref={browseScrollRef}
-      style={styles.virtualizedModelList}
-      contentContainerStyle={[
-        styles.virtualizedModelListContent,
-        styles.virtualizedProviderListContent,
-      ]}
-      onLayout={browseReveal.onViewportLayout}
-      onScroll={browseReveal.onScroll}
-      scrollEventThrottle={16}
-      keyboardShouldPersistTaps="handled"
-      keyboardDismissMode={MODEL_LIST_KEYBOARD_DISMISS_MODE}
-      showsVerticalScrollIndicator={false}
-      testID="compact-provider-list"
-    >
-      {allProvidersContent}
-    </SheetScrollView>
   );
 }
 
@@ -1813,7 +1828,6 @@ function ModelBrowserContent({
   selectedProvider,
   selectedModel,
   searchQuery,
-  isSearchFocused,
   profiles,
   explicitActiveKey,
   preferredActiveKey,
@@ -1829,12 +1843,7 @@ function ModelBrowserContent({
   onDrillDown,
   onRetryProvider,
   isRetryingProvider = false,
-  scrolling,
-  searchAllOnFocus,
-  rootBrowseContent,
-  showProfilesSection = true,
 }: ModelBrowserContentProps) {
-  const { t } = useTranslation();
   const hasHardwareKeyboard = useHardwareKeyboardPresent();
   const normalizedQuery = useMemo(() => normalizeSearchQuery(searchQuery), [searchQuery]);
   const profiledLookup = useMemo(
@@ -1847,23 +1856,10 @@ function ModelBrowserContent({
         view,
         providers,
         profiles: profiles?.rows ?? null,
-        showProfilesSection,
         canCreateProfileRow: Boolean(onEditProfiles),
         normalizedQuery,
-        isSearchFocused: searchAllOnFocus && isSearchFocused,
-        hasCustomRootBrowseContent: rootBrowseContent != null,
       }),
-    [
-      isSearchFocused,
-      normalizedQuery,
-      onEditProfiles,
-      profiles,
-      providers,
-      rootBrowseContent,
-      searchAllOnFocus,
-      showProfilesSection,
-      view,
-    ],
+    [normalizedQuery, onEditProfiles, profiles, providers, view],
   );
   const { navItems } = projection;
   const activeKey = useMemo(
@@ -1940,14 +1936,7 @@ function ModelBrowserContent({
 
   let content: React.ReactNode;
   if (projection.kind === "providerLoading") {
-    content = (
-      <View style={styles.emptyState}>
-        <View style={styles.rowSpinner}>
-          <ThemedLoadingSpinner size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
-        </View>
-        <Text style={styles.emptyStateText}>{t("modelSelector.loadingShort")}</Text>
-      </View>
-    );
+    content = <ModelBrowserLoadingState />;
   } else if (projection.kind === "providerError") {
     content = (
       <ProviderErrorEmptyState
@@ -1960,14 +1949,7 @@ function ModelBrowserContent({
   } else if (projection.kind === "empty") {
     content = <ModelSearchEmptyState />;
   } else if (projection.kind === "noSearchMatches") {
-    content = (
-      <View style={styles.emptyState} testID="model-search-empty">
-        <ThemedSearch size={ICON_SIZE.md} uniProps={foregroundMutedMapping} />
-        <Text style={styles.emptyStateText}>
-          {t("modelSelector.noMatchesForQuery", { query: searchQuery.trim() })}
-        </Text>
-      </View>
-    );
+    content = <ModelSearchNoMatches query={searchQuery.trim()} />;
   } else if (projection.kind === "modelList") {
     content = (
       <ModelRowList
@@ -1981,7 +1963,6 @@ function ModelBrowserContent({
         onSelect={onSelect}
         showProviderLabel={projection.showProviderLabel}
         header={listHeader}
-        scrolling={scrolling}
         profiledLookup={profiledLookup}
         onCreateProfile={onCreateProfile}
         onEditProfile={onEditProfile}
@@ -1995,8 +1976,6 @@ function ModelBrowserContent({
         projection={projection}
         activeNavIndex={activeNavIndex}
         listKey={browseListKey}
-        rootBrowseContent={rootBrowseContent}
-        scrolling={scrolling}
         onApplyProfile={onApplyProfile}
         onEditProfiles={onEditProfiles}
         onDrillDown={onDrillDown}
@@ -2018,10 +1997,6 @@ export function ModelBrowser({
   onEditProfile,
   onRetryProvider,
   isRetryingProvider = false,
-  scrolling = "sheet",
-  searchAllOnFocus = false,
-  rootBrowseContent,
-  showProfilesSection,
 }: ModelBrowserProps) {
   return (
     <ModelBrowserContent
@@ -2031,7 +2006,6 @@ export function ModelBrowser({
       selectedProvider={state.selectedProvider}
       selectedModel={state.selectedModel}
       searchQuery={state.searchQuery}
-      isSearchFocused={state.isSearchFocused}
       profiles={state.profiles}
       explicitActiveKey={state.explicitActiveKey}
       preferredActiveKey={state.preferredActiveKey}
@@ -2047,10 +2021,6 @@ export function ModelBrowser({
       onDrillDown={state.drillDown}
       onRetryProvider={onRetryProvider}
       isRetryingProvider={isRetryingProvider}
-      scrolling={scrolling}
-      searchAllOnFocus={searchAllOnFocus}
-      rootBrowseContent={rootBrowseContent}
-      showProfilesSection={showProfilesSection}
     />
   );
 }
@@ -2143,6 +2113,17 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
     flexShrink: 0,
+  },
+  browserRowTag: {
+    alignSelf: "center",
+    flexShrink: 0,
+    paddingHorizontal: theme.spacing[1],
+    borderRadius: theme.borderRadius.base,
+    backgroundColor: theme.colors.surface2,
+  },
+  browserRowTagText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
   },
   browserRowDescription: {
     fontSize: theme.fontSize.sm,

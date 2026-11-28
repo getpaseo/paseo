@@ -90,7 +90,6 @@ export function AgentModeControl({
   const { isActiveComposer } = useComposerKeyboardScope();
   const cycleShortcutKeys = useShortcutKeys("cycle-agent-mode");
   const anchorRef = useRef<View>(null);
-  const keyboardHandlerIdRef = useRef(`mode-control:${Math.random().toString(36).slice(2)}`);
   const openRef = useRef(false);
   const [open, setOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -134,26 +133,6 @@ export function AgentModeControl({
     },
     [onSelectMode, handleOpenChange],
   );
-
-  const handleKeyboardAction = useCallback(
-    (action: KeyboardActionDefinition): boolean => {
-      if (action.id !== "message-input.mode-cycle") return false;
-      if (disabled || !isActiveComposer) return false;
-      const nextModeId = resolveNextAgentModeId({ modeOptions, selectedMode: selectedModeId });
-      if (!nextModeId) return false;
-      onSelectMode(nextModeId);
-      return true;
-    },
-    [disabled, isActiveComposer, modeOptions, onSelectMode, selectedModeId],
-  );
-
-  useKeyboardActionHandler({
-    handlerId: keyboardHandlerIdRef.current,
-    actions: ["message-input.mode-cycle"],
-    enabled: isActiveComposer && !disabled && modeOptions.length > 1,
-    priority: 200,
-    handle: handleKeyboardAction,
-  });
 
   const renderOption = useCallback(
     (args: {
@@ -233,6 +212,41 @@ export function AgentModeControl({
 }
 
 const EMPTY_MODES: AgentMode[] = [];
+
+/**
+ * Cycles the agent's mode on the mode-cycle shortcut. The composer's controls mount it once,
+ * whatever the layout: a compact composer folds Mode into its settings drawer, and a phone or
+ * narrow window can still have a keyboard.
+ */
+export function useAgentModeCycleShortcut(modeControl: AgentModeControlValue | null | undefined) {
+  const { isActiveComposer } = useComposerKeyboardScope();
+  const handlerIdRef = useRef(`mode-cycle:${Math.random().toString(36).slice(2)}`);
+  const modeOptions = modeControl?.modeOptions ?? EMPTY_MODES;
+  const enabled =
+    isActiveComposer && modeControl != null && !modeControl.disabled && modeOptions.length > 1;
+
+  const handle = useCallback(
+    (action: KeyboardActionDefinition): boolean => {
+      if (action.id !== "message-input.mode-cycle" || !enabled || !modeControl) return false;
+      const nextModeId = resolveNextAgentModeId({
+        modeOptions,
+        selectedMode: modeControl.selectedModeId,
+      });
+      if (!nextModeId) return false;
+      modeControl.onSelectMode(nextModeId);
+      return true;
+    },
+    [enabled, modeControl, modeOptions],
+  );
+
+  useKeyboardActionHandler({
+    handlerId: handlerIdRef.current,
+    actions: ["message-input.mode-cycle"],
+    enabled,
+    priority: 200,
+    handle,
+  });
+}
 
 function compareAvailableModes(a: AgentMode[], b: AgentMode[]): boolean {
   return a === b || JSON.stringify(a) === JSON.stringify(b);

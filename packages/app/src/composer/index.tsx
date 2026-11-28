@@ -329,6 +329,7 @@ function renderLeftContent(args: RenderLeftContentArgs): ReactElement | null {
     return (
       <DraftAgentControls
         {...agentControls}
+        onDropdownClose={agentControls.onDropdownClose ?? focusInput}
         draftId={agentId}
         serverId={serverId}
         isCompactLayout={isCompactLayout}

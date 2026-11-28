@@ -1,19 +1,22 @@
-import type { ModelBrowserView } from "@/components/model-browser-view";
-import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
+/**
+ * The pages of the compact agent settings sheet. One sheet swaps its page in place; nothing stacks
+ * a second sheet over it.
+ */
+export type AgentSheetPage =
+  | { kind: "home" }
+  | { kind: "model" }
+  /** A select too long to scan on home, by control id; `mode` is the agent's mode. */
+  | { kind: "select"; controlId: string };
 
-export function resolveModelSheetOpening({
-  canSwitchProvider,
-  providers,
-  selectedProvider,
-}: {
-  canSwitchProvider: boolean;
-  providers: ProviderSelectorProvider[];
-  selectedProvider: string;
-}): ModelBrowserView {
-  if (canSwitchProvider) return { kind: "all" };
+export const AGENT_SHEET_HOME: AgentSheetPage = { kind: "home" };
 
-  const provider = providers.find((entry) => entry.id === selectedProvider) ?? providers[0] ?? null;
-  return provider
-    ? { kind: "provider", providerId: provider.id, providerLabel: provider.label }
-    : { kind: "all" };
+export type AgentSheetEscape = "clearQuery" | "home" | "close";
+
+/** Escape undoes one step: the search, then the page, then the sheet. */
+export function resolveAgentSheetEscape(input: {
+  page: AgentSheetPage;
+  query: string;
+}): AgentSheetEscape {
+  if (input.page.kind === "home") return "close";
+  return input.query.trim().length > 0 ? "clearQuery" : "home";
 }

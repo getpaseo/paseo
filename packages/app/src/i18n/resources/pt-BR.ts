@@ -246,6 +246,9 @@ export const ptBR: TranslationResources = {
       searchPlaceholder: "Buscar modos...",
       selectWithValue: "Selecionar modo do agente ({{value}})",
     },
+    sheet: {
+      title: "Configurações do agente",
+    },
     hints: {
       thinking: "Modo de raciocínio",
       model: "Alterar modelo",
@@ -1920,6 +1923,12 @@ export const ptBR: TranslationResources = {
     searchAllPlaceholder: "Buscar em todos os modelos...",
     searchPlaceholder: "Buscar modelos...",
     openProviderSettings: "Abrir configurações de {{provider}}",
+    searchModelsAndProfilesPlaceholder: "Buscar modelos e perfis...",
+    shownOfTotal: "{{shown}} de {{total}} exibidos",
+    olderModels: "Modelos anteriores ({{count}})",
+    allModels: "Todos os modelos ({{count}})",
+    olderTag: "Anterior",
+    allModelsTag: "Todos os modelos",
   },
   providerCatalog: {
     title: "Adicionar provedor",
@@ -3411,6 +3420,14 @@ export const ptBR: TranslationResources = {
         retrying: "Tentando novamente...",
         noSearchMatches: "Nenhum modelo corresponde à sua busca",
         noneDetected: "Nenhum modelo detectado",
+        shownInfo:
+          "Os modelos marcados aparecem primeiro nos seletores. A busca ainda encontra o restante.",
+        shownCount: "Exibidos ({{count}})",
+        allShown: "Todos os modelos exibidos",
+        resetShown: "Redefinir",
+        resetShownLabel: "Exibir todos os modelos nos seletores",
+        shownReset: "Exibindo todos os modelos",
+        failedToSaveShown: "Não foi possível salvar os modelos exibidos",
         noCustom: "Nenhum modelo personalizado",
         title: "Modelos",
         custom: "Modelos personalizados",

@@ -56,13 +56,25 @@ interface AppSettingsRowProps extends Omit<SettingsRowProps, "hint">, AppRowExtr
   hint?: ReactNode;
 }
 
-export function SettingsCard({ children, testID }: { children: ReactNode; testID?: string }) {
+/** Lets a card and its rows shrink below their content, so a list inside can scroll. */
+const SHRINK = { flexShrink: 1, minHeight: 0 } as const;
+
+export function SettingsCard({
+  children,
+  testID,
+  shrink = false,
+}: {
+  children: ReactNode;
+  testID?: string;
+  /** The card shrinks to fit a parent with a bounded height, and a list inside it scrolls. */
+  shrink?: boolean;
+}) {
   return (
-    <View style={settingsStyles.card} testID={testID}>
+    <View style={[settingsStyles.card, shrink && SHRINK]} testID={testID}>
       {Children.toArray(children).map((child, index) => (
         <View
           key={isValidElement(child) ? child.key : index}
-          style={index ? settingsStyles.rowBorder : undefined}
+          style={[index ? settingsStyles.rowBorder : undefined, shrink && SHRINK]}
         >
           {child}
         </View>
