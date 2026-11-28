@@ -792,6 +792,11 @@ Set `acpOptions.perModelThinkingOptions` for an agent that lists `thought_level`
 the selected model. Catalog discovery selects each model in turn and gives it the thinking options
 the agent lists for it. A model without a `thought_level` option gets no thinking picker.
 
+Set `acpOptions.keepSessionListProcess` for an agent that is slow to start and lists current
+sessions from a running process. The adapter keeps the process it starts to read capabilities and
+answers every session list from it until the connection closes. A failed or canceled list, or an
+exited process, retires that process, and the next list starts a new one.
+
 ## Test and publish
 
 Test the provider against the real agent, not only mocked frames:

@@ -16,7 +16,7 @@ import type {
   ProviderInput,
   ProviderPermissionResponse,
 } from "./provider.js";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { AgentTimelineItemPayloadSchema } from "@getpaseo/protocol/messages";
 import { runAcpProvider, type AcpStreamMessage } from "./acp.js";
@@ -240,6 +240,47 @@ function connectorHarness(options?: ConnectorHarnessOptions) {
     return { readable, writable };
   };
   return { connector, instances };
+}
+
+function listingAgent(options?: { fail?: (instance: number) => boolean }) {
+  const harness = connectorHarness({
+    capabilities: { sessionCapabilities: { list: {} } },
+    handleRequest(runtime, request) {
+      if (request.method !== "session/list") return false;
+      const instance = harness.instances.indexOf(runtime);
+      if (options?.fail?.(instance)) {
+        runtime.reject(request, `List failed in process ${instance}`);
+        return true;
+      }
+      const { cwd, cursor } = request.params as { cwd?: string; cursor?: string };
+      runtime.respond(
+        request,
+        cursor
+          ? { sessions: [{ sessionId: `${cwd}-2`, cwd, title: `${instance}` }] }
+          : {
+              sessions: [{ sessionId: `${cwd}-1`, cwd, title: `${instance}` }],
+              nextCursor: "next",
+            },
+      );
+      return true;
+    },
+  });
+  return harness;
+}
+
+async function listedIn(
+  connection: ProviderConnection,
+  events: ProviderEvent[],
+  requestId: string,
+  cwd: string,
+) {
+  await connection.send({ type: "sessions", requestId, cwd });
+  const event = await waitForEvent(
+    events,
+    (candidate) => "requestId" in candidate && candidate.requestId === requestId,
+  );
+  if (event.type !== "sessions") return event;
+  return event.sessions.map((session) => [session.cwd, session.title]);
 }
 
 const basicAgent = `const readline = require("node:readline");
@@ -7186,6 +7227,115 @@ describe("ACP tool call rows", () => {
       const listed = await waitForEvent(events, (event) => event.type === "sessions");
       expect(listed.type === "sessions" && listed.sessions.map((session) => session.title)).toEqual(
         ["One", "Two"],
+      );
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("answers repeated and concurrent session lists from the kept capability probe", async () => {
+    const harness = listingAgent();
+    const connection = await runAcpProvider({
+      id: "kept-lists",
+      label: "Kept lists",
+      connector: harness.connector,
+      acpOptions: { keepSessionListProcess: true },
+    }).connect({ versions: [1], capabilities: ["session.list"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      expect(await listedIn(connection, events, "first", "/one")).toEqual([
+        ["/one", "0"],
+        ["/one", "0"],
+      ]);
+      const burst = await Promise.all(
+        ["/one", "/two", "/one"].map((cwd, index) =>
+          listedIn(connection, events, `burst-${index}`, cwd),
+        ),
+      );
+      expect(burst.map((sessions) => (Array.isArray(sessions) ? sessions[0] : sessions))).toEqual([
+        ["/one", "0"],
+        ["/two", "0"],
+        ["/one", "0"],
+      ]);
+      expect(harness.instances).toHaveLength(1);
+      expect(harness.instances[0].writesClosed).toBe(false);
+    } finally {
+      await connection.close();
+    }
+    expect(harness.instances[0].writesClosed).toBe(true);
+  });
+
+  it("starts a new session list process after the kept one exits or a list fails", async () => {
+    const harness = listingAgent({ fail: (instance) => instance === 1 });
+    const connection = await runAcpProvider({
+      id: "kept-lists",
+      label: "Kept lists",
+      connector: harness.connector,
+      acpOptions: { keepSessionListProcess: true },
+    }).connect({ versions: [1], capabilities: ["session.list"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      harness.instances[0].closeFromAgent();
+      await vi.waitFor(() => expect(harness.instances[0].writesClosed).toBe(true));
+      expect(await listedIn(connection, events, "after-exit", "/one")).toMatchObject({
+        type: "request.failed",
+        error: { message: "List failed in process 1" },
+      });
+      expect(harness.instances).toHaveLength(2);
+      await vi.waitFor(() => expect(harness.instances[1].writesClosed).toBe(true));
+      expect(await listedIn(connection, events, "retry", "/one")).toEqual([
+        ["/one", "2"],
+        ["/one", "2"],
+      ]);
+      expect(harness.instances).toHaveLength(3);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("stops waiting for a canceled session list and retires the kept process", async () => {
+    const held: Array<() => void> = [];
+    const harness = connectorHarness({
+      capabilities: { sessionCapabilities: { list: {} } },
+      handleRequest(runtime, request) {
+        if (request.method !== "session/list") return false;
+        const instance = harness.instances.indexOf(runtime);
+        const reply = () =>
+          runtime.respond(request, { sessions: [{ sessionId: `s${instance}`, cwd: "/one" }] });
+        if (instance === 0) held.push(reply);
+        else reply();
+        return true;
+      },
+    });
+    const connection = await runAcpProvider({
+      id: "kept-lists",
+      label: "Kept lists",
+      connector: harness.connector,
+      acpOptions: { keepSessionListProcess: true },
+    }).connect({ versions: [1], capabilities: ["session.list", "request.cancel"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({ type: "sessions", requestId: "canceled", cwd: "/one" });
+      await connection.send({ type: "sessions", requestId: "waiting", cwd: "/one" });
+      await vi.waitFor(() => expect(held).toHaveLength(2));
+      await connection.send({ type: "request.cancel", requestId: "canceled" });
+      expect(await listedIn(connection, events, "next", "/one")).toEqual([["/one", undefined]]);
+      expect(harness.instances).toHaveLength(2);
+      expect(harness.instances[0].writesClosed).toBe(false);
+      for (const reply of held) reply();
+      const waiting = await waitForEvent(
+        events,
+        (event) => "requestId" in event && event.requestId === "waiting",
+      );
+      expect(waiting.type === "sessions" && waiting.sessions[0].persistence).toEqual(
+        expect.objectContaining({ data: { sessionId: "s0" } }),
+      );
+      await vi.waitFor(() => expect(harness.instances[0].writesClosed).toBe(true));
+      expect(events.some((event) => "requestId" in event && event.requestId === "canceled")).toBe(
+        false,
       );
     } finally {
       await connection.close();

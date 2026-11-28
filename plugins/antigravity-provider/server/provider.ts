@@ -177,6 +177,9 @@ export function createAntigravityProvider(): ProviderRegistration {
     icon: "icon.svg",
     command: ["agy", "acp"],
     acpOptions: {
+      // Imports list sessions again on each search and page. agy answers them in a few ms from a
+      // running process, against several seconds to start one.
+      keepSessionListProcess: true,
       // agy 1.5.14 lists thinking options for the selected model only, and none for Orchestrator.
       perModelThinkingOptions: true,
       waitForInitialCommands: true,
