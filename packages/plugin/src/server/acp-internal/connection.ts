@@ -6,6 +6,7 @@ import {
   ClientSideConnection,
   CLIENT_METHODS,
   PROTOCOL_VERSION,
+  RequestError,
   ndJsonStream,
   type Client,
   type AgentCapabilities,
@@ -847,7 +848,7 @@ class AcpRuntime {
     }
     this.modes = response.modes ?? null;
     this.configOptions = response.configOptions ?? [];
-    await this.applyInitialConfig(input.config);
+    await this.applyInitialConfig(input.config, Boolean(nativeSessionId));
     const sessionCapabilities = connectionCapabilities.filter(
       (capability) =>
         capability !== "session.configure" ||
@@ -1370,7 +1371,10 @@ class AcpRuntime {
     }
   }
 
-  private async applyInitialConfig(config: ProviderSessionConfig): Promise<void> {
+  private async applyInitialConfig(
+    config: ProviderSessionConfig,
+    resuming: boolean,
+  ): Promise<void> {
     const requested: AcpConfigChange[] = [];
     if (config.model) requested.push({ target: "model", value: config.model });
     const autoAcceptMode = this.options.options.acpOptions?.autoAcceptMode;
@@ -1388,7 +1392,9 @@ class AcpRuntime {
     for (const [id, value] of Object.entries(settings)) {
       requested.push({ target: "setting", id, value });
     }
-    for (const change of this.inAgentOrder(requested)) await this.applyConfigChange(change);
+    for (const change of this.inAgentOrder(requested)) {
+      await this.applyConfigChange(change, resuming);
+    }
   }
 
   private offersMode(mode: string | undefined): boolean {
@@ -1429,7 +1435,7 @@ class AcpRuntime {
     return modeOption(this.configOptions)?.id;
   }
 
-  private async applyConfigChange(change: AcpConfigChange): Promise<void> {
+  private async applyConfigChange(change: AcpConfigChange, resuming = false): Promise<void> {
     const autoAcceptMode = this.options.options.acpOptions?.autoAcceptMode;
     if (
       change.target === "mode" &&
@@ -1458,7 +1464,38 @@ class AcpRuntime {
         return;
       }
     }
+    if (resuming && change.target === "model" && change.value) {
+      await this.restoreNativeModel(change.value);
+      return;
+    }
     await this.applyNativeConfigChange(change);
+  }
+
+  private async restoreNativeModel(requested: string): Promise<void> {
+    try {
+      await this.applyNativeConfigChange({ target: "model", value: requested });
+    } catch (error) {
+      if (!(error instanceof RequestError) || error.code !== -32602) throw error;
+      const option = modelOption(this.configOptions);
+      const current = selectedValue(option);
+      if (
+        !current ||
+        current === requested ||
+        selectOptions(option).some(({ value }) => value === requested)
+      ) {
+        throw error;
+      }
+      this.emit({
+        type: "session.notice",
+        sessionId: this.options.boundarySessionId,
+        notice: {
+          id: "acp:saved-model-unavailable",
+          severity: "warning",
+          title: "Saved model unavailable",
+          description: `The provider no longer offers ${requested}. This chat reopened with ${current}.`,
+        },
+      });
+    }
   }
 
   private async applyNativeConfigChange(change: AcpConfigChange): Promise<void> {
