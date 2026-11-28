@@ -81,11 +81,14 @@ function mergeObjectProps(left, right) {
   return merged;
 }
 
-function extractObjectNode(def, seen, extraPropsMap) {
+function extractObjectNode(def, seen, ctx) {
   const props = {};
   let hasProps = false;
   for (const [key, propSchema] of Object.entries(def.shape)) {
-    const child = extractDefaultsNode(propSchema, new Set(seen), extraPropsMap);
+    const child = extractDefaultsNode(propSchema, new Set(seen), {
+      ...ctx,
+      path: `${ctx.path}.${key}`,
+    });
     if (child) {
       props[key] = child;
       hasProps = true;
@@ -94,15 +97,20 @@ function extractObjectNode(def, seen, extraPropsMap) {
   return hasProps ? { k: "o", p: props } : null;
 }
 
-function extractUnionNode(def, seen, extraPropsMap) {
+function extractUnionNode(def, seen, ctx) {
   const branches = [];
-  for (const option of flattenUnionOptions(def.options)) {
-    const child = extractDefaultsNode(option, new Set(seen), extraPropsMap);
+  const options = flattenUnionOptions(def.options);
+  for (let i = 0; i < options.length; i++) {
+    const option = options[i];
+    const child = extractDefaultsNode(option, new Set(seen), {
+      ...ctx,
+      path: `${ctx.path}|${i}`,
+    });
     if (!child) continue;
     const match = extractObjectLiterals(option);
     if (Object.keys(match).length === 0) {
       throw new Error(
-        "Protocol union branch contains .default() without literal object discriminators",
+        `Protocol union branch at ${ctx.path}|${i} contains .default() without literal object discriminators`,
       );
     }
     branches.push({ m: match, n: child });
@@ -110,9 +118,9 @@ function extractUnionNode(def, seen, extraPropsMap) {
   return branches.length > 0 ? { k: "m", b: branches } : null;
 }
 
-function extractIntersectionNode(def, seen, extraPropsMap) {
-  const left = extractDefaultsNode(def.left, new Set(seen), extraPropsMap);
-  const right = extractDefaultsNode(def.right, new Set(seen), extraPropsMap);
+function extractIntersectionNode(def, seen, ctx) {
+  const left = extractDefaultsNode(def.left, new Set(seen), ctx);
+  const right = extractDefaultsNode(def.right, new Set(seen), ctx);
   if (!left) return right;
   if (!right) return left;
   if (left.k === "o" && right.k === "o") {
@@ -123,9 +131,9 @@ function extractIntersectionNode(def, seen, extraPropsMap) {
   return { k: "s", s: [...leftSteps, ...rightSteps] };
 }
 
-function extractPipeNode(def, seen, extraPropsMap) {
-  const left = extractDefaultsNode(def.in, new Set(seen), extraPropsMap);
-  const right = extractDefaultsNode(def.out, new Set(seen), extraPropsMap);
+function extractPipeNode(def, seen, ctx) {
+  const left = extractDefaultsNode(def.in, new Set(seen), ctx);
+  const right = extractDefaultsNode(def.out, new Set(seen), ctx);
   if (!left) return right;
   if (!right) return left;
   if (left.k === "o" && right.k === "o") {
@@ -134,18 +142,39 @@ function extractPipeNode(def, seen, extraPropsMap) {
   return right;
 }
 
-const WRAPPER_DEF_TYPES = new Set(["optional", "nullable", "readonly", "catch", "prefault"]);
+const WRAPPER_DEF_TYPES = new Set(["optional", "nullable", "readonly"]);
 
-function extractDefaultNode(def, seen, extraPropsMap) {
+// Existing legacy `.catch()` and `.transform()` schemas whose behavior is not read by lean CLI
+// commands today (or already covered by a parent entry in `legacySchemaTransformDefaults`).
+// Any NEW `.catch()` or `.transform()` in protocol message schemas fails `generate:validators`
+// so lean clients never silently drift from strict Zod parsing (see docs/protocol-validation.md).
+const KNOWN_LEGACY_NON_PURE_ANCHORS = new Set([
+  "out:workspace_update.payload|0.workspace.statusEnteredAt",
+  "out:workspace_update.payload|0.workspace.githubRuntime.pullRequest.mergeable",
+  "out:project.add.response.payload.errorCode",
+  "out:open_project_response.payload.errorCode",
+  "out:agent.fork_context.response.payload.attachment",
+  "out:read_project_config_response.payload|0.config.metadataGeneration",
+  "out:read_project_config_response.payload|0.config.metadataGeneration.title",
+  "out:checkout_status_update.payload.prStatus.status.mergeable",
+  "out:pull_request_timeline_response.payload.items[]",
+  "out:pull_request_timeline_response.payload.error",
+  "out:list_commands_response.payload.commands[].kind",
+  "out:list_terminals_response.payload.terminals[].activity.state",
+  "out:list_terminals_response.payload.terminals[].activity.attentionReason",
+  "in:send_agent_message_request.attachments",
+]);
+
+function extractDefaultNode(kind, def, seen, ctx) {
   const rawValue = typeof def.defaultValue === "function" ? def.defaultValue() : def.defaultValue;
   const serialized = JSON.stringify(rawValue);
   if (serialized === undefined) {
-    throw new Error("Protocol .default() value must be JSON-serializable");
+    throw new Error("Protocol .default()/.prefault() value must be JSON-serializable");
   }
-  const inner = extractDefaultsNode(def.innerType, new Set(seen), extraPropsMap);
+  const inner = extractDefaultsNode(def.innerType, new Set(seen), ctx);
   return inner
-    ? { k: "d", v: JSON.parse(serialized), i: inner }
-    : { k: "d", v: JSON.parse(serialized) };
+    ? { k: kind, v: JSON.parse(serialized), i: inner }
+    : { k: kind, v: JSON.parse(serialized) };
 }
 
 function mergeExtraObjectProps(node, extraProps) {
@@ -155,40 +184,95 @@ function mergeExtraObjectProps(node, extraProps) {
   return { k: "s", s: [node, { k: "o", p: { ...extraProps } }] };
 }
 
-function extractBaseDefaultsNode(def, seen, extraPropsMap) {
-  if (def.type === "default") return extractDefaultNode(def, seen, extraPropsMap);
-  if (WRAPPER_DEF_TYPES.has(def.type)) {
-    return extractDefaultsNode(def.innerType, new Set(seen), extraPropsMap);
+function assertNonPureSchemaAllowed(schema, defType, ctx) {
+  if (ctx.extraPropsMap?.has(schema) || ctx.allowedNonPureSchemas.has(schema)) {
+    return;
   }
-  if (def.type === "lazy") return extractDefaultsNode(def.getter(), new Set(seen), extraPropsMap);
-  if (def.type === "pipe") return extractPipeNode(def, seen, extraPropsMap);
-  if (def.type === "object") return extractObjectNode(def, seen, extraPropsMap);
+  throw new Error(
+    `Unlisted protocol .${defType === "pipe" ? "transform()/.preprocess()" : `${defType}()`} schema at ${ctx.path}. ` +
+      "Avoid non-pure wire schemas (see docs/protocol-validation.md) or register its lean rule in ws-outbound-envelope.ts.",
+  );
+}
+
+function extractBaseDefaultsNode(schema, def, seen, ctx) {
+  if (def.type === "default") return extractDefaultNode("d", def, seen, ctx);
+  if (def.type === "prefault") return extractDefaultNode("p", def, seen, ctx);
+  if (def.type === "catch") {
+    assertNonPureSchemaAllowed(schema, "catch", ctx);
+    return extractDefaultsNode(def.innerType, new Set(seen), ctx);
+  }
+  if (WRAPPER_DEF_TYPES.has(def.type)) {
+    return extractDefaultsNode(def.innerType, new Set(seen), ctx);
+  }
+  if (def.type === "lazy") return extractDefaultsNode(def.getter(), new Set(seen), ctx);
+  if (def.type === "pipe") {
+    assertNonPureSchemaAllowed(schema, "pipe", ctx);
+    return extractPipeNode(def, seen, ctx);
+  }
+  if (def.type === "object") return extractObjectNode(def, seen, ctx);
   if (def.type === "array") {
-    const element = extractDefaultsNode(def.element, new Set(seen), extraPropsMap);
+    const element = extractDefaultsNode(def.element, new Set(seen), {
+      ...ctx,
+      path: `${ctx.path}[]`,
+    });
     return element ? { k: "a", e: element } : null;
   }
   if (def.type === "record") {
-    const valueNode = extractDefaultsNode(def.valueType, new Set(seen), extraPropsMap);
+    const valueNode = extractDefaultsNode(def.valueType, new Set(seen), {
+      ...ctx,
+      path: `${ctx.path}{}`,
+    });
     return valueNode ? { k: "r", e: valueNode } : null;
   }
-  if (def.type === "union") return extractUnionNode(def, seen, extraPropsMap);
-  if (def.type === "intersection") return extractIntersectionNode(def, seen, extraPropsMap);
+  if (def.type === "union") return extractUnionNode(def, seen, ctx);
+  if (def.type === "intersection") return extractIntersectionNode(def, seen, ctx);
   return null;
 }
 
-function extractDefaultsNode(schema, seen = new Set(), extraPropsMap = null) {
+function extractDefaultsNode(schema, seen = new Set(), ctx = null) {
   const def = getDef(schema);
   if (!def || seen.has(schema)) return null;
   seen.add(schema);
-  const base = extractBaseDefaultsNode(def, seen, extraPropsMap);
-  return mergeExtraObjectProps(base, extraPropsMap?.get(schema) ?? null);
+  const base = extractBaseDefaultsNode(schema, def, seen, ctx);
+  return mergeExtraObjectProps(base, ctx?.extraPropsMap?.get(schema) ?? null);
 }
 
-function collectMessageDefaults(options, extraPropsMap) {
+function indexNonPureSchemas(schema, path, seen, index) {
+  const def = getDef(schema);
+  if (!def || seen.has(schema)) return;
+  seen.add(schema);
+  if ((def.type === "catch" || def.type === "pipe") && KNOWN_LEGACY_NON_PURE_ANCHORS.has(path)) {
+    index.add(schema);
+  }
+  if (def.innerType) indexNonPureSchemas(def.innerType, path, new Set(seen), index);
+  if (def.in) indexNonPureSchemas(def.in, path, new Set(seen), index);
+  if (def.out) indexNonPureSchemas(def.out, path, new Set(seen), index);
+  if (def.getter) indexNonPureSchemas(def.getter(), path, new Set(seen), index);
+  if (def.shape) {
+    for (const [k, v] of Object.entries(def.shape)) {
+      indexNonPureSchemas(v, `${path}.${k}`, new Set(seen), index);
+    }
+  }
+  if (def.element) indexNonPureSchemas(def.element, `${path}[]`, new Set(seen), index);
+  if (def.valueType) indexNonPureSchemas(def.valueType, `${path}{}`, new Set(seen), index);
+  if (def.options) {
+    for (let i = 0; i < def.options.length; i++) {
+      indexNonPureSchemas(def.options[i], `${path}|${i}`, new Set(seen), index);
+    }
+  }
+  if (def.left) indexNonPureSchemas(def.left, path, new Set(seen), index);
+  if (def.right) indexNonPureSchemas(def.right, path, new Set(seen), index);
+}
+
+function collectMessageDefaults(prefix, options, extraPropsMap, allowedNonPureSchemas) {
   const map = {};
   for (const option of options) {
     const tag = option.shape.type.value;
-    const node = extractDefaultsNode(option, new Set(), extraPropsMap);
+    const node = extractDefaultsNode(option, new Set(), {
+      path: `${prefix}:${tag}`,
+      extraPropsMap,
+      allowedNonPureSchemas,
+    });
     if (node) {
       map[tag] = node;
     }
@@ -201,8 +285,8 @@ function countSubtreeReferences(node, counts) {
   counts.set(key, (counts.get(key) ?? 0) + 1);
   if (counts.get(key) > 1) return;
 
-  if (node.k === "d" && node.i) {
-    countSubtreeReferences(node.i, counts);
+  if (node.k === "d" || node.k === "p") {
+    if (node.i) countSubtreeReferences(node.i, counts);
   } else if (node.k === "o") {
     for (const child of Object.values(node.p)) {
       countSubtreeReferences(child, counts);
@@ -225,10 +309,10 @@ function emitNodeExpr(node, sharedRefs, allowRef = true) {
   if (allowRef && sharedRefs.has(key)) {
     return sharedRefs.get(key);
   }
-  if (node.k === "d") {
+  if (node.k === "d" || node.k === "p") {
     return node.i
-      ? `{ k: "d", v: ${JSON.stringify(node.v)}, i: ${emitNodeExpr(node.i, sharedRefs)} }`
-      : `{ k: "d", v: ${JSON.stringify(node.v)} }`;
+      ? `{ k: ${JSON.stringify(node.k)}, v: ${JSON.stringify(node.v)}, i: ${emitNodeExpr(node.i, sharedRefs)} }`
+      : `{ k: ${JSON.stringify(node.k)}, v: ${JSON.stringify(node.v)} }`;
   }
   if (node.k === "f") {
     return `{ k: "f", from: ${JSON.stringify(node.from)} }`;
@@ -262,7 +346,7 @@ function collectOrderedSharedNodes(node, counts, visited, ordered) {
   if (visited.has(key)) return;
   visited.add(key);
 
-  if (node.k === "d" && node.i) {
+  if ((node.k === "d" || node.k === "p") && node.i) {
     collectOrderedSharedNodes(node.i, counts, visited, ordered);
   } else if (node.k === "o") {
     for (const child of Object.values(node.p)) {
@@ -292,19 +376,31 @@ export function generateMessageDefaultsModule({
   agentSnapshotPayloadSchema,
   legacySchemaTransformDefaults,
 }) {
+  const allowedNonPureSchemas = new Set();
+  for (const option of sessionOutboundMessageOptions) {
+    indexNonPureSchemas(option, `out:${option.shape.type.value}`, new Set(), allowedNonPureSchemas);
+  }
+  for (const option of sessionInboundMessageOptions) {
+    indexNonPureSchemas(option, `in:${option.shape.type.value}`, new Set(), allowedNonPureSchemas);
+  }
+
   const outbound = collectMessageDefaults(
+    "out",
     sessionOutboundMessageOptions,
     legacySchemaTransformDefaults,
+    allowedNonPureSchemas,
   );
   const inbound = collectMessageDefaults(
+    "in",
     sessionInboundMessageOptions,
     legacySchemaTransformDefaults,
+    allowedNonPureSchemas,
   );
-  const agentSnapshot = extractDefaultsNode(
-    agentSnapshotPayloadSchema,
-    new Set(),
-    legacySchemaTransformDefaults,
-  );
+  const agentSnapshot = extractDefaultsNode(agentSnapshotPayloadSchema, new Set(), {
+    path: "agentSnapshot",
+    extraPropsMap: legacySchemaTransformDefaults,
+    allowedNonPureSchemas,
+  });
 
   const allNodes = [
     ...Object.values(outbound),

@@ -9,6 +9,7 @@ export type DefaultsLiteral = string | number | boolean;
 
 export type DefaultsNode =
   | { readonly k: "d"; readonly v: unknown; readonly i?: DefaultsNode }
+  | { readonly k: "p"; readonly v: unknown; readonly i?: DefaultsNode }
   | { readonly k: "f"; readonly from: string }
   | { readonly k: "o"; readonly p: Readonly<Record<string, DefaultsNode>> }
   | { readonly k: "a"; readonly e: DefaultsNode }
@@ -70,9 +71,14 @@ function applyObjectDefaults(
       continue;
     }
     if (current === undefined) {
-      if (child.k !== "d") continue;
-      if (!next) next = { ...value };
-      next[key] = cloneDefaultValue(child.v);
+      if (child.k === "d") {
+        if (!next) next = { ...value };
+        next[key] = cloneDefaultValue(child.v);
+      } else if (child.k === "p") {
+        if (!next) next = { ...value };
+        const seeded = cloneDefaultValue(child.v);
+        next[key] = child.i ? applyNode(seeded, child.i) : seeded;
+      }
       continue;
     }
     const updated = applyNode(current, child);
@@ -115,6 +121,13 @@ function applyRecordDefaults(
 function applyNode(value: unknown, node: DefaultsNode): unknown {
   if (node.k === "d") {
     if (value === undefined) return cloneDefaultValue(node.v);
+    return node.i ? applyNode(value, node.i) : value;
+  }
+  if (node.k === "p") {
+    if (value === undefined) {
+      const seeded = cloneDefaultValue(node.v);
+      return node.i ? applyNode(seeded, node.i) : seeded;
+    }
     return node.i ? applyNode(value, node.i) : value;
   }
   if (node.k === "o") {

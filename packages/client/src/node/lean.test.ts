@@ -412,6 +412,12 @@ describe("leanProtocolCodec", () => {
           },
         },
       },
+      {
+        type: "session",
+        message: {
+          type: "pull_request_timeline_response",
+        },
+      },
     ];
 
     for (const frame of legacyOutboundFrames) {
