@@ -1196,6 +1196,10 @@ const FOREGROUND_LIVENESS_TIMEOUT_MS = 5_000;
 // A foreground window whose timer fires this much later than scheduled (wall clock) spanned
 // another suspension or a blocked JS thread, so its silence is no evidence either way.
 const SUSPENDED_WINDOW_SLACK_MS = 2_000;
+// Mirrors the daemon's APPLICATION_SOCKET_LEASE_MS: a daemon closes an application socket that
+// has sent it nothing for this long. A client that has been silent longer, typically because the
+// app was suspended, returns to a socket the daemon has already closed (or is about to close).
+const DAEMON_APPLICATION_SOCKET_LEASE_MS = 45_000;
 const LIVENESS_FAILURE_RECONNECT_THRESHOLD = 2;
 
 /** Default timeout for waiting for connection before sending queued messages */
@@ -1538,6 +1542,8 @@ export class DaemonClient {
   private livenessHeartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private lastLivenessRttMs: number | null = null;
   private consecutiveLivenessFailures = 0;
+  // Wall clock of the last frame handed to the transport; the daemon renews its lease on any frame.
+  private lastOutboundFrameWallMs: number | null = null;
 
   constructor(private config: DaemonClientConfig) {
     this.logger = config.logger ?? consoleLogger;
@@ -1883,6 +1889,10 @@ export class DaemonClient {
       this.shouldReconnect = true;
     }
     if (this.connectionState.status === "connected") {
+      if (options?.verify && this.daemonLeaseExpired()) {
+        this.reconnectAfterExpiredLease();
+        return;
+      }
       if (options?.verify) this.verifyConnectionOnForeground();
       return;
     }
@@ -2225,6 +2235,7 @@ export class DaemonClient {
     });
     try {
       submitted?.();
+      this.lastOutboundFrameWallMs = Date.now();
       const payload = typeof frame === "string" ? frame : asUint8Array(frame)!;
       return this.chunkedTransport!.send(payload);
     } finally {
@@ -2777,6 +2788,28 @@ export class DaemonClient {
    * dropped without a miss. Latency measurements wait for the next pong, so replacing the
    * probe they joined does not fail them.
    */
+  private daemonLeaseExpired(): boolean {
+    const lastSent = this.lastOutboundFrameWallMs;
+    return lastSent !== null && Date.now() - lastSent >= DAEMON_APPLICATION_SOCKET_LEASE_MS;
+  }
+
+  /**
+   * The app came back after sending nothing for longer than the daemon's application lease, so
+   * the daemon has closed this socket even though it still looks open here. Probing it would
+   * only spend two silent windows before the same teardown; reconnect at once instead.
+   */
+  private reconnectAfterExpiredLease(): void {
+    this.rejectPingProbe(new Error("Daemon application lease expired"));
+    this.consecutiveLivenessFailures = 0;
+    this.disposeTransport(1001, "Daemon application lease expired");
+    this.scheduleReconnect({
+      reason: "Daemon application lease expired while the app was in the background",
+      event: "LEASE_EXPIRED",
+      reasonCode: "lease_expired",
+      immediate: true,
+    });
+  }
+
   private verifyConnectionOnForeground(): void {
     // A cycle already running keeps its deadline and its window count.
     if (this.pingProbe?.role === "foreground") return;

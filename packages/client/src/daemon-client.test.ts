@@ -3177,7 +3177,7 @@ test("a foreground window that spanned a second suspension is discarded when the
   client.ensureConnected({ verify: true });
   await vi.advanceTimersByTimeAsync(5_000); // window 1 silent, window 2 outstanding
   expect(daemon.pingTimestamps()).toEqual(["0s", "5s"]);
-  await suspendFor(60_000);
+  await suspendFor(30_000); // shorter than the daemon lease, so the socket may still be alive
   daemon.daemonAnswersPingsAfter("fast"); // the socket is healthy on resume
   await vi.advanceTimersByTimeAsync(5_000); // window 2's timer fires late
   client.ensureConnected({ verify: true }); // then AppState lands
@@ -3198,7 +3198,7 @@ test("a foreground window that spanned a second suspension is discarded when App
   client.ensureConnected({ verify: true });
   await vi.advanceTimersByTimeAsync(5_000);
   expect(daemon.pingTimestamps()).toEqual(["0s", "5s"]);
-  await suspendFor(60_000);
+  await suspendFor(30_000); // shorter than the daemon lease, so the socket may still be alive
   daemon.daemonAnswersPingsAfter("fast");
   client.ensureConnected({ verify: true }); // AppState lands before the queued timer
   await vi.advanceTimersByTimeAsync(5_000); // window 2's timer fires late
@@ -3223,7 +3223,7 @@ test("a dead socket after a second suspension mid-cycle still gets two fresh win
   client.ensureConnected({ verify: true });
   await vi.advanceTimersByTimeAsync(5_000);
   first.receiveChunk(true); // a frame before the second suspension is not evidence after it
-  await suspendFor(60_000);
+  await suspendFor(30_000); // shorter than the daemon lease, so the socket may still be alive
   client.ensureConnected({ verify: true });
   await vi.advanceTimersByTimeAsync(5_000); // the late timer discards window 2 and starts over
   expect(first.pingTimestamps()).toEqual(["0s", "5s", "10s"]);
@@ -3233,6 +3233,47 @@ test("a dead socket after a second suspension mid-cycle still gets two fresh win
   await vi.advanceTimersByTimeAsync(5_000);
   expect(first.closesFromClient()).toEqual([{ code: 1001, reason: "Liveness check timed out" }]);
   expect(attempts()).toBe(2);
+});
+
+test("foreground reconnects at once when the app sent nothing for longer than the daemon lease", async () => {
+  useHeartbeatClock();
+  const first = new FakeDaemon();
+  const second = new FakeDaemon();
+  const { client, attempts } = connectThroughReplacements("resume-after-lease", [first, second]);
+  const connection = client.connect();
+  first.openConnection();
+  await connection;
+  await vi.advanceTimersByTimeAsync(10_000); // last heartbeat ping goes out at 10s
+  expect(first.pingTimestamps()).toEqual(["10s"]);
+  // Suspended past the lease: the daemon has closed the socket, but no close reached the app.
+  await suspendFor(45_000);
+  client.ensureConnected({ verify: true });
+  // No probe windows: the socket is replaced before any timer runs.
+  expect(first.pingTimestamps()).toEqual(["10s"]);
+  expect(first.closesFromClient()).toEqual([
+    { code: 1001, reason: "Daemon application lease expired" },
+  ]);
+  expect(attempts()).toBe(2);
+  second.openConnection();
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(second.closesFromClient()).toEqual([]);
+});
+
+test("foreground still probes when the app was silent for less than the daemon lease", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  const { client, attempts } = connectThroughReplacements("resume-within-lease", [daemon]);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  await vi.advanceTimersByTimeAsync(10_000); // last heartbeat ping goes out at 10s
+  await suspendFor(44_999);
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(daemon.closesFromClient()).toEqual([]);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(attempts()).toBe(1);
 });
 
 test("repeated foreground events share one cycle and do not restart its windows", async () => {
