@@ -254,6 +254,22 @@ test("createPaseoClient exposes workspace list through the daemon client", async
   await client.close();
 });
 
+test("workspace PR status methods require daemon support before sending a request", async () => {
+  const { client, ws } = await connectClient();
+  try {
+    const framesBefore = ws.sent.length;
+    await expect(client.workspaces.listPrStatuses(["workspace_sdk"])).rejects.toThrow(
+      "Update the host to use workspace PR status.",
+    );
+    await expect(client.workspaces.refreshPrStatus("workspace_sdk")).rejects.toThrow(
+      "Update the host to use workspace PR status.",
+    );
+    expect(ws.sent).toHaveLength(framesBefore);
+  } finally {
+    await client.close();
+  }
+});
+
 test("createPaseoApi borrows daemon capabilities without exposing connection ownership", () => {
   const daemonClient = new DaemonClient({
     url: "ws://daemon.test",

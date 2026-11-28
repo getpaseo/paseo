@@ -83,10 +83,11 @@ import type { HubExecutionAgents } from "./hub/daemon-executions.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { attachMutableProviderConfigOwner } from "./agent/mutable-provider-config-owner.js";
-import type {
-  WorkspaceGitRuntimeSnapshot,
-  WorkspaceGitService,
-  WorkspaceGitServiceMetrics,
+import {
+  EMPTY_WORKSPACE_PR_STATUS,
+  type WorkspaceGitRuntimeSnapshot,
+  type WorkspaceGitService,
+  type WorkspaceGitServiceMetrics,
 } from "./workspace-git-service.js";
 import type { GitCommandRuntimeMetricsSnapshot } from "../utils/git-command-runtime-metrics.js";
 import { snapshotGitCommandRuntimeMetrics } from "../utils/run-git-command.js";
@@ -269,6 +270,11 @@ function createFallbackWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSna
 
 function createFallbackWorkspaceGitService(): WorkspaceGitService {
   return {
+    readPrStatus: () => EMPTY_WORKSPACE_PR_STATUS,
+    refreshPrStatus: async () => ({
+      outcome: "failed",
+      error: "Workspace Git status is unavailable.",
+    }),
     registerWorkspace: () => ({
       unsubscribe: () => {},
     }),
@@ -2224,6 +2230,7 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(terminalGraphemeWidths): added in v0.15.0, remove gate after 2027-05-01.
         "terminal-grapheme-widths": true,
         workspaceTerminals: true,
+        workspacePrStatus: true,
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
         rewind: true,
         // COMPAT(agentTimelinePromptIndex): added in v0.2.X, drop the gate when floor >= v0.2.X.

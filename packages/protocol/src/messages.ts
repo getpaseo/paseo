@@ -2742,6 +2742,20 @@ export const CheckoutGithubGetCheckDetailsRequestSchema =
     type: z.literal("checkout.github.get_check_details.request"),
   });
 
+export const WORKSPACE_PR_STATUS_BATCH_LIMIT = 100;
+
+const WorkspacePrStatusListRequestSchema = z.object({
+  type: z.literal("workspace.pr_status.list.request"),
+  workspaceIds: z.array(z.string().min(1)).max(WORKSPACE_PR_STATUS_BATCH_LIMIT),
+  requestId: z.string(),
+});
+
+const WorkspacePrStatusRefreshRequestSchema = z.object({
+  type: z.literal("workspace.pr_status.refresh.request"),
+  workspaceId: z.string().min(1),
+  requestId: z.string(),
+});
+
 export const CheckoutPrStatusRequestSchema = z.object({
   type: z.literal("checkout_pr_status_request"),
   cwd: z.string(),
@@ -3762,6 +3776,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutForgeGetCheckDetailsRequestSchema,
   CheckoutGithubGetCheckDetailsRequestSchema,
   CheckoutPrStatusRequestSchema,
+  WorkspacePrStatusListRequestSchema,
+  WorkspacePrStatusRefreshRequestSchema,
   PullRequestTimelineRequestSchema,
   CheckoutSwitchBranchRequestSchema,
   CheckoutRenameBranchRequestSchema,
@@ -4063,6 +4079,7 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceSetupRun: z.boolean().optional(),
         // COMPAT(workspaceTerminals): added in v0.8.0, remove gate after 2027-09-05.
         workspaceTerminals: z.boolean().optional(),
+        workspacePrStatus: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
         // feature gate and checkoutGithubSetAutoMerge fallback after 2027-01-17
         // once the supported daemon floor is >= v0.2.0.
@@ -6086,6 +6103,40 @@ export type ForgeAuthState =
 
 export const ForgeAuthStateSchema = z.unknown().optional();
 
+const WorkspacePrStatusEntrySchema = z.object({
+  workspaceId: z.string(),
+  state: z.enum(["pending", "ready", "unavailable", "error", "workspace_not_found"]),
+  status: CheckoutPrStatusSchema.nullable(),
+  forge: z.string().nullable(),
+  authState: z.string().nullable(),
+  updatedAt: z.string().nullable(),
+  stale: z.boolean(),
+  refreshing: z.boolean(),
+  error: z.string().nullable(),
+});
+export type WorkspacePrStatusEntry = z.infer<typeof WorkspacePrStatusEntrySchema>;
+
+const WorkspacePrStatusListResponseSchema = z.object({
+  type: z.literal("workspace.pr_status.list.response"),
+  payload: z.object({
+    entries: z.array(WorkspacePrStatusEntrySchema),
+    requestId: z.string(),
+  }),
+});
+const WorkspacePrStatusRefreshResponseSchema = z.object({
+  type: z.literal("workspace.pr_status.refresh.response"),
+  payload: z.object({
+    entry: WorkspacePrStatusEntrySchema,
+    outcome: z.enum(["completed", "failed", "throttled", "timed_out", "workspace_not_found"]),
+    error: z.string().nullable(),
+    retryAfterMs: z.number().optional(),
+    requestId: z.string(),
+  }),
+});
+export type WorkspacePrStatusRefreshResult = z.infer<
+  typeof WorkspacePrStatusRefreshResponseSchema
+>["payload"];
+
 const CheckoutPrStatusPayloadSchema = z.object({
   cwd: z.string(),
   status: CheckoutPrStatusSchema.nullable(),
@@ -7983,6 +8034,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutForgeGetCheckDetailsResponseSchema,
   CheckoutGithubGetCheckDetailsResponseSchema,
   CheckoutPrStatusResponseSchema,
+  WorkspacePrStatusListResponseSchema,
+  WorkspacePrStatusRefreshResponseSchema,
   PullRequestTimelineResponseSchema,
   CheckoutSwitchBranchResponseSchema,
   CheckoutRenameBranchResponseSchema,

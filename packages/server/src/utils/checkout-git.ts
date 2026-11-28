@@ -4767,6 +4767,8 @@ export interface PullRequestStatus {
 
 export interface PullRequestStatusResult {
   status: PullRequestStatus | null;
+  checkedAtMs?: number;
+  fallbackError?: string;
   /** Why forge features are (un)available — drives the onboarding callout. */
   authState: ForgeAuthState;
   /** Kept in sync with {@link authState} for back-compat; true iff authenticated. */
@@ -4869,7 +4871,8 @@ export async function getPullRequestStatus(
   }
 
   const lookup = getPullRequestStatusUncached(cwd, forgeService, head, options, context, headSha)
-    .then((status) => {
+    .then((result) => {
+      const status = { ...result, checkedAtMs: Date.now() };
       pullRequestStatusCache.set(cacheKey, status);
       rememberPullRequestStatus(cacheKey, status);
       return status;
@@ -4878,7 +4881,7 @@ export async function getPullRequestStatus(
       if (!options?.force && error instanceof ForgeCommandError) {
         const stale = lastSuccessfulPullRequestStatus.get(cacheKey);
         if (stale) {
-          return stale;
+          return { ...stale, fallbackError: error.message };
         }
       }
       throw error;

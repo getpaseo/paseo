@@ -824,7 +824,7 @@ describe("checkout git utilities", () => {
 
     expect(statusWithFacts).toEqual(status);
     expect(shortstatWithFacts).toEqual(shortstat);
-    expect(prStatusWithFacts).toEqual(prStatus);
+    expect(prStatusWithFacts).toEqual({ ...prStatus, checkedAtMs: expect.any(Number) });
     expect(commands).not.toContain("rev-parse --show-toplevel");
     expect(commands).not.toContain("rev-parse --abbrev-ref HEAD");
   });
@@ -3402,6 +3402,7 @@ const x = 1;
     expect(status).toEqual({
       githubFeaturesEnabled: true,
       authState: "authenticated",
+      checkedAtMs: expect.any(Number),
       status: {
         number: 123,
         url: "https://github.com/getpaseo/paseo/pull/123",
@@ -4223,7 +4224,10 @@ const x = 1;
       await sleep(80);
       const stale = await getPullRequestStatus(repoDir, github);
 
-      expect(stale).toEqual(fresh);
+      expect(stale).toEqual({
+        ...fresh,
+        fallbackError: expect.any(String),
+      });
       expect(stale.githubFeaturesEnabled).toBe(true);
       expect(stale.status?.url).toContain("/pull/123");
       expect(callCount).toBe(2);
@@ -4259,7 +4263,10 @@ const x = 1;
       await sleep(80);
       const stale = await getPullRequestStatus(repoDir, service);
 
-      expect(stale).toEqual(fresh);
+      expect(stale).toEqual({
+        ...fresh,
+        fallbackError: expect.any(String),
+      });
       expect(stale.status?.url).toContain("/pulls/7");
       expect(callCount).toBe(2);
     } finally {
@@ -4328,6 +4335,7 @@ const x = 1;
       expect(cleared).toEqual({
         githubFeaturesEnabled: true,
         authState: "authenticated",
+        checkedAtMs: expect.any(Number),
         status: null,
       });
       expect(callCount).toBe(2);
@@ -4351,6 +4359,7 @@ const x = 1;
       status: null,
       authState: "cli_missing",
       githubFeaturesEnabled: false,
+      checkedAtMs: expect.any(Number),
     });
   });
 
@@ -4369,6 +4378,7 @@ const x = 1;
       status: null,
       authState: "unauthenticated",
       githubFeaturesEnabled: false,
+      checkedAtMs: expect.any(Number),
     });
   });
 

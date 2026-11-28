@@ -129,18 +129,51 @@ nav: API 参考
 
 ## `client.workspaces` {#clientworkspaces}
 
-| 方法                     | 结果                          | 行为                                                                                                      |
-| ------------------------ | ----------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `list(options?)`         | `PaseoWorkspaceListResult`    | 列出、过滤、分页或订阅工作区目录。                                                                        |
-| `open(cwd)`              | `PaseoWorkspaceHandle`        | 复用某个目录的活动工作区，或创建一个。                                                                    |
-| `create(options)`        | `PaseoWorkspaceHandle`        | 总是创建一个新的、由目录或 Paseo worktree 支撑的工作区。`background: true` 会把它从默认的发现结果中隐藏。 |
-| `ref(workspaceOrId)`     | `PaseoWorkspaceHandle`        | 创建一个本地句柄。                                                                                        |
-| `archive(workspaceOrId)` | `PaseoWorkspaceArchiveResult` | 无需先创建句柄即可归档。                                                                                  |
-| `subscribe(handler)`     | 取消订阅函数                  | 此 API 实例的本地监听器。需要一个由你持有的 `list({ subscribe: {} })` 观察。                              |
+| 方法                           | 结果                                  | 行为                                                                                                      |
+| ------------------------------ | ------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `listPrStatuses(workspaceIds)` | `PaseoWorkspacePrStatus[]`            | 一次请求按工作区 ID 读取缓存的 PR 状态。                                                                  |
+| `refreshPrStatus(workspaceId)` | `PaseoWorkspacePrStatusRefreshResult` | 从代码托管服务刷新一个工作区的 PR 状态。                                                                  |
+| `list(options?)`               | `PaseoWorkspaceListResult`            | 列出、过滤、分页或订阅工作区目录。                                                                        |
+| `open(cwd)`                    | `PaseoWorkspaceHandle`                | 复用某个目录的活动工作区，或创建一个。                                                                    |
+| `create(options)`              | `PaseoWorkspaceHandle`                | 总是创建一个新的、由目录或 Paseo worktree 支撑的工作区。`background: true` 会把它从默认的发现结果中隐藏。 |
+| `ref(workspaceOrId)`           | `PaseoWorkspaceHandle`                | 创建一个本地句柄。                                                                                        |
+| `archive(workspaceOrId)`       | `PaseoWorkspaceArchiveResult`         | 无需先创建句柄即可归档。                                                                                  |
+| `subscribe(handler)`           | 取消订阅函数                          | 此 API 实例的本地监听器。需要一个由你持有的 `list({ subscribe: {} })` 观察。                              |
 
 `create({ source, agent, background })` 会同时创建一个工作区及其初始 Agent。`agent` 接受除 `worktree`、`git`、`onEvent`、`idempotencyKey` 和 `requestId` 之外的 Agent 创建选项。请在工作区选项上设置 `background`；`agent.background` 会被拒绝。见[一次性创建的示例](./agents.md#run-work-in-a-background-workspace)。
 
 工作区句柄提供 `id`、`projectId`、`directory`、`name`、`status`、`current()`、`refresh()`、`setTitle(title)`、`archive()` 和 `subscribe()`。向 `setTitle` 传入 `null` 会恢复推导出的工作区名称。使用 `workspace.agents.create(options)` 创建 Agent，无需重复提供工作区 ID 或目录。
+
+### 工作区 PR 状态 {#workspace-pr-status}
+
+SDK 客户端和插件都可以在声明支持 `workspacePrStatus` 的主机上调用这些方法。
+在客户端插件中使用 `usePaseo()` 获取 API。在后端处理程序中使用上下文中的 `paseo`。
+
+```ts
+const entries = await paseo.workspaces.listPrStatuses(workspaceIds);
+const result = await paseo.workspaces.refreshPrStatus(workspaceId);
+```
+
+最多传入同一主机上的 100 个活跃工作区 ID。每个 ID 都会按输入顺序返回一条记录。
+批量请求直接读取 daemon 缓存，不执行 Git 操作或查询代码托管服务。`status` 与工作区界面展示的是同一份
+PR 标识、生命周期、检查结果、审查结论和可合并状态。
+
+| 记录状态              | 含义                                                                               |
+| --------------------- | ---------------------------------------------------------------------------------- |
+| `pending`             | daemon 尚未缓存该检出的 PR 状态。                                                  |
+| `ready`               | 查询成功。`status` 为 null 表示没有 PR。                                           |
+| `unavailable`         | 该检出没有可查询的代码托管服务。                                                   |
+| `error`               | 最近一次查询失败。通过 `error` 和 `authState` 查看详情。记录可以保留上次已知状态。 |
+| `workspace_not_found` | 该主机上没有此工作区 ID，或工作区已归档。                                          |
+
+`updatedAt` 是最近一次成功获取结果的 ISO 时间戳。尚未获取结果时为 null。
+已知结果在四分钟后或后续查询失败时标记为 `stale`。
+当 `refreshing` 为 true 时，上一份快照会保留到 daemon 发布更新。
+
+`refreshPrStatus` 返回当前的 `entry`，以及 `completed`、`failed`、`throttled`、
+`timed_out` 或 `workspace_not_found` 之一作为 `outcome`。同一检出的并发请求共用一次刷新。
+daemon 限制等待的刷新请求数量，并对同一检出设置五秒冷却时间。返回 `retryAfterMs` 时，可在指定时间后重试。
+刷新请求最多等待 15 秒。超时后，共享刷新仍可以完成并更新缓存。
 
 ## `client.terminals` {#clientterminals}
 
