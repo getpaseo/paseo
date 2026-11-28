@@ -149,26 +149,49 @@ describe("exact MCP preapproval mappings", () => {
     ).toThrow("cannot preapprove exact MCP tools for unattended execution");
   });
 
-  test("Codex enables and approves only the granted server tool", () => {
+  test("Codex enables and approves only the granted server tool without replacing mcp_servers", () => {
     expect(
       applyCodexToolPolicy(
         {
-          mcp_servers: {
-            hub: { url: "http://127.0.0.1/hub" },
-            unrelated: { url: "http://127.0.0.1/unrelated" },
-          },
+          "mcp_servers.hub": { url: "http://127.0.0.1/hub" },
+          "mcp_servers.unrelated": { url: "http://127.0.0.1/unrelated" },
         },
         hubPolicy,
       ),
     ).toEqual({
+      "mcp_servers.hub": {
+        url: "http://127.0.0.1/hub",
+        enabled_tools: ["finish_execution"],
+        default_tools_approval_mode: "prompt",
+        tools: { finish_execution: { approval_mode: "approve" } },
+      },
+      "mcp_servers.unrelated": { url: "http://127.0.0.1/unrelated" },
+    });
+  });
+
+  test("Codex preapproval for an uninjected server uses dotted field keys and empty policy is a no-op", () => {
+    expect(applyCodexToolPolicy({}, { preapproved: [] })).toEqual({});
+    expect(
+      applyCodexToolPolicy({ "mcp_servers.paseo": { url: "http://127.0.0.1/paseo" } }, hubPolicy),
+    ).toEqual({
+      "mcp_servers.paseo": { url: "http://127.0.0.1/paseo" },
+      "mcp_servers.hub.enabled_tools": ["finish_execution"],
+      "mcp_servers.hub.default_tools_approval_mode": "prompt",
+      "mcp_servers.hub.tools": { finish_execution: { approval_mode: "approve" } },
+    });
+    expect(
+      applyCodexToolPolicy(
+        { "mcp_servers.paseo": { url: "http://127.0.0.1/paseo" } },
+        { preapproved: [{ kind: "mcp", server: "my.dotted", tool: "ping" }] },
+      ),
+    ).toEqual({
       mcp_servers: {
-        hub: {
-          url: "http://127.0.0.1/hub",
-          enabled_tools: ["finish_execution"],
+        paseo: { url: "http://127.0.0.1/paseo" },
+        "my.dotted": {
+          enabled_tools: ["ping"],
           default_tools_approval_mode: "prompt",
-          tools: { finish_execution: { approval_mode: "approve" } },
+          tools: { ping: { approval_mode: "approve" } },
         },
-        unrelated: { url: "http://127.0.0.1/unrelated" },
       },
     });
   });
