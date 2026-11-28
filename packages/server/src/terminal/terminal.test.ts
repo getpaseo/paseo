@@ -22,6 +22,7 @@ import {
   existsSync,
   mkdtempSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   statSync,
@@ -1536,6 +1537,47 @@ describe("terminal activity interruption", () => {
     session.send({ type: "input", data });
 
     expect(session.getActivity()).toMatchObject({ state: "working" });
+  });
+});
+
+describe("killAndWait", () => {
+  function isAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // The worker's shutdown and "Restart and close terminals" end every terminal with
+  // killAndWait and then exit, so the program must be gone when it resolves.
+  it("ends a program that survives the soft kill before it resolves", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "terminal-kill-and-wait-"));
+    temporaryDirs.push(dir);
+    const pidFile = join(dir, "program.pid");
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: dir,
+        name: "Stubborn",
+        command: process.execPath,
+        args: [
+          "-e",
+          `process.on("SIGHUP", () => {});
+           require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+           setInterval(() => {}, 1e9);`,
+        ],
+      }),
+    );
+    const deadline = Date.now() + 10_000;
+    while (!existsSync(pidFile) && Date.now() < deadline) await delay(50);
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    expect(isAlive(pid)).toBe(true);
+
+    await session.killAndWait({ gracefulTimeoutMs: 0 });
+
+    expect(isAlive(pid)).toBe(false);
   });
 });
 
