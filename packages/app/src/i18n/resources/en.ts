@@ -511,7 +511,20 @@ export const en = {
       copyBranchName: "Copy branch name",
       copied: "Copied",
     },
+    linkActions: {
+      openInPaseo: "Open in Paseo",
+      openInDefaultBrowser: "Open in default browser",
+      copyLink: "Copy link",
+      linkCopiedLabel: "Link",
+    },
     fileActions: {
+      revealInFiles: "Reveal in Files",
+      openInDefaultApp: "Open in default app",
+      pathCopiedLabel: "Path",
+      relativePathCopiedLabel: "Relative path",
+      openInDefaultAppFailed: "Couldn't open the file in its default app",
+      outsideWorkspace: "This file is outside the workspace",
+      notFoundInFiles: "File not found in Files",
       openFile: "Open file",
       openIn: "Open in {{target}}",
       openToSide: "Open to the side",
@@ -544,6 +557,12 @@ export const en = {
       },
     },
     fileExplorer: {
+      filter: {
+        placeholder: "Search files",
+        clear: "Clear search",
+        loading: "Searching files...",
+        empty: "No matching files",
+      },
       sort: {
         name: "Name",
         modified: "Modified",
@@ -754,7 +773,6 @@ export const en = {
         agentIdCopiedLabel: "Agent ID",
         terminalIdCopiedLabel: "Terminal ID",
         resumeCommandCopiedLabel: "resume command",
-        filePathCopiedLabel: "File path",
         resumeIdUnavailable: "Resume ID not available",
         resumeCommandUnavailable: "Resume command not available",
         reloadingAgent: "Reloading agent...",

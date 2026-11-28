@@ -618,6 +618,9 @@ class TableContainerView(
       importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
     }
 
+    override fun performLongClick(): Boolean =
+      (movementMethod as? LinkLongPressMovementMethod)?.performLinkLongClick(this) == true || super.performLongClick()
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
       val result = super.onTouchEvent(event)
       if (event.action == MotionEvent.ACTION_DOWN) cancelJSTouchForLinkTap(event)

@@ -36,6 +36,7 @@ export interface WorkspaceCommandCenterLabels {
   copyAgentId: string;
   copyTerminalId: string;
   copyFilePath: string;
+  revealInFiles: string;
   closeTabsLeft: string;
   closeTabsRight: string;
   closeOtherTabs: string;
@@ -350,6 +351,14 @@ function buildActiveTabContributions(
         keywords: ["tab", "file", "copy", "path"],
         icon: source.icons.copy,
         action: { id: "workspace.tab.copy-file-path", scope: "workspace" },
+      }),
+      buildQueryAction(source, {
+        id: "tab:reveal-in-files",
+        rank: 37,
+        title: source.labels.revealInFiles,
+        keywords: ["tab", "file", "reveal", "files", "explorer"],
+        icon: source.icons.files,
+        action: { id: "workspace.tab.reveal-in-files", scope: "workspace" },
       }),
     );
   }

@@ -10,8 +10,8 @@ interface UseFileDownloadParams {
 }
 
 /**
- * Returns a stable callback that downloads a single workspace file by its
- * workspace-relative path. Shared by the file explorer tree and the git diff
+ * Returns a stable callback that downloads a single file by its workspace-relative path. Pass
+ * `cwd` for a file outside the workspace. Shared by the file explorer tree and the git diff
  * pane so both surfaces download through the same download-store pipeline instead
  * of duplicating the plumbing: the HTTP token download over a direct TCP connection,
  * the session socket over anything else.
@@ -20,7 +20,7 @@ export function useFileDownload({
   serverId,
   workspaceId,
   workspaceRoot,
-}: UseFileDownloadParams): (input: { fileName: string; path: string }) => void {
+}: UseFileDownloadParams): (input: { fileName: string; path: string; cwd?: string }) => void {
   const daemons = useHosts();
   const daemonProfile = useMemo(
     () => daemons.find((daemon) => daemon.serverId === serverId),
@@ -39,7 +39,7 @@ export function useFileDownload({
   const startDownload = useDownloadStore((state) => state.startDownload);
 
   return useCallback(
-    ({ fileName, path }) => {
+    ({ fileName, path, cwd }) => {
       if (!workspaceScopeId) {
         return;
       }
@@ -50,8 +50,8 @@ export function useFileDownload({
         path,
         daemonProfile,
         activeConnectionId: getHostRuntimeStore().getSnapshot(serverId)?.activeConnectionId ?? null,
-        requestFileDownloadToken: (targetPath) => requestFileDownloadToken(targetPath),
-        readFile: requestFileBytes,
+        requestFileDownloadToken: (targetPath) => requestFileDownloadToken(targetPath, cwd),
+        readFile: (targetPath, maxBytes) => requestFileBytes(targetPath, maxBytes, cwd),
       });
     },
     [

@@ -1042,7 +1042,7 @@ test("changes context menu recursively collapses descendant folders", async ({ p
     nestedLabel.boundingBox(),
   ]);
   if (!rootBounds || !nestedBounds) throw new Error("Changes tree rows have no bounds");
-  expect(nestedBounds.x - rootBounds.x).toBe(12);
+  expect(nestedBounds.x - rootBounds.x).toBe(16);
 
   await tree.getByTestId("diff-folder-src-toggle").click({ button: "right" });
   await page.getByTestId("diff-folder-src-collapse-folder").click();

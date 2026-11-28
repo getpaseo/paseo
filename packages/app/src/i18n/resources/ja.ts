@@ -518,7 +518,20 @@ export const ja: TranslationResources = {
       copyBranchName: "ブランチ名をコピー",
       copied: "コピーしました",
     },
+    linkActions: {
+      openInPaseo: "Paseo で開く",
+      openInDefaultBrowser: "既定のブラウザで開く",
+      copyLink: "リンクをコピー",
+      linkCopiedLabel: "リンク",
+    },
     fileActions: {
+      revealInFiles: "ファイル一覧で表示",
+      openInDefaultApp: "既定のアプリで開く",
+      pathCopiedLabel: "パス",
+      relativePathCopiedLabel: "相対パス",
+      openInDefaultAppFailed: "既定のアプリでファイルを開けませんでした",
+      outsideWorkspace: "このファイルはワークスペースの外にあります",
+      notFoundInFiles: "ファイル一覧にファイルが見つかりません",
       openFile: "ファイルを開く",
       openIn: "{{target}}で開く",
       openToSide: "横に開く",
@@ -551,6 +564,12 @@ export const ja: TranslationResources = {
       },
     },
     fileExplorer: {
+      filter: {
+        placeholder: "ファイルを検索",
+        clear: "検索をクリア",
+        loading: "ファイルを検索中...",
+        empty: "一致するファイルはありません",
+      },
       sort: {
         name: "名前",
         modified: "更新日時",
@@ -762,7 +781,6 @@ export const ja: TranslationResources = {
         agentIdCopiedLabel: "エージェントID",
         terminalIdCopiedLabel: "ターミナルID",
         resumeCommandCopiedLabel: "再開コマンド",
-        filePathCopiedLabel: "ファイルパス",
         resumeIdUnavailable: "再開IDが利用できません",
         resumeCommandUnavailable: "再開コマンドが利用できません",
         reloadingAgent: "エージェントを再読み込み中...",

@@ -1,7 +1,7 @@
 import { ipcMain } from "electron";
 import { z } from "zod";
 
-import { listAvailableEditorTargets, openEditorTarget } from "./registry.js";
+import { listAvailableEditorTargets, openEditorTarget, openInDefaultApp } from "./registry.js";
 import { createEditorTargetRuntime } from "./runtime.js";
 import type { EditorTarget, EditorTargetRuntime } from "./target.js";
 
@@ -21,6 +21,10 @@ const EditorTargetLaunchInputSchema = z.object({
   column: z.number().int().positive().optional(),
 });
 
+const DefaultAppInputSchema = z.object({
+  path: z.string().trim().min(1),
+});
+
 export function registerEditorTargetHandlers(
   options: {
     ipc?: IpcHandlerRegistry;
@@ -38,5 +42,9 @@ export function registerEditorTargetHandlers(
   ipc.handle("paseo:editor:openTarget", async (_event, payload: unknown) => {
     const input = EditorTargetLaunchInputSchema.parse(payload);
     await openEditorTarget(input, runtime, options.targets);
+  });
+  ipc.handle("paseo:editor:openDefaultApp", async (_event, payload: unknown) => {
+    const { path } = DefaultAppInputSchema.parse(payload);
+    await openInDefaultApp(path, runtime);
   });
 }

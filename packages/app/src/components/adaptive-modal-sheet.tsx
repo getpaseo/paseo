@@ -412,6 +412,29 @@ export function SheetHeaderIconButton({
   );
 }
 
+/** The header's overflow trigger. Place it inside the `DropdownMenu` that holds its rows. */
+export function SheetHeaderMenuButton({
+  icon,
+  label,
+  testID,
+}: {
+  icon: LucideIcon;
+  /** The accessible name, also shown as the desktop tooltip. */
+  label: string;
+  testID?: string;
+}) {
+  const compact = useIsCompactFormFactor();
+  return (
+    <ToolbarButton kind="menu" label={label} compact={compact} testID={testID}>
+      <ThemedHeaderGlyph
+        icon={icon}
+        size={iconButtonChromeGlyphSize("large", compact)}
+        uniProps={mutedIconColorMapping}
+      />
+    </ToolbarButton>
+  );
+}
+
 function SheetHeaderBackButton({ back }: { back: SheetHeaderBack }) {
   const { t } = useTranslation();
   return (

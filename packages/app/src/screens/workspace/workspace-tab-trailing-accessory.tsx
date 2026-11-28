@@ -90,12 +90,15 @@ export function MobileTabTrailingAccessory({
   presentationLabel,
   menuEntries,
   openWith,
+  fileMenu,
 }: {
   menuTestIDBase: string;
   presentationLabel: string;
   menuEntries: WorkspaceTabMenuEntry[];
   /** A file tab's "Open with…" row and its page. */
   openWith?: FilePanelOpenWithMenu;
+  /** A file tab's reveal, open, download and copy rows. */
+  fileMenu?: ReactElement | null;
 }): ReactElement {
   const { t } = useTranslation();
   return (
@@ -119,6 +122,9 @@ export function MobileTabTrailingAccessory({
       >
         {menuEntries.map((entry) => {
           if (entry.kind === "separator") return <DropdownMenuSeparator key={entry.key} />;
+          if (entry.kind === "file-actions") {
+            return <Fragment key={entry.key}>{fileMenu}</Fragment>;
+          }
           if (entry.kind === "file-panel-open-with") {
             return <Fragment key={entry.key}>{openWith?.trigger}</Fragment>;
           }

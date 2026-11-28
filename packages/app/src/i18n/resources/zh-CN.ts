@@ -512,7 +512,20 @@ export const zhCN: TranslationResources = {
       copyBranchName: "复制分支名称",
       copied: "已复制",
     },
+    linkActions: {
+      openInPaseo: "在 Paseo 中打开",
+      openInDefaultBrowser: "在默认浏览器中打开",
+      copyLink: "复制链接",
+      linkCopiedLabel: "链接",
+    },
     fileActions: {
+      revealInFiles: "在文件中显示",
+      openInDefaultApp: "用默认应用打开",
+      pathCopiedLabel: "路径",
+      relativePathCopiedLabel: "相对路径",
+      openInDefaultAppFailed: "无法用默认应用打开文件",
+      outsideWorkspace: "此文件位于工作区之外",
+      notFoundInFiles: "在文件中找不到该文件",
       openFile: "打开文件",
       openIn: "在 {{target}} 中打开",
       openToSide: "在侧边打开",
@@ -545,6 +558,12 @@ export const zhCN: TranslationResources = {
       },
     },
     fileExplorer: {
+      filter: {
+        placeholder: "搜索文件",
+        clear: "清除搜索",
+        loading: "正在搜索文件...",
+        empty: "没有匹配的文件",
+      },
       sort: {
         name: "名称",
         modified: "修改时间",
@@ -755,7 +774,6 @@ export const zhCN: TranslationResources = {
         agentIdCopiedLabel: "Agent ID",
         terminalIdCopiedLabel: "Terminal ID",
         resumeCommandCopiedLabel: "恢复命令",
-        filePathCopiedLabel: "File path",
         resumeIdUnavailable: "恢复 ID 不可用",
         resumeCommandUnavailable: "恢复命令不可用",
         reloadingAgent: "正在重新加载 Agent...",

@@ -2,6 +2,7 @@ import type { ExplorerDirectory, ExplorerEntry } from "@/stores/session-store";
 import type { SortOption } from "@/stores/panel-store/state";
 import { DIRECTORY_LISTING_INVALIDATED, type DirectoryListingResult } from "./directory-listings";
 import { filterVisibleExplorerEntries, isHiddenExplorerPath } from "./visibility";
+import { parentExplorerPath } from "@/utils/explorer-paths";
 
 export const MAX_AUTO_EXPANDED_DIRECTORY_DEPTH = 5;
 
@@ -209,13 +210,16 @@ function sortExplorerEntries(entries: ExplorerEntry[], sortOption: SortOption): 
   return sorted;
 }
 
-/** Load and expand the path to a directory selected outside the tree. */
+/**
+ * Load and expand the path to a directory selected outside the tree, the directory included.
+ * Resolves false when one of those listings cannot be loaded.
+ */
 export async function revealExplorerDirectory(input: {
   directoryPath: string;
   requestDirectoryListing: (path: string) => Promise<DirectoryListingResult>;
   expandPaths: (paths: string[]) => void;
   showHiddenFiles: () => void;
-}): Promise<void> {
+}): Promise<boolean> {
   if (isHiddenExplorerPath(input.directoryPath)) input.showHiddenFiles();
   const paths = ["."];
   if (input.directoryPath !== ".") {
@@ -226,9 +230,43 @@ export async function revealExplorerDirectory(input: {
   }
   for (const path of paths) {
     const directory = await input.requestDirectoryListing(path);
-    if (!directory || directory === DIRECTORY_LISTING_INVALIDATED) return;
+    if (!directory || directory === DIRECTORY_LISTING_INVALIDATED) return false;
   }
   input.expandPaths(paths);
+  return true;
+}
+
+/**
+ * Load and expand the ancestors of an entry selected outside the tree. Resolves false when the
+ * entry is not in its parent's listing.
+ */
+export async function revealExplorerEntry({
+  entryPath,
+  requestDirectoryListing,
+  expandPaths,
+  showHiddenFiles,
+}: {
+  entryPath: string;
+  requestDirectoryListing: (path: string) => Promise<DirectoryListingResult>;
+  expandPaths: (paths: string[]) => void;
+  showHiddenFiles: () => void;
+}): Promise<boolean> {
+  if (isHiddenExplorerPath(entryPath)) showHiddenFiles();
+  const parentPath = parentExplorerPath(entryPath);
+  let found = false;
+  await revealExplorerDirectory({
+    directoryPath: parentPath,
+    expandPaths,
+    showHiddenFiles,
+    requestDirectoryListing: async (path) => {
+      const directory = await requestDirectoryListing(path);
+      if (path === parentPath && directory && directory !== DIRECTORY_LISTING_INVALIDATED) {
+        found = directory.entries.some((entry) => entry.path === entryPath);
+      }
+      return directory;
+    },
+  });
+  return found;
 }
 
 /**

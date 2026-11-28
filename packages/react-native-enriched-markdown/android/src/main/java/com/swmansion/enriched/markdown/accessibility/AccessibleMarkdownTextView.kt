@@ -8,6 +8,7 @@ import android.view.MotionEvent
 import androidx.appcompat.widget.AppCompatTextView
 import com.swmansion.enriched.markdown.spans.LinkPillSpan
 import com.swmansion.enriched.markdown.utils.text.span.prepareWidthAwareSpans
+import com.swmansion.enriched.markdown.utils.text.view.LinkLongPressMovementMethod
 
 /** AppCompatTextView with built-in TalkBack support via MarkdownAccessibilityHelper. */
 abstract class AccessibleMarkdownTextView
@@ -51,6 +52,9 @@ abstract class AccessibleMarkdownTextView
     private fun dropTextLayout() {
       breakStrategy = breakStrategy
     }
+
+    override fun performLongClick(): Boolean =
+      (movementMethod as? LinkLongPressMovementMethod)?.performLinkLongClick(this) == true || super.performLongClick()
 
     override fun dispatchHoverEvent(event: MotionEvent): Boolean =
       accessibilityHelper.dispatchHoverEvent(event) || super.dispatchHoverEvent(event)

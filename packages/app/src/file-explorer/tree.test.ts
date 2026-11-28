@@ -6,6 +6,8 @@ import {
   reconcileRestoredExpandedPaths,
   refreshExplorerDirectories,
   restoreExpandedDirectories,
+  revealExplorerDirectory,
+  revealExplorerEntry,
   setExpandedDirectoryPath,
   showHiddenFilesAndRestoreExpandedDirectories,
 } from "./tree";
@@ -267,5 +269,79 @@ describe("refreshExplorerDirectories", () => {
       "a.ts",
       "b.ts",
     ]);
+  });
+});
+
+describe("revealing a file in the tree", () => {
+  function createTree(listings: Record<string, string[]>) {
+    const listed: string[] = [];
+    const expanded: string[] = [];
+    let hiddenFilesShown = false;
+    const host = {
+      requestDirectoryListing: async (path: string) => {
+        listed.push(path);
+        const children = listings[path];
+        if (!children) return null;
+        return {
+          path,
+          entries: children.map((child) => makeDirectoryEntry(child.split("/").pop()!, child)),
+        };
+      },
+      expandPaths: (paths: string[]) => expanded.push(...paths),
+      showHiddenFiles: () => {
+        hiddenFilesShown = true;
+      },
+    };
+    return {
+      listed,
+      expanded,
+      hiddenFilesShown: () => hiddenFilesShown,
+      reveal: (entryPath: string) => revealExplorerEntry({ ...host, entryPath }),
+      revealDirectory: (directoryPath: string) =>
+        revealExplorerDirectory({ ...host, directoryPath }),
+    };
+  }
+
+  it("loads and expands every ancestor of the file", async () => {
+    const tree = createTree({
+      ".": ["src"],
+      src: ["src/data"],
+      "src/data": ["src/data/report.csv"],
+    });
+
+    await expect(tree.reveal("src/data/report.csv")).resolves.toBe(true);
+
+    expect(tree.listed).toEqual([".", "src", "src/data"]);
+    expect(tree.expanded).toEqual([".", "src", "src/data"]);
+    expect(tree.hiddenFilesShown()).toBe(false);
+  });
+
+  it("turns on hidden files to reveal a dotfile", async () => {
+    const tree = createTree({ ".": [".env"] });
+
+    await expect(tree.reveal(".env")).resolves.toBe(true);
+
+    expect(tree.hiddenFilesShown()).toBe(true);
+  });
+
+  it("lists a directory and its ancestors once each, and says whether it is there", async () => {
+    const tree = createTree({
+      ".": ["src"],
+      src: ["src/data"],
+      "src/data": ["src/data/report.csv"],
+    });
+
+    await expect(tree.revealDirectory("src/data")).resolves.toBe(true);
+
+    expect(tree.listed).toEqual([".", "src", "src/data"]);
+    expect(tree.expanded).toEqual([".", "src", "src/data"]);
+    await expect(tree.revealDirectory("src/gone")).resolves.toBe(false);
+  });
+
+  it("reports a file that is no longer there", async () => {
+    const tree = createTree({ ".": ["src"], src: [] });
+
+    await expect(tree.reveal("src/gone.csv")).resolves.toBe(false);
+    await expect(tree.reveal("missing/gone.csv")).resolves.toBe(false);
   });
 });

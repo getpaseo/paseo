@@ -518,7 +518,20 @@ export const ru: TranslationResources = {
       copyBranchName: "Копировать имя ветки",
       copied: "Скопировано",
     },
+    linkActions: {
+      openInPaseo: "Открыть в Paseo",
+      openInDefaultBrowser: "Открыть в браузере по умолчанию",
+      copyLink: "Копировать ссылку",
+      linkCopiedLabel: "Ссылка",
+    },
     fileActions: {
+      revealInFiles: "Показать в «Файлах»",
+      openInDefaultApp: "Открыть в приложении по умолчанию",
+      pathCopiedLabel: "Путь",
+      relativePathCopiedLabel: "Относительный путь",
+      openInDefaultAppFailed: "Не удалось открыть файл в приложении по умолчанию",
+      outsideWorkspace: "Этот файл находится вне рабочего пространства",
+      notFoundInFiles: "Файл не найден в «Файлах»",
       openFile: "Открыть файл",
       openIn: "Открыть в {{target}}",
       openToSide: "Открыть сбоку",
@@ -551,6 +564,12 @@ export const ru: TranslationResources = {
       },
     },
     fileExplorer: {
+      filter: {
+        placeholder: "Поиск файлов",
+        clear: "Очистить поиск",
+        loading: "Поиск файлов...",
+        empty: "Нет подходящих файлов",
+      },
       sort: {
         name: "Имя",
         modified: "Дата изменения",
@@ -763,7 +782,6 @@ export const ru: TranslationResources = {
         agentIdCopiedLabel: "ID агента",
         terminalIdCopiedLabel: "Идентификатор терминала",
         resumeCommandCopiedLabel: "команда продолжения",
-        filePathCopiedLabel: "Путь к файлу",
         resumeIdUnavailable: "ID возобновления недоступен",
         resumeCommandUnavailable: "Команда возобновления недоступна",
         reloadingAgent: "Перезагрузка агента...",
