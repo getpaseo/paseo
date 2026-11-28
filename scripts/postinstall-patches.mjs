@@ -123,6 +123,14 @@ const patchedPackages = [
     patchPrefix: "@opencode-ai+sdk+",
     cwd: "packages/server",
   },
+  // Windows: wait 30 s instead of 5 s for the ConPTY output worker to report ready. A loaded
+  // machine delays that message past 5 s, and the program then exits with code -1 before it
+  // starts. Upstream keeps 5 s through 1.2.0-beta.18; keep while the server uses node-pty.
+  {
+    nodeModulesPath: "packages/server/node_modules/node-pty",
+    patchPrefix: "node-pty+",
+    cwd: "packages/server",
+  },
 ];
 
 const installedPackages = patchedPackages.filter(({ nodeModulesPath }) =>

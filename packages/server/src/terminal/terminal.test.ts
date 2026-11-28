@@ -653,6 +653,32 @@ describe("createTerminal", () => {
     expect(session.getExitInfo()).toEqual(exitInfo);
   });
 
+  it.runIf(isPlatform("win32"))(
+    "starts a ConPTY program when the event loop stalls past five seconds after spawn",
+    async () => {
+      // node-pty reports the ConPTY output worker ready by a worker message, and failed the
+      // spawn with exit code -1 when that message came after 5 s. A loaded runner delays it
+      // that long; blocking the event loop for 6 s makes the delay certain.
+      const child = pty.spawn(process.execPath, ["-e", "process.stdout.write('STARTED')"], {
+        cols: 80,
+        rows: 24,
+        cwd: realpathSync(tmpdir()),
+      });
+      let output = "";
+      child.onData((data) => {
+        output += data;
+      });
+      const exited = new Promise<number>((resolve) => {
+        child.onExit(({ exitCode }) => resolve(exitCode));
+      });
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 6000);
+
+      expect(await exited).toBe(0);
+      expect(output).toContain("STARTED");
+    },
+    30_000,
+  );
+
   it("retains the final lines after output far exceeds the recent-output char cap", async () => {
     // Emit many small chunks whose total length is well past the 16000-char
     // recent-output cap, so the chunk-trimming path runs repeatedly. The final
