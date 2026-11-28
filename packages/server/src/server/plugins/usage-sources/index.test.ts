@@ -1387,6 +1387,7 @@ test("#3589: configured provider discovery strips secret and arbitrary env vars 
           XDG_CONFIG_HOME: "/home/alice/.config",
           XDG_DATA_HOME: "/home/alice/.local/share",
           OPENCODE_CONFIG_DIR: "/opencode-cfg",
+          OPENCODE_DB: "/opencode-data/opencode.db",
           ANTHROPIC_API_KEY: "sk-ant-secret",
           ANTHROPIC_AUTH_TOKEN: "auth-token-secret",
           CLAUDE_CODE_OAUTH_TOKEN: "oauth-token-secret",
@@ -1447,6 +1448,7 @@ test("#3589: configured provider discovery strips secret and arbitrary env vars 
       XDG_CONFIG_HOME: "/home/alice/.config",
       XDG_DATA_HOME: "/home/alice/.local/share",
       OPENCODE_CONFIG_DIR: "/opencode-cfg",
+      OPENCODE_DB: "/opencode-data/opencode.db",
     },
   ]);
 });

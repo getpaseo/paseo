@@ -639,10 +639,10 @@ of its agents run. The daemon dispatches that scope **only** to usage sources wh
 with no `model` and with `env` filtered to this explicit allowlist of non-secret locator variables:
 `HOME`, `USERPROFILE`, `USER`, `APPDATA`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`,
 `CLAUDE_CONFIG_DIR`, `CLAUDE_SECURESTORAGE_CONFIG_DIR`, `CODEX_HOME`, `OPENCODE_CONFIG_DIR`,
-`PI_CODING_AGENT_DIR`, `PI_CONFIG_DIR`, `PI_PROFILE`, `OMP_PROFILE`, `KIMI_CODE_HOME`, and
-`AGENT_CLI_CREDENTIAL_STORE`. Auth tokens, API keys, and arbitrary env entries are stripped. The
-daemon sets the `harness` of each login found this way to the provider's label, so a failed login
-names its provider. A login that global discovery found first keeps its `harness`.
+`OPENCODE_DB`, `PI_CODING_AGENT_DIR`, `PI_CONFIG_DIR`, `PI_PROFILE`, `OMP_PROFILE`,
+`KIMI_CODE_HOME`, and `AGENT_CLI_CREDENTIAL_STORE`. Auth tokens, API keys, and arbitrary env entries
+are stripped. The daemon sets the `harness` of each login found this way to the provider's label, so
+a failed login names its provider. A login that global discovery found first keeps its `harness`.
 
 Inputs name credential stores; never put credentials in inputs or reports. Paseo validates each
 input against your schema before calling `fetch()`. The same key in any scope is the same report;
