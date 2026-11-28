@@ -80,7 +80,7 @@ type LaunchIdentity = ReturnType<typeof resolveDraftLaunchIdentity>;
 function buildCreateAttempt(input: {
   identity: LaunchIdentity;
   text: string;
-  images: UserMessageImageAttachment[];
+  images: NonNullable<CreateAttempt["images"]>;
   attachments: AgentAttachment[];
 }): CreateAttempt {
   return {
