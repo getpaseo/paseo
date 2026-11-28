@@ -20,6 +20,10 @@ describe("buildAbsoluteExplorerPath", () => {
     ).toBe("/workspaces/paseo");
   });
 
+  it.each(["/", "C:\\", "C:/"])("keeps the filesystem root %s absolute", (root) => {
+    expect(buildAbsoluteExplorerPath({ workspaceRoot: root, entryPath: "." })).toBe(root);
+  });
+
   it("trims trailing separators from workspace root before joining", () => {
     expect(
       buildAbsoluteExplorerPath({

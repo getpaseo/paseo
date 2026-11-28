@@ -144,6 +144,15 @@ describe("workspace file actions", () => {
     expect(host.openedInDefaultApp).toEqual(["~/Downloads/report.csv"]);
   });
 
+  it("reveals an entry in a workspace rooted at the filesystem root", async () => {
+    const host = new FakeHost();
+    host.workspaceRoot = "/";
+
+    await createWorkspaceFileCommands(host).revealInFileManager("usr/bin");
+
+    expect(host.revealedInFileManager).toEqual(["/usr/bin"]);
+  });
+
   it("reports a failed desktop action", async () => {
     const host = new FakeHost();
     host.fileManager = {
