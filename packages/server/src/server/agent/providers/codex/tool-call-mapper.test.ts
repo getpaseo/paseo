@@ -150,6 +150,55 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it.each([1, 127])("reports command exit code %i without changing failed status", (exitCode) => {
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem({
+        type: "commandExecution",
+        id: "failed-search",
+        status: "failed",
+        command: "rg missing existing.txt",
+        aggregatedOutput: "diagnostic output",
+        exitCode,
+      }),
+    );
+
+    expect(item).toMatchObject({
+      status: "failed",
+      error: { message: `Command exited with code ${exitCode}` },
+      detail: {
+        type: "shell",
+        command: "rg missing existing.txt",
+        output: "diagnostic output",
+        exitCode,
+      },
+    });
+  });
+
+  it.each([-1, null])("keeps generic failure for an invocation failure: %s", (exitCode) => {
+    expect(
+      mapCodexToolCallFromThreadItem({
+        type: "commandExecution",
+        id: "invocation-failure",
+        status: "failed",
+        command: "pwd",
+        exitCode,
+      }),
+    ).toMatchObject({ status: "failed", error: { message: "Tool call failed" } });
+  });
+
+  it("preserves an explicit command error even with an exit code", () => {
+    expect(
+      mapCodexToolCallFromThreadItem({
+        type: "commandExecution",
+        id: "invocation-failure",
+        status: "failed",
+        command: "pwd",
+        exitCode: 1,
+        error: { message: "Invocation denied", code: "DENIED" },
+      }),
+    ).toMatchObject({ status: "failed", error: { message: "Invocation denied", code: "DENIED" } });
+  });
+
   it("maps running known tool variants with detail for early summaries", () => {
     const readItem = mapCodexToolCallFromThreadItem(
       {
