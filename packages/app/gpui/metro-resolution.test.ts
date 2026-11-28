@@ -170,6 +170,22 @@ const CASES = [
     native: path.join(APP_DIR, "src/constants/presentation.ts"),
     web: path.join(APP_DIR, "src/constants/presentation.ts"),
   },
+  {
+    label: "touch timing",
+    origin: path.join(APP_DIR, "src/composer/input/input.tsx"),
+    specifier: "@/constants/touch-timing",
+    gpui: path.join(APP_DIR, "src/constants/touch-timing.gpui.ts"),
+    native: path.join(APP_DIR, "src/constants/touch-timing.ts"),
+    web: path.join(APP_DIR, "src/constants/touch-timing.ts"),
+  },
+  {
+    label: "press highlight",
+    origin: path.join(APP_DIR, "src/components/sidebar-workspace-list.tsx"),
+    specifier: "@/components/ui/press-highlight",
+    gpui: path.join(APP_DIR, "src/components/ui/press-highlight.gpui.tsx"),
+    native: path.join(APP_DIR, "src/components/ui/press-highlight.native.tsx"),
+    web: path.join(APP_DIR, "src/components/ui/press-highlight.tsx"),
+  },
 ];
 
 afterEach(() => {

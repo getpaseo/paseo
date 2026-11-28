@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { GestureResponderEvent } from "react-native";
 import * as Haptics from "expo-haptics";
-import { isWeb as platformIsWeb } from "@/constants/platform";
+import { supportsTouchHaptics, usesTouchLongPressHold } from "@/constants/touch-timing";
 import { decideLongPressMove } from "@/utils/sidebar-gesture-arbitration";
 import type { useContextMenu } from "@/components/ui/context-menu";
 
@@ -59,7 +59,7 @@ export function useLongPressDragInteraction(input: {
 
   const armTimers = useCallback(() => {
     clearTimers();
-    if (platformIsWeb || !drag) {
+    if (!usesTouchLongPressHold || !drag) {
       return;
     }
 
@@ -86,7 +86,7 @@ export function useLongPressDragInteraction(input: {
       dragArmedRef.current = true;
       dragActivatedRef.current = true;
       didLongPressRef.current = true;
-      void Haptics.selectionAsync().catch(() => {});
+      if (supportsTouchHaptics) void Haptics.selectionAsync().catch(() => {});
       drag();
     }, DRAG_ARM_DELAY_MS);
 
@@ -109,7 +109,7 @@ export function useLongPressDragInteraction(input: {
       if (distance > CONTEXT_MENU_STATIONARY_SLOP_PX) {
         return;
       }
-      void Haptics.selectionAsync().catch(() => {});
+      if (supportsTouchHaptics) void Haptics.selectionAsync().catch(() => {});
       openContextMenuAtStartPoint();
     }, CONTEXT_MENU_DELAY_MS);
   }, [clearTimers, drag, menuController, openContextMenuAtStartPoint]);

@@ -82,8 +82,9 @@ import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { supportsConfigurableComposerSendKeys } from "@/keyboard";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
-import { isNative, isWeb } from "@/constants/platform";
+import { isWeb } from "@/constants/platform";
 import { usesMobileResourceBudget } from "@/constants/resource-budget";
+import { supportsTouchHaptics } from "@/constants/touch-timing";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { RenderProfile } from "@/utils/render-profiler";
@@ -1875,7 +1876,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     });
 
     const handleLongPressSend = useCallback(() => {
-      if (alternateSendAction && isNative) {
+      if (alternateSendAction && supportsTouchHaptics) {
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
       }
       handleAlternateSendAction();

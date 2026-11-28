@@ -16,6 +16,7 @@ import DraggableFlatList, {
 import type { GestureType } from "react-native-gesture-handler";
 import { useUnistyles } from "react-native-unistyles";
 import { useContentDrag } from "@/components/ui/content-drag";
+import { supportsTouchHaptics } from "@/constants/touch-timing";
 import { createDragHold } from "./drag-reorder/drag-hold";
 import { movedItemKey } from "./drag-reorder/native-drop";
 import type {
@@ -52,7 +53,7 @@ export function DraggableListHandle({ testID, style, children }: DraggableListHa
             delayMs: HANDLE_HOLD_MS,
             slopPx: HANDLE_HOLD_SLOP_PX,
             onArm: () => {
-              void Haptics.selectionAsync().catch(() => {});
+              if (supportsTouchHaptics) void Haptics.selectionAsync().catch(() => {});
               drag();
             },
           })
