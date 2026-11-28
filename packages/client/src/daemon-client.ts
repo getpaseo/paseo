@@ -1912,6 +1912,17 @@ export class DaemonClient {
         code: "unsupported_capability",
       });
   }
+  async manageHostInstructions(
+    command: import("@getpaseo/protocol/messages").HostInstructionsCommand,
+  ) {
+    if (!this.lastServerInfoMessage?.features?.hostInstructions) {
+      throw new Error("Update the daemon to use host instructions");
+    }
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "host.instructions.manage.request", command },
+      responseType: "host.instructions.manage.response",
+    });
+  }
   async listHosts(): Promise<HostDirectory> {
     this.requireConnectedHosts();
     return (

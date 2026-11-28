@@ -3076,6 +3076,7 @@ export const ptBR: TranslationResources = {
         removeErrorMessage: "Não foi possível remover a conexão",
         timeout: "Timeout",
       },
+      instructions: en.settings.host.instructions,
       pairDevices: {
         rowTitle: "Parear um dispositivo",
       },

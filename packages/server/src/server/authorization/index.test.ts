@@ -22,6 +22,9 @@ function outboundOperationTypes(): SessionOutboundMessage["type"][] {
 }
 
 function inboundMessage(type: SessionInboundMessage["type"]): SessionInboundMessage {
+  if (type === "host.instructions.manage.request") {
+    return { type, requestId: "test", command: { action: "list" } };
+  }
   return { type } as SessionInboundMessage;
 }
 
@@ -44,6 +47,55 @@ describe("SessionAuthorization", () => {
     expect(
       outboundOperationTypes().every((type) => authorization.allowsOutbound(outboundMessage(type))),
     ).toBe(true);
+  });
+
+  test("host instruction management cannot delegate access beyond the issuer", () => {
+    const admin = new SessionAuthorization(["access.manage"]);
+    const writer = new SessionAuthorization(["access.manage", "workspace.write"]);
+    const operator = new SessionAuthorization([
+      "access.manage",
+      "workspace.write",
+      "workspace.read",
+    ]);
+    const hub = new SessionAuthorization(["access.manage", "hub.execute"]);
+    const can = (
+      session: SessionAuthorization,
+      command: Extract<
+        SessionInboundMessage,
+        {
+          type: "host.instructions.manage.request";
+        }
+      >["command"],
+    ) =>
+      session.allowsInbound({
+        type: "host.instructions.manage.request",
+        requestId: "test",
+        command,
+      });
+
+    const grant = { action: "grant", sourceId: "sender", agentId: "agent", policy: "ask" } as const;
+    expect(can(admin, grant)).toBe(false);
+    expect(can(writer, grant)).toBe(true);
+    const recover = {
+      action: "set_policy",
+      sourceId: "sender",
+      policy: "unattended",
+      workspaceOverrides: [],
+      recoverRegistration: true,
+    } satisfies Parameters<typeof can>[1];
+    expect(can(admin, recover)).toBe(false);
+    expect(can(writer, recover)).toBe(false);
+    expect(can(operator, recover)).toBe(true);
+    expect(can(hub, recover)).toBe(true);
+    expect(can(new SessionAuthorization(["workspace.write", "workspace.read"]), recover)).toBe(
+      false,
+    );
+
+    const decision = { action: "decide", sourceId: "sender", id: "instruction" } as const;
+    expect(can(admin, { ...decision, approve: true })).toBe(false);
+    expect(can(admin, { ...decision, approve: false })).toBe(true);
+    expect(can(admin, { action: "list" })).toBe(true);
+    expect(can(admin, { action: "revoke", id: "grant" })).toBe(true);
   });
 
   test("semantic permissions authorize operations instead of RPC namespaces", () => {

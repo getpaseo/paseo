@@ -1,3 +1,4 @@
+import { HostInstructionsRuntime } from "./host-instructions/runtime.js";
 import { unarchiveWorkspaceAgents } from "./workspace-archive-service.js";
 import { createRestartRecovery } from "./agent/restart-recovery/index.js";
 import { sendPromptToAgent, unarchiveAgentState } from "./agent/agent-prompt.js";
@@ -527,6 +528,18 @@ function mountWebUi(app: express.Application, config: PaseoDaemonConfig, logger:
 
 function resolveExpressTrustProxySetting(config: PaseoDaemonConfig): true | string[] {
   return config.trustedProxies ?? ["loopback"];
+}
+
+function resolveRelayRuntimeConfig(config: PaseoDaemonConfig) {
+  const endpoint = config.relayEndpoint ?? "relay.paseo.sh:443";
+  const useTls = config.relayUseTls ?? endpoint === "relay.paseo.sh:443";
+  return {
+    enabled: config.relayEnabled ?? true,
+    endpoint,
+    publicEndpoint: config.relayPublicEndpoint ?? endpoint,
+    useTls,
+    publicUseTls: config.relayPublicUseTls ?? useTls,
+  };
 }
 
 function createInitialRelayConfig(config: ResolvedDaemonSettings): MutableDaemonConfig["relay"] {
@@ -1576,6 +1589,20 @@ export async function createPaseoDaemon(
     idleRuntimeCleanup,
   );
 
+  const relayConfig = resolveRelayRuntimeConfig(config);
+  const hostInstructions = await HostInstructionsRuntime.open({
+    paseoHome: config.paseoHome,
+    serverId,
+    logger,
+    agentManager,
+    agentStorage,
+    workspaceRegistry,
+    relay: () => ({
+      ...relayConfig,
+      enabled: daemonConfigStore.get().relay?.enabled ?? relayConfig.enabled,
+    }),
+  });
+
   const createAgentToolHostDependencies = (
     runtime: PaseoToolRuntimeContext,
   ): PaseoToolHostDependencies => ({
@@ -1586,6 +1613,7 @@ export async function createPaseoDaemon(
       return wsServer.agentMessages;
     },
     serverId,
+    hostInstructions,
     hosts: () => {
       if (!wsServer) throw new Error("Daemon is not accepting host operations");
       return wsServer.toolHosts();
@@ -1857,11 +1885,6 @@ export async function createPaseoDaemon(
             daemonConfigStore.onFieldChange("appendSystemPrompt", (value) => {
               agentManager.setAppendSystemPrompt(typeof value === "string" ? value : "");
             });
-            const relayEnabled = config.relayEnabled ?? true;
-            const relayEndpoint = config.relayEndpoint ?? "relay.paseo.sh:443";
-            const relayPublicEndpoint = config.relayPublicEndpoint ?? relayEndpoint;
-            const relayUseTls = config.relayUseTls ?? relayEndpoint === "relay.paseo.sh:443";
-            const relayPublicUseTls = config.relayPublicUseTls ?? relayUseTls;
             if (boundListenTarget.type === "tcp") {
               logger.info(
                 {
@@ -1902,6 +1925,7 @@ export async function createPaseoDaemon(
                 daemonStatusRpc: dependencies.serverFeatureOverrides?.daemonStatusRpc,
                 relayConfig: dependencies.serverFeatureOverrides?.relayConfig,
                 startPaused: true,
+                hostInstructions,
               },
               workspaceAutoName,
               workspaceRuntimeStore,
@@ -1945,11 +1969,8 @@ export async function createPaseoDaemon(
                 desktopManaged: config.desktopManaged === true,
                 getRelayConfig: () => ({
                   ...(relayRuntime?.getConfig() ?? {
-                    enabled: daemonConfigStore.get().relay?.enabled ?? relayEnabled,
-                    endpoint: relayEndpoint,
-                    publicEndpoint: relayPublicEndpoint,
-                    useTls: relayUseTls,
-                    publicUseTls: relayPublicUseTls,
+                    ...relayConfig,
+                    enabled: daemonConfigStore.get().relay?.enabled ?? relayConfig.enabled,
                   }),
                   requireProtectedSecurity:
                     daemonConfigStore.get().relay?.requireProtectedSecurity === true,
@@ -1975,13 +1996,7 @@ export async function createPaseoDaemon(
             wsServer.beginAcceptingConnections();
             const relaySecurityLogger = logger.child({ module: "relay-security" });
             relayRuntime = createRelayRuntime({
-              config: {
-                enabled: relayEnabled,
-                endpoint: relayEndpoint,
-                publicEndpoint: relayPublicEndpoint,
-                useTls: relayUseTls,
-                publicUseTls: relayPublicUseTls,
-              },
+              config: relayConfig,
               logger,
               attachSocket: (ws, metadata) =>
                 admitSecuredRelaySocket(
@@ -2007,6 +2022,7 @@ export async function createPaseoDaemon(
               relayRuntime?.setEnabled(value === true);
             });
             await hubRelationships.start();
+            hostInstructions.start(wsServer.agentMessages);
           };
 
           logAndResolve().then(resolve, reject);
@@ -2031,6 +2047,7 @@ export async function createPaseoDaemon(
     } catch (error) {
       localCredential = null;
       await deleteLocalCredential(config.paseoHome);
+      await hostInstructions.close().catch(() => undefined);
       unsubscribePluginProviders();
       await pluginRuntime.stopAllPlugins().catch(() => undefined);
       await serviceProxy.stopStandalone().catch(() => undefined);
@@ -2046,6 +2063,13 @@ export async function createPaseoDaemon(
 
   const stop = async (options?: { keepTerminals?: boolean }) => {
     const keepTerminals = options?.keepTerminals === true;
+    // Quiesce instruction ingress and scheduling before freezing or closing agent sessions.
+    wsServer?.prepareForShutdown();
+    const instructionShutdown = hostInstructions
+      .close()
+      .catch((error: unknown) =>
+        logger.warn({ err: error }, "Failed to shut down host instructions"),
+      );
     let terminalShutdownError: unknown = null;
     localCredential = null;
     await deleteLocalCredential(config.paseoHome);
@@ -2059,8 +2083,7 @@ export async function createPaseoDaemon(
     scriptHealthMonitor.stop();
     unsubscribeIdleRuntimeCleanup();
     await idleRuntimeCleanup.close();
-    // Freeze both ingress and registration before taking the agent closure snapshot.
-    wsServer?.prepareForShutdown();
+    await instructionShutdown;
     await changeRequestWatches.close();
     await finishSubscriptions.close();
     await wsServer?.agentMessages.close();

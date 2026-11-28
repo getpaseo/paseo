@@ -10,6 +10,10 @@ import type {
 const agentIdSchema = z.string().min(1);
 const sourceSchema = z.discriminatedUnion("kind", [
   z.object({
+    kind: z.literal("host-instruction"),
+    serverId: z.string().min(1),
+  }),
+  z.object({
     kind: z.literal("change-request-update"),
     url: z.url({ protocol: /^https?$/ }),
   }),
@@ -73,6 +77,9 @@ function unescapeXml(value: string): string | null {
 
 export function formatAgentMessage(message: AgentMessage): string {
   const { source } = message;
+  if (source?.kind === "host-instruction") {
+    return `<paseo-system version="1" kind="host-instruction" source-server-id="${escapeXml(source.serverId)}" message-id="${escapeXml(message.id)}">\n${escapeXml(message.text)}\n</paseo-system>`;
+  }
   if (source?.kind === "change-request-update") {
     return `<paseo-system version="1" kind="change-request-update" source-url="${escapeXml(source.url)}" message-id="${escapeXml(message.id)}">\n${escapeXml(message.text)}\n</paseo-system>`;
   }
@@ -211,6 +218,16 @@ function projectAgentMessage(item: AgentTimelineItem): AgentTimelineItem | null 
   const { source } = message;
   if (!source) {
     return { ...item, text: message.text, clientMessageId: message.id };
+  }
+  if (source.kind === "host-instruction") {
+    return {
+      type: "tool_call",
+      callId: `paseo-host-instruction:${message.id}`,
+      name: "host_instruction",
+      status: "completed",
+      error: null,
+      detail: { type: "plain_text", text: message.text, icon: "bot" },
+    };
   }
   if (source.kind === "change-request-update") {
     return {

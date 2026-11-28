@@ -1,4 +1,5 @@
 import type { SessionMessageInfo } from "@opencode/client";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -14,6 +15,8 @@ import { PaseoToolInputError } from "../../tools/types.js";
 import { AgentManager } from "../../agent-manager.js";
 import { AgentStorage } from "../../agent-storage.js";
 import { ProviderSnapshotManager } from "../../provider-snapshot-manager.js";
+import { HostInstructionsRuntime } from "../../../host-instructions/runtime.js";
+import { FileBackedWorkspaceRegistry } from "../../../workspace-registry.js";
 import { createTestAgentClients } from "../../../test-utils/fake-agent-client.js";
 import { createTestAgentMessages } from "../../../test-utils/agent-messages.js";
 import { createPaseoAgentToolManifest, createPaseoToolCatalog } from "../../tools/paseo-tools.js";
@@ -241,16 +244,38 @@ describe("OpenCodeBridge", () => {
     const agentManager = new AgentManager({ clients, registry: agentStorage, logger });
     const providerSnapshotManager = new ProviderSnapshotManager({ logger, extraClients: clients });
     const agentMessages = createTestAgentMessages({ agentManager, agentStorage, logger });
+    const hostInstructions = await HostInstructionsRuntime.open({
+      paseoHome,
+      serverId: "manifest-receiver",
+      logger,
+      agentManager,
+      agentStorage,
+      workspaceRegistry: new FileBackedWorkspaceRegistry(
+        path.join(paseoHome, "workspaces.json"),
+        logger,
+      ),
+      relay: () => ({
+        enabled: false,
+        endpoint: "",
+        publicEndpoint: "",
+        useTls: false,
+        publicUseTls: false,
+      }),
+    });
+    const replyInput = { id: randomUUID(), sourceId: "sender", text: "Done" };
+    const reply = vi.spyOn(hostInstructions, "reply").mockResolvedValue({ id: replyInput.id });
     const dependencies = {
       agentManager,
       agentStorage,
       providerSnapshotManager,
       logger,
       agentMessages: () => agentMessages,
+      hostInstructions,
     };
     const bridge = new OpenCodeBridge({ paseoHome, logger });
     await bridge.start();
-    bridge.setManifestCatalog(createPaseoAgentToolManifest(dependencies));
+    const agentManifest = createPaseoAgentToolManifest(dependencies);
+    bridge.setManifestCatalog(agentManifest);
     try {
       const parent = await agentManager.createAgent(
         { provider: "codex", cwd: paseoHome },
@@ -279,6 +304,13 @@ describe("OpenCodeBridge", () => {
       const createDefinition = definitions.get("create_agent")!;
       const sendDefinition = definitions.get("send_agent_prompt")!;
       const topLevelCatalog = createPaseoToolCatalog(dependencies);
+      expect(definitions.has("reply_host_instruction")).toBe(true);
+      expect(topLevelCatalog.getTool("reply_host_instruction")).toBeUndefined();
+      await expect(
+        agentManifest.tools.get("reply_host_instruction")!.handler(replyInput, {}),
+      ).rejects.toThrow("requires an agent-scoped session");
+      expect(reply).not.toHaveBeenCalled();
+
       for (const name of ["create_agent", "send_agent_prompt"]) {
         expect(serializePaseoToolInputParameters(topLevelCatalog.getTool(name)!)).toMatchObject({
           properties: { notifyOnFinish: { default: false } },
@@ -356,6 +388,18 @@ describe("OpenCodeBridge", () => {
             z.record(z.string(), z.unknown()).parse(createDefinition.inputSchema.properties),
           ),
         );
+        await expect(
+          hooks.tool.paseo_reply_host_instruction.execute(replyInput, {
+            sessionID: "bound",
+            ask: async () => undefined,
+          }),
+        ).resolves.toMatchObject({ output: expect.stringContaining(replyInput.id) });
+        expect(reply).toHaveBeenCalledExactlyOnceWith(
+          parent.id,
+          replyInput.sourceId,
+          replyInput.id,
+          replyInput.text,
+        );
         const sendInput = { agentId: child.id, prompt: "Hello again", notifyOnFinish: false };
         expect(ajv.compile(sendDefinition.inputSchema)(sendInput)).toBe(true);
         await expect(
@@ -369,6 +413,7 @@ describe("OpenCodeBridge", () => {
         await dispose();
       }
     } finally {
+      await hostInstructions.close();
       await agentMessages.close();
       await bridge.close();
       await Promise.all(

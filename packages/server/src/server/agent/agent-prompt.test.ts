@@ -14,7 +14,7 @@ import { join } from "node:path";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
-import { waitForAgentRunStartWithTimeout } from "./agent-prompt.js";
+import { startAgentRun, waitForAgentRunStartWithTimeout } from "./agent-prompt.js";
 import { ForegroundPromptStart } from "./agent-run-state.js";
 import type {
   AgentClient,
@@ -53,6 +53,7 @@ class SlowStartAgentSession implements AgentSession {
   readonly provider = "codex" as const;
   readonly capabilities = RUN_START_TEST_CAPABILITIES;
   readonly id = randomUUID();
+  cancelTurn = false;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private releaseStartTurn!: () => void;
   private readonly released = new Promise<void>((resolve) => {
@@ -80,7 +81,16 @@ class SlowStartAgentSession implements AgentSession {
     const turnId = "turn-1";
     setTimeout(() => {
       this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
-      this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      if (this.cancelTurn) {
+        this.pushEvent({
+          type: "turn_canceled",
+          provider: this.provider,
+          turnId,
+          reason: "interrupted",
+        });
+      } else {
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      }
     }, 0);
     return { turnId };
   }
@@ -203,6 +213,27 @@ async function createRunStartScenario(startDelayMs: number | null): Promise<{
     },
   };
 }
+
+test("a dispatched prompt reports its canceled turn even after the agent goes idle", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-prompt-canceled-"));
+  const client = new SlowStartAgentClient(0);
+  const logger = createTestLogger();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    client.sessions[0]!.cancelTurn = true;
+    const result = await startAgentRun(manager, agent.id, "run and cancel", logger);
+    if (result.disposition !== "turn_started") throw new Error("Expected a started turn");
+    await result.started;
+    await expect(result.finished).resolves.toBe("cancelled");
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+  } finally {
+    await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
 
 test("waiting for a run start outlasts the slowest provider startup budget", async () => {
   // A provider is still allowed to be starting here, so the outer wait must not abort it.

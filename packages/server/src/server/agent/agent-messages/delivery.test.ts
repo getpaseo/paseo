@@ -280,7 +280,9 @@ test("batches retain each sender's attachment context and image order", async ()
       (prompt as Exclude<AgentPromptInput, string>)
         .flatMap((block) => (block.type === "text" ? [block.text] : []))
         .join("\n"),
-    )?.map((message) => message.source?.agentId),
+    )?.map((message) =>
+      message.source?.kind === "agent-message" ? message.source.agentId : undefined,
+    ),
   ).toEqual(["one", "two"]);
 });
 

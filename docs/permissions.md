@@ -50,7 +50,9 @@ type Grant = {
 };
 ```
 
-A delegating principal can grant only authority it already possesses. A session may attenuate its principal's grants but cannot widen them.
+A delegating principal can grant only authority it already possesses. A session may attenuate its principal's grants but cannot widen them. Creating a conversation
+instruction grant or approving a prompt requires the same authority as sending a prompt. Setting
+or recovering a host policy also requires conversation discovery authority.
 
 Workspace-scoped grants require every resource-bearing operation and outbound observation to enforce the same workspace boundary. File preview currently accepts any daemon-readable regular file, so it must gain resource enforcement before workspace-specific access ships.
 

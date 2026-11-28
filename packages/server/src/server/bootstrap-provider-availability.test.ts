@@ -3,9 +3,13 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import pino from "pino";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { withTimeout } from "../utils/promise-timeout.js";
 import { ensureAgentLoaded } from "./agent/agent-loading.js";
 import type { PaseoDaemonConfig } from "./bootstrap.js";
+import { HostInstructionInbox } from "./host-instructions/inbox.js";
+import { PluginService } from "./plugins/index.js";
+import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 
 const originalEnv = {
   PATH: process.env.PATH,
@@ -23,6 +27,43 @@ describe("bootstrap provider availability", () => {
         .splice(0)
         .map((root) => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })),
     );
+  });
+
+  test("starts instruction scheduling after plugin providers are ready", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const startingPlugins = Promise.withResolvers<void>();
+    const releasePlugins = Promise.withResolvers<void>();
+    const startPlugins = PluginService.prototype.start;
+    const start = vi
+      .spyOn(PluginService.prototype, "start")
+      .mockImplementationOnce(async function (this: PluginService) {
+        startingPlugins.resolve();
+        await releasePlugins.promise;
+        await startPlugins.call(this);
+      });
+    const scan = vi.spyOn(HostInstructionInbox.prototype, "list");
+    const startup = createTestPaseoDaemon({ relayEnabled: false });
+    try {
+      await withTimeout(
+        Promise.race([startingPlugins.promise, startup]),
+        5000,
+        "Expected the daemon to begin plugin startup",
+      );
+      await vi.advanceTimersByTimeAsync(6000);
+      expect(scan).not.toHaveBeenCalled();
+
+      releasePlugins.resolve();
+      await startup;
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(scan).toHaveBeenCalledOnce();
+    } finally {
+      releasePlugins.resolve();
+      const daemon = await startup.catch(() => null);
+      await daemon?.close();
+      scan.mockRestore();
+      start.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   test("loads a persisted Codex record without spawning a missing Codex binary", async () => {

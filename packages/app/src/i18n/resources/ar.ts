@@ -3063,6 +3063,7 @@ export const ar: TranslationResources = {
         removeErrorMessage: "غير قادر على إزالة الاتصال",
         timeout: "نفذ الوقت",
       },
+      instructions: en.settings.host.instructions,
       pairDevices: {
         rowTitle: "إقران جهاز",
       },

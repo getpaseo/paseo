@@ -3095,6 +3095,7 @@ export const es: TranslationResources = {
         removeErrorMessage: "No se puede eliminar la conexión",
         timeout: "Se acabó el tiempo",
       },
+      instructions: en.settings.host.instructions,
       pairDevices: {
         rowTitle: "Emparejar un dispositivo",
       },

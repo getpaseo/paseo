@@ -1,3 +1,6 @@
+import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { createHostClient } from "@getpaseo/client/node";
 import { hashSync } from "bcryptjs";
@@ -12,7 +15,7 @@ import {
   DaemonClient as HostClient,
 } from "@getpaseo/client/internal/daemon-client";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { WebSocket } from "ws";
@@ -23,9 +26,17 @@ import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { Buffer } from "node:buffer";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 
+import { AgentManager } from "../agent/agent-manager.js";
+import {
+  parseAgentMessage,
+  parseAgentMessages,
+  projectAgentMessages,
+} from "../agent/agent-messages/index.js";
+import { HostInstructionInbox } from "../host-instructions/inbox.js";
+import * as privateFiles from "../private-files.js";
 import { generateLocalPairingOffer } from "../pairing-offer.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { FILE_EXPLORER_STREAM_CHUNK_BYTES } from "../file-explorer/service.js";
@@ -49,6 +60,10 @@ import { WSOutboundMessageSchema } from "@getpaseo/protocol/messages";
 
 const nodeMajor = Number((process.versions.node ?? "0").split(".")[0] ?? "0");
 const shouldRunRelayE2e = process.env.FORCE_RELAY_E2E === "1" || nodeMajor < 25;
+
+function lastHumanPrompt(manager: AgentManager, agentId: string) {
+  return manager.getAgent(agentId)?.lastUserMessageAt ?? null;
+}
 
 function createCapturingLogger() {
   const lines: string[] = [];
@@ -398,6 +413,847 @@ async function waitForCapturedLog(
     process.kill("SIGTERM");
     await withTimeout(exited, 10000, "Local relay did not stop");
   };
+
+  test(
+    "connected hosts deliver a workspace override instructions according to the receiving policy",
+    { timeout: 90000 },
+    async () => {
+      const cleanup: (() => Promise<unknown>)[] = [];
+      const sent: string[] = [];
+      try {
+        await startRelay({ useLocalRelay: true });
+        const source = await createTestPaseoDaemon();
+        cleanup.push(() => source.close());
+        const destination = await createTestPaseoDaemon({
+          relayEnabled: true,
+          relayEndpoint: `127.0.0.1:${relayPort}`,
+          relayUseTls: false,
+          relayPublicUseTls: false,
+          agentClients: createTestAgentClients({
+            onStartTurn: (prompt) => {
+              sent.push(
+                typeof prompt === "string"
+                  ? prompt
+                  : prompt
+                      .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                      .join("\n"),
+              );
+            },
+          }),
+        });
+        cleanup.push(() => destination.close());
+        const sourceClient = createHostClient(`127.0.0.1:${source.port}`, {
+          clientId: crypto.randomUUID(),
+        });
+        const destinationClient = createHostClient(`127.0.0.1:${destination.port}`, {
+          clientId: crypto.randomUUID(),
+        });
+        cleanup.push(
+          () => sourceClient.close(),
+          () => destinationClient.close(),
+        );
+        await Promise.all([sourceClient.connect(), destinationClient.connect()]);
+        const sourceId = sourceClient.getLastServerInfoMessage()!.serverId;
+        const serverId = destinationClient.getLastServerInfoMessage()!.serverId;
+        const paseo = createPaseoApi(destinationClient);
+        cleanup.push(() => paseo.dispose());
+        const workspace = await paseo.workspaces.create({
+          source: { kind: "directory", path: destination.staticDir },
+        });
+        const agent = await workspace.agents.create({
+          config: { provider: "claude/claude-test" },
+          title: "Local checks",
+        });
+        await workspace.agents.create({
+          config: { provider: "claude/claude-test" },
+          background: true,
+        });
+        const hiddenDirectory = await mkdtemp(path.join(destination.staticDir, "background-"));
+        const hiddenWorkspace = await paseo.workspaces.create({
+          source: { kind: "directory", path: hiddenDirectory },
+          background: true,
+        });
+        await hiddenWorkspace.agents.create({
+          config: { provider: "claude/claude-test" },
+          background: false,
+        });
+        const lastPrompt = lastHumanPrompt(destination.daemon.agentManager, agent.id);
+        const accessManager = createHostClient(`127.0.0.1:${destination.port}`, {
+          clientId: crypto.randomUUID(),
+          sessionPermissions: ["access.manage"],
+        });
+        cleanup.push(() => accessManager.close());
+        await accessManager.connect();
+        await expect(
+          accessManager.manageHostInstructions({
+            action: "set_policy",
+            sourceId,
+            policy: "unattended",
+            workspaceOverrides: [],
+          }),
+        ).rejects.toMatchObject({ code: "access_denied" });
+        await expect(
+          accessManager.manageHostInstructions({
+            action: "grant",
+            sourceId,
+            agentId: agent.id,
+            policy: "ask",
+          }),
+        ).rejects.toMatchObject({ code: "access_denied" });
+        const { registration } = await destinationClient.manageHostInstructions({
+          action: "set_policy",
+          sourceId,
+          policy: "unattended",
+          workspaceOverrides: [{ workspaceId: workspace.id, policy: "ask" }],
+        });
+        if (!registration) throw new Error("Expected instruction registration");
+        // Simulate losing the first response by reading back only the saved policy.
+        const saved = (await destinationClient.manageHostInstructions({ action: "list" }))
+          .hostPolicies?.[0];
+        expect(saved?.id).toBe(registration.id);
+        const registrationStatus = {
+          action: "has_registration" as const,
+          destinationId: serverId,
+          id: registration.id,
+        };
+        expect(
+          (await sourceClient.manageHostInstructions(registrationStatus)).hasRegistration,
+        ).toBe(false);
+        const recovered = await destinationClient.manageHostInstructions({
+          action: "set_policy",
+          sourceId,
+          policy: "unattended",
+          workspaceOverrides: [{ workspaceId: workspace.id, policy: "ask" }],
+          recoverRegistration: true,
+        });
+        expect(recovered.registration).toEqual(registration);
+        if (!recovered.registration) throw new Error("Expected recovered registration");
+        await sourceClient.manageHostInstructions({
+          action: "register",
+          destinationId: serverId,
+          offer: recovered.registration.offer,
+          token: recovered.registration.token,
+        });
+        expect(
+          (await sourceClient.manageHostInstructions(registrationStatus)).hasRegistration,
+        ).toBe(true);
+        const mcp = new McpClient({ name: "instruction-source", version: "1" });
+        cleanup.push(() => mcp.close());
+        await mcp.connect(
+          new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${source.port}/mcp/agents`)),
+        );
+        await expect
+          .poll(
+            async () => {
+              const list = await mcp.callTool({ name: "list_instruction_targets", arguments: {} });
+              return list.structuredContent?.targets;
+            },
+            { timeout: 15000 },
+          )
+          .toEqual([
+            expect.objectContaining({
+              destinationId: serverId,
+              agentId: agent.id,
+              workspaceId: workspace.id,
+            }),
+          ]);
+        const result = await mcp.callTool({
+          name: "send_host_instruction",
+          arguments: { serverId, agentId: agent.id, prompt: "Run the local check" },
+        });
+        const id = result.structuredContent?.id;
+        if (typeof id !== "string") throw new Error("No submission receipt");
+        await expect
+          .poll(
+            async () =>
+              (await destinationClient.manageHostInstructions({ action: "list" })).requests,
+            { timeout: 20000 },
+          )
+          .toEqual([
+            expect.objectContaining({
+              id,
+              sourceId,
+              agentId: agent.id,
+              prompt: "Run the local check",
+            }),
+          ]);
+        const accessOnly = await accessManager.manageHostInstructions({ action: "list" });
+        expect(accessOnly.hostPolicies).toEqual([expect.objectContaining({ sourceId })]);
+        expect(accessOnly).not.toHaveProperty("requests");
+        expect(sent).toEqual([]);
+        const { agentManager } = destination.daemon;
+        const permissionId = "permission-during-admission";
+        const reload = agentManager.reloadStalePluginSession.bind(agentManager);
+        const permissionAdded = Promise.withResolvers<void>();
+        const intercept = vi
+          .spyOn(agentManager, "reloadStalePluginSession")
+          .mockImplementationOnce(async (agentId) => {
+            await reload(agentId);
+            agentManager.getAgent(agentId)!.pendingPermissions.set(permissionId, {
+              id: permissionId,
+              provider: "claude",
+              name: "Permission arriving during instruction dispatch",
+              kind: "tool",
+            });
+            permissionAdded.resolve();
+          });
+        try {
+          await destinationClient.manageHostInstructions({
+            action: "decide",
+            sourceId,
+            id,
+            approve: true,
+          });
+          await withTimeout(
+            permissionAdded.promise,
+            10000,
+            "Expected a permission before admission",
+          );
+          const inboxFile = path.join(destination.paseoHome, "host-instructions", "inbox.json");
+          await expect
+            .poll(async () => JSON.parse(await readFile(inboxFile, "utf8")).requests)
+            .toEqual([
+              expect.objectContaining({
+                instruction: expect.objectContaining({ id }),
+                state: "queued",
+              }),
+            ]);
+          expect(agentManager.getAgent(agent.id)!.pendingPermissions.has(permissionId)).toBe(true);
+          expect(sent).toEqual([]);
+        } finally {
+          intercept.mockRestore();
+          agentManager.getAgent(agent.id)!.pendingPermissions.delete(permissionId);
+        }
+        await expect.poll(() => sent.length, { timeout: 15000 }).toBe(1);
+        expect(parseAgentMessage(sent[0])).toMatchObject({
+          source: { kind: "host-instruction", serverId: sourceId },
+          text: expect.stringContaining("Run the local check"),
+        });
+        await expect
+          .poll(
+            async () => {
+              const status = await mcp.callTool({
+                name: "get_host_instruction_status",
+                arguments: { id },
+              });
+              return status.structuredContent?.state;
+            },
+            { timeout: 15000 },
+          )
+          .toBe("completed");
+        const replay = projectAgentMessages({ type: "user_message", text: sent[0] });
+        expect(replay).toEqual([
+          expect.objectContaining({ type: "tool_call", name: "host_instruction" }),
+        ]);
+        const timeline = await destinationClient.fetchAgentTimeline(agent.id, {
+          projection: "canonical",
+          limit: 0,
+        });
+        expect(timeline.entries.map(({ item }) => item)).toEqual(expect.arrayContaining(replay));
+        expect(lastHumanPrompt(destination.daemon.agentManager, agent.id)).toBe(lastPrompt);
+        const change = await destinationClient.manageHostInstructions({
+          action: "set_policy",
+          sourceId,
+          policy: "unattended",
+          workspaceOverrides: [{ workspaceId: workspace.id, policy: "blocked" }],
+        });
+        expect(change.registration).toBeUndefined();
+        const list = await mcp.callTool({ name: "list_instruction_targets", arguments: {} });
+        expect(list.structuredContent?.targets).toEqual([]);
+        const blocked = await mcp.callTool({
+          name: "send_host_instruction",
+          arguments: {
+            serverId,
+            agentId: agent.id,
+            workspaceId: workspace.id,
+            prompt: "Blocked workspace",
+          },
+        });
+        await expect
+          .poll(
+            async () => {
+              const status = await mcp.callTool({
+                name: "get_host_instruction_status",
+                arguments: { id: blocked.structuredContent?.id },
+              });
+              return status.structuredContent?.state;
+            },
+            { timeout: 15000 },
+          )
+          .toBe("failed");
+        expect(sent).toHaveLength(1);
+
+        const ordinary = createHostClient(registration.offer, {
+          clientId: crypto.randomUUID(),
+          connectTimeoutMs: 3000,
+          reconnect: { enabled: false },
+        });
+        cleanup.push(() => ordinary.close());
+        await expect(ordinary.connect()).rejects.toThrow();
+        await destinationClient.manageHostInstructions({ action: "revoke", id: registration.id });
+        const revoked = await mcp.callTool({
+          name: "send_host_instruction",
+          arguments: {
+            serverId,
+            agentId: agent.id,
+            workspaceId: workspace.id,
+            prompt: "Try again after revocation",
+          },
+        });
+        const revokedId = revoked.structuredContent?.id;
+        if (typeof revokedId !== "string")
+          throw new Error("No submission receipt after revocation");
+        await expect
+          .poll(
+            async () => {
+              const status = await mcp.callTool({
+                name: "get_host_instruction_status",
+                arguments: { id: revokedId },
+              });
+              return status.structuredContent?.state;
+            },
+            { timeout: 15000 },
+          )
+          .toBe("revoked");
+        expect(sent).toHaveLength(1);
+
+        const narrow = await destinationClient.manageHostInstructions({
+          action: "grant",
+          sourceId,
+          agentId: agent.id,
+          policy: "ask",
+        });
+        const replacement = await destinationClient.manageHostInstructions({
+          action: "set_policy",
+          sourceId,
+          policy: "ask",
+          workspaceOverrides: [],
+        });
+        if (!narrow.registration || !replacement.registration)
+          throw new Error("Expected both grants");
+        await sourceClient.manageHostInstructions({
+          action: "register",
+          destinationId: serverId,
+          agentId: agent.id,
+          workspaceId: workspace.id,
+          offer: narrow.registration.offer,
+          token: narrow.registration.token,
+        });
+        await sourceClient.manageHostInstructions({
+          action: "register",
+          destinationId: serverId,
+          offer: replacement.registration.offer,
+          token: replacement.registration.token,
+        });
+        await destinationClient.manageHostInstructions({
+          action: "revoke",
+          id: replacement.registration.id,
+          keepConversationGrants: true,
+        });
+        const fallback = await mcp.callTool({ name: "list_instruction_targets", arguments: {} });
+        expect(fallback.structuredContent?.targets).toEqual([
+          { destinationId: serverId, agentId: agent.id, workspaceId: workspace.id },
+        ]);
+        const preserved = await mcp.callTool({
+          name: "send_host_instruction",
+          arguments: {
+            serverId,
+            agentId: agent.id,
+            prompt: "Use the preserved conversation grant",
+          },
+        });
+        await expect
+          .poll(
+            async () =>
+              (await destinationClient.manageHostInstructions({ action: "list" })).requests,
+            { timeout: 15000 },
+          )
+          .toEqual([
+            expect.objectContaining({ id: preserved.structuredContent?.id, agentId: agent.id }),
+          ]);
+
+        const restoredHost = await destinationClient.manageHostInstructions({
+          action: "set_policy",
+          sourceId,
+          policy: "ask",
+          workspaceOverrides: [],
+        });
+        if (!restoredHost.registration) throw new Error("Expected restored host grant");
+        await sourceClient.manageHostInstructions({
+          action: "register",
+          destinationId: serverId,
+          offer: restoredHost.registration.offer,
+          token: restoredHost.registration.token,
+        });
+        await destinationClient.manageHostInstructions({
+          action: "revoke",
+          id: narrow.registration.id,
+        });
+        const hostOnly = await mcp.callTool({ name: "list_instruction_targets", arguments: {} });
+        expect(hostOnly.structuredContent?.targets).toEqual([
+          expect.objectContaining({
+            destinationId: serverId,
+            agentId: agent.id,
+            workspaceId: workspace.id,
+          }),
+        ]);
+        async function withPausedClaim(
+          prompt: string,
+          onClaim: (requestId: string) => Promise<void>,
+        ) {
+          const submitted = await mcp.callTool({
+            name: "send_host_instruction",
+            arguments: { serverId, agentId: agent.id, prompt },
+          });
+          const requestId = submitted.structuredContent?.id;
+          if (typeof requestId !== "string") throw new Error("Expected instruction receipt");
+          await expect
+            .poll(
+              async () => {
+                const status = await mcp.callTool({
+                  name: "get_host_instruction_status",
+                  arguments: { id: requestId },
+                });
+                return status.structuredContent?.state;
+              },
+              { timeout: 15000 },
+            )
+            .toBe("awaiting_approval");
+
+          // Pause the prompt's storage load after the runtime has claimed the request.
+          const { agentStorage } = destination.daemon;
+          const readRecord = agentStorage.get.bind(agentStorage);
+          const loading = Promise.withResolvers<void>();
+          const resumeLoad = Promise.withResolvers<void>();
+          let targetReads = 0;
+          const held = vi.spyOn(agentStorage, "get").mockImplementation(async (recordId) => {
+            if (recordId === agent.id && ++targetReads === 2) {
+              loading.resolve();
+              await resumeLoad.promise;
+            }
+            return readRecord(recordId);
+          });
+          try {
+            await destinationClient.manageHostInstructions({
+              action: "decide",
+              id: requestId,
+              sourceId,
+              approve: true,
+            });
+            await withTimeout(
+              loading.promise,
+              10000,
+              "Expected a claimed instruction to load its agent",
+            );
+            await onClaim(requestId);
+          } finally {
+            resumeLoad.resolve();
+            held.mockRestore();
+          }
+          return requestId;
+        }
+
+        async function cancelPausedClaim(requestId: string) {
+          await mcp.callTool({
+            name: "cancel_host_instruction",
+            arguments: { id: requestId },
+          });
+          await expect
+            .poll(
+              async () => {
+                const status = await mcp.callTool({
+                  name: "get_host_instruction_status",
+                  arguments: { id: requestId },
+                });
+                return status.structuredContent;
+              },
+              { timeout: 12000 },
+            )
+            .toMatchObject({ id: requestId, state: "cancelled", cancellationPending: false });
+        }
+
+        const cancelledId = await withPausedClaim("Cancel during session load", cancelPausedClaim);
+        const pendingId = await withPausedClaim("Stop during session load", async () => {
+          await destination.daemon.stop();
+        });
+        const persisted = await HostInstructionInbox.open(destination.paseoHome);
+        expect(
+          (await persisted.list()).map(({ instruction, state }) => ({ id: instruction.id, state })),
+        ).toEqual(
+          expect.arrayContaining([
+            { id: cancelledId, state: "cancelled" },
+            { id: pendingId, state: "queued" },
+          ]),
+        );
+        expect(sent).toHaveLength(1);
+      } finally {
+        for (const close of cleanup.toReversed()) await close();
+        await stopRelay();
+      }
+    },
+  );
+
+  test(
+    "holds a queued host instruction after Stop until a new prompt takes the held agent messages",
+    { timeout: 60000 },
+    async () => {
+      const cleanup: (() => Promise<unknown>)[] = [];
+      const started = vi.fn();
+      try {
+        await startRelay({ useLocalRelay: true });
+        const source = await createTestPaseoDaemon();
+        cleanup.push(() => source.close());
+        const destination = await createTestPaseoDaemon({
+          relayEnabled: true,
+          relayEndpoint: `127.0.0.1:${relayPort}`,
+          relayUseTls: false,
+          relayPublicUseTls: false,
+          agentClients: createTestAgentClients({ onStartTurn: started }),
+        });
+        cleanup.push(() => destination.close());
+        const sourceClient = createHostClient(`127.0.0.1:${source.port}`, {
+          clientId: crypto.randomUUID(),
+        });
+        const destinationClient = createHostClient(`127.0.0.1:${destination.port}`, {
+          clientId: crypto.randomUUID(),
+        });
+        cleanup.push(
+          () => sourceClient.close(),
+          () => destinationClient.close(),
+        );
+        await Promise.all([sourceClient.connect(), destinationClient.connect()]);
+
+        const sourceId = source.daemon.getServerId();
+        const serverId = destination.daemon.getServerId();
+        const { registration } = await destinationClient.manageHostInstructions({
+          action: "set_policy",
+          sourceId,
+          policy: "unattended",
+          workspaceOverrides: [],
+        });
+        if (!registration) throw new Error("Expected instruction registration");
+        await sourceClient.manageHostInstructions({
+          action: "register",
+          destinationId: serverId,
+          offer: registration.offer,
+          token: registration.token,
+        });
+        const paseo = createPaseoApi(destinationClient);
+        cleanup.push(() => paseo.dispose());
+        const workspace = await paseo.workspaces.create({
+          source: { kind: "directory", path: destination.staticDir },
+        });
+        const agent = await workspace.agents.create({
+          config: { provider: "claude/claude-test", modeId: "default" },
+        });
+        const sender = await workspace.agents.create({
+          config: { provider: "claude/claude-test" },
+        });
+        await destinationClient.sendAgentMessage(agent.id, "Please read /etc/hosts");
+        const manager = destination.daemon.agentManager;
+        await expect.poll(() => manager.getAgent(agent.id)?.pendingPermissions.size).toBe(1);
+
+        const mcp = new McpClient({ name: "stop-instruction-source", version: "1" });
+        cleanup.push(() => mcp.close());
+        await mcp.connect(
+          new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${source.port}/mcp/agents`)),
+        );
+        const submitted = await mcp.callTool({
+          name: "send_host_instruction",
+          arguments: {
+            serverId,
+            agentId: agent.id,
+            workspaceId: workspace.id,
+            prompt: "Run the local check",
+          },
+        });
+        const id = submitted.structuredContent?.id;
+        if (typeof id !== "string") throw new Error("Expected instruction receipt");
+        const status = async () =>
+          (await mcp.callTool({ name: "get_host_instruction_status", arguments: { id } }))
+            .structuredContent?.state;
+        await expect.poll(status, { timeout: 15000 }).toBe("queued");
+        await expect(
+          destinationClient.sendAgentMessage(agent.id, "Older queued message", {
+            sourceAgentId: sender.id,
+            activeTurnBehavior: "queue",
+          }),
+        ).resolves.toMatchObject({ deliveryStatus: "queued" });
+        await destinationClient.cancelAgent(agent.id);
+
+        const scan = vi.spyOn(HostInstructionInbox.prototype, "list");
+        try {
+          // Let the idle scheduler scan twice while the recipient is stopped.
+          await expect
+            .poll(() => scan.mock.calls.length, { timeout: 10000 })
+            .toBeGreaterThanOrEqual(2);
+          expect(await status()).toBe("queued");
+          expect(started).toHaveBeenCalledOnce();
+        } finally {
+          scan.mockRestore();
+        }
+
+        await mcp.callTool({
+          name: "send_host_instruction",
+          arguments: {
+            serverId,
+            agentId: agent.id,
+            workspaceId: workspace.id,
+            prompt: "Continue from the other host",
+          },
+        });
+        await expect.poll(status, { timeout: 15000 }).toBe("completed");
+        expect(started).toHaveBeenCalledTimes(3);
+        const joined = started.mock.calls[1]?.[0];
+        expect(typeof joined).toBe("string");
+        expect(parseAgentMessages(joined)).toEqual([
+          expect.objectContaining({
+            source: expect.objectContaining({ kind: "agent-message", agentId: sender.id }),
+            text: "Older queued message",
+          }),
+          expect.objectContaining({
+            source: { kind: "host-instruction", serverId: sourceId },
+            text: expect.stringContaining("Continue from the other host"),
+          }),
+        ]);
+      } finally {
+        for (const close of cleanup.toReversed()) await close();
+        await stopRelay();
+      }
+    },
+  );
+
+  test(
+    "connected hosts retry an unpersisted cancellation after the receiver restarts",
+    { timeout: 60000 },
+    async () => {
+      const homeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-cancel-instructions-"));
+      const cleanup: (() => Promise<unknown>)[] = [];
+      const sent = vi.fn();
+      try {
+        await startRelay({ useLocalRelay: true });
+        const source = await createTestPaseoDaemon();
+        cleanup.push(() => source.close());
+        const destinationOptions = {
+          paseoHomeRoot: homeRoot,
+          relayEnabled: true,
+          relayEndpoint: `127.0.0.1:${relayPort}`,
+          relayUseTls: false,
+          relayPublicUseTls: false,
+          agentClients: createTestAgentClients({ onStartTurn: sent }),
+        };
+        const destination = await createTestPaseoDaemon({ ...destinationOptions, cleanup: false });
+        cleanup.push(
+          () => rm(destination.staticDir, { recursive: true, force: true }),
+          () => destination.close(),
+        );
+        const destinationClient = createHostClient(`127.0.0.1:${destination.port}`, {
+          clientId: crypto.randomUUID(),
+          reconnect: { enabled: false },
+        });
+        cleanup.push(() => destinationClient.close());
+        await destinationClient.connect();
+        const serverId = destinationClient.getLastServerInfoMessage()!.serverId;
+        const paseo = createPaseoApi(destinationClient);
+        cleanup.push(() => paseo.dispose());
+        const workspace = await paseo.workspaces.create({
+          source: { kind: "directory", path: destination.staticDir },
+        });
+        const agent = await workspace.agents.create({
+          config: { provider: "claude/claude-test" },
+        });
+        // Keep this conversation busy on both sides of the receiver restart.
+        const hasInFlightRun = AgentManager.prototype.hasInFlightRun;
+        vi.spyOn(AgentManager.prototype, "hasInFlightRun").mockImplementation(
+          function (this: AgentManager, agentId) {
+            return agentId === agent.id || hasInFlightRun.call(this, agentId);
+          },
+        );
+
+        const sourceClient = createHostClient(`127.0.0.1:${source.port}`, {
+          clientId: crypto.randomUUID(),
+        });
+        cleanup.push(() => sourceClient.close());
+        await sourceClient.connect();
+        const { registration } = await destinationClient.manageHostInstructions({
+          action: "set_policy",
+          sourceId: sourceClient.getLastServerInfoMessage()!.serverId,
+          policy: "unattended",
+          workspaceOverrides: [],
+        });
+        if (!registration) throw new Error("Expected instruction registration");
+        await sourceClient.manageHostInstructions({
+          action: "register",
+          destinationId: serverId,
+          offer: registration.offer,
+          token: registration.token,
+        });
+        const mcp = new McpClient({ name: "cancelling-instruction-source", version: "1" });
+        cleanup.push(() => mcp.close());
+        await mcp.connect(
+          new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${source.port}/mcp/agents`)),
+        );
+        const submitted = await mcp.callTool({
+          name: "send_host_instruction",
+          arguments: { serverId, agentId: agent.id, workspaceId: workspace.id, prompt: "Queued" },
+        });
+        const id = submitted.structuredContent?.id;
+        if (typeof id !== "string") throw new Error("Expected instruction receipt");
+        const status = async () =>
+          (await mcp.callTool({ name: "get_host_instruction_status", arguments: { id } }))
+            .structuredContent;
+        await expect.poll(status, { timeout: 15000 }).toMatchObject({ id, state: "queued" });
+
+        const authenticate = vi.spyOn(HostInstructionInbox.prototype, "authenticate");
+        const originalWrite = privateFiles.writePrivateFileAtomic;
+        const inboxFile = path.join(destination.paseoHome, "host-instructions", "inbox.json");
+        const failedWrite = vi.fn();
+        const persist = vi
+          .spyOn(privateFiles, "writePrivateFileAtomic")
+          .mockImplementation(async (file, data) => {
+            if (file === inboxFile) {
+              failedWrite();
+              throw Object.assign(new Error("No space left on device"), { code: "ENOSPC" });
+            }
+            return originalWrite(file, data);
+          });
+        await mcp.callTool({ name: "cancel_host_instruction", arguments: { id } });
+        await expect.poll(() => failedWrite.mock.calls.length, { timeout: 15000 }).toBe(1);
+        // An additional authenticated exchange proves the outbox retried after the write failed.
+        authenticate.mockClear();
+        await expect
+          .poll(() => authenticate.mock.calls.length, { timeout: 8000 })
+          .toBeGreaterThan(0);
+        expect(await status()).toMatchObject({ id, state: "queued", cancellationPending: true });
+        expect(await (await HostInstructionInbox.open(destination.paseoHome)).list()).toEqual([
+          expect.objectContaining({
+            instruction: expect.objectContaining({ id }),
+            state: "queued",
+          }),
+        ]);
+
+        persist.mockRestore();
+        await destinationClient.close();
+        await destination.close();
+        const restarted = await createTestPaseoDaemon(destinationOptions);
+        cleanup.push(() => restarted.close());
+        await expect.poll(status, { timeout: 15000 }).toMatchObject({
+          id,
+          state: "cancelled",
+          cancellationPending: false,
+        });
+        expect(await (await HostInstructionInbox.open(restarted.paseoHome)).list()).toEqual([
+          expect.objectContaining({
+            instruction: expect.objectContaining({ id }),
+            state: "cancelled",
+          }),
+        ]);
+        expect(sent).not.toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+        for (const close of cleanup.toReversed()) await close();
+        await stopRelay();
+        await rm(homeRoot, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test(
+    "connected hosts acknowledge the last revoked instruction grant after restart",
+    { timeout: 60000 },
+    async () => {
+      const homeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-revoked-instructions-"));
+      const cleanup: (() => Promise<unknown>)[] = [];
+      try {
+        await startRelay({ useLocalRelay: true });
+        const source = await createTestPaseoDaemon();
+        cleanup.push(() => source.close());
+        const destinationOptions = {
+          paseoHomeRoot: homeRoot,
+          relayEnabled: true,
+          relayEndpoint: `127.0.0.1:${relayPort}`,
+          relayUseTls: false,
+          relayPublicUseTls: false,
+        };
+        const destination = await createTestPaseoDaemon({ ...destinationOptions, cleanup: false });
+        cleanup.push(() => rm(destination.staticDir, { recursive: true, force: true }));
+        cleanup.push(() => destination.close());
+        const sourceClient = createHostClient(`127.0.0.1:${source.port}`, {
+          clientId: crypto.randomUUID(),
+        });
+        const destinationClient = createHostClient(`127.0.0.1:${destination.port}`, {
+          clientId: crypto.randomUUID(),
+          reconnect: { enabled: false },
+        });
+        cleanup.push(
+          () => sourceClient.close(),
+          () => destinationClient.close(),
+        );
+        await Promise.all([sourceClient.connect(), destinationClient.connect()]);
+        const sourceId = sourceClient.getLastServerInfoMessage()!.serverId;
+        const serverId = destinationClient.getLastServerInfoMessage()!.serverId;
+        const { registration } = await destinationClient.manageHostInstructions({
+          action: "set_policy",
+          sourceId,
+          policy: "ask",
+          workspaceOverrides: [],
+        });
+        if (!registration) throw new Error("Expected instruction registration");
+        await sourceClient.manageHostInstructions({
+          action: "register",
+          destinationId: serverId,
+          offer: registration.offer,
+          token: registration.token,
+        });
+
+        // No source exchange observes the revocation before the receiving daemon goes away.
+        await destinationClient.manageHostInstructions({ action: "revoke", id: registration.id });
+        await destinationClient.close();
+        await destination.close();
+        const restarted = await createTestPaseoDaemon(destinationOptions);
+        cleanup.push(() => restarted.close());
+
+        const mcp = new McpClient({ name: "revoked-instruction-source", version: "1" });
+        cleanup.push(() => mcp.close());
+        await mcp.connect(
+          new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${source.port}/mcp/agents`)),
+        );
+        const submitted = await mcp.callTool({
+          name: "send_host_instruction",
+          arguments: {
+            serverId,
+            agentId: "conversation",
+            workspaceId: "workspace",
+            prompt: "Check the revoked registration",
+          },
+        });
+        const id = submitted.structuredContent?.id;
+        if (typeof id !== "string") throw new Error("Expected instruction receipt");
+        await expect
+          .poll(
+            async () => {
+              const status = await mcp.callTool({
+                name: "get_host_instruction_status",
+                arguments: { id },
+              });
+              return status.structuredContent?.state;
+            },
+            { timeout: 15000 },
+          )
+          .toBe("revoked");
+        const stale = await sourceClient.manageHostInstructions({
+          action: "has_registration",
+          destinationId: serverId,
+          id: registration.id,
+        });
+        expect(stale.hasRegistration).toBe(false);
+      } finally {
+        for (const close of cleanup.toReversed()) await close();
+        await stopRelay();
+        await rm(homeRoot, { recursive: true, force: true });
+      }
+    },
+  );
 
   // Needs to stop and restart the relay, which only the spawned wrangler relay allows.
   test.skipIf(usesExternalRelay)(

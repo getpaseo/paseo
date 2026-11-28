@@ -3042,6 +3042,7 @@ export const ko: TranslationResources = {
         removeErrorMessage: "연결을 제거할 수 없습니다",
         timeout: "시간 초과",
       },
+      instructions: en.settings.host.instructions,
       pairDevices: {
         rowTitle: "기기 페어링",
       },

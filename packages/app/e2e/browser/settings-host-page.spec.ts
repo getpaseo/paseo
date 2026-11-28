@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import {
   openGlobalNewWorkspaceComposer,
   fillNewWorkspaceDraft,
@@ -9,7 +10,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
-import { getE2EDaemonPort } from "../support/helpers/daemon-port";
+import { getE2EDaemonPort, wsRoutePatternForPort } from "../support/helpers/daemon-port";
 import { TEST_HOST_LABEL } from "../support/helpers/daemon-registry";
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import { getServerId } from "../support/helpers/server-id";
@@ -48,6 +49,37 @@ import {
   setIdleAgentRelease,
 } from "../support/helpers/settings";
 
+async function holdInstructionPolicy(page: Page, port: string) {
+  let releasePolicy = false;
+  let fetchedWorkspaces = false;
+  const heldResponses: (() => void)[] = [];
+  await page.routeWebSocket(wsRoutePatternForPort(port), (browser) => {
+    const server = browser.connectToServer();
+    server.onMessage((message) => {
+      if (typeof message === "string" && message.includes('"fetch_workspaces_response"')) {
+        fetchedWorkspaces = true;
+      }
+      if (
+        !releasePolicy &&
+        typeof message === "string" &&
+        message.includes('"host.instructions.manage.response"')
+      ) {
+        heldResponses.push(() => browser.send(message));
+        return;
+      }
+      browser.send(message);
+    });
+  });
+  return {
+    responsesHeld: () => heldResponses.length,
+    workspacesFetched: () => fetchedWorkspaces,
+    release() {
+      releasePolicy = true;
+      for (const send of heldResponses.splice(0)) send();
+    },
+  };
+}
+
 test.describe("Settings host page", () => {
   test("visits host settings and opens the label editor", async ({ page }) => {
     const serverId = getServerId();
@@ -61,6 +93,17 @@ test.describe("Settings host page", () => {
       await clickEditHostLabel(page);
       await expectHostLabelEditMode(page, TEST_HOST_LABEL);
       await page.keyboard.press("Escape");
+    });
+    await test.step("devices section shows the incoming instruction policy", async () => {
+      await openHostSection(page, serverId, "devices");
+      const instructions = page.getByTestId("host-instructions-section");
+      await expect(instructions).toBeVisible();
+      await expect(instructions.getByText("Ask each time")).toBeVisible();
+      const save = instructions.getByRole("button", { name: "Save instruction policy" });
+      await expect(save).toBeDisabled();
+      const button = await save.boundingBox();
+      const policy = await instructions.getByText("Ask each time").boundingBox();
+      expect(button?.y).toBeGreaterThan((policy?.y ?? 0) + (policy?.height ?? 0));
     });
     await test.step("tools section shows the inject MCP toggle", async () => {
       await openHostSection(page, serverId, "tools");
@@ -84,6 +127,30 @@ test.describe("Settings host page", () => {
     await test.step("settings sidebar exposes the flat App and Host section rows", async () => {
       await expectRetiredSidebarSectionsAbsent(page);
     });
+  });
+
+  test("instruction overrides wait for the saved policies", async ({ page }) => {
+    const serverId = getServerId();
+    const port = getE2EDaemonPort();
+    const hydration = await holdInstructionPolicy(page, port);
+    await seedSavedSettingsHosts(page, [
+      { serverId, label: TEST_HOST_LABEL, endpoint: `127.0.0.1:${port}` },
+      { serverId: "test-instruction-sender", label: "Instruction sender", endpoint: "127.0.0.1:1" },
+    ]);
+    await page.reload();
+    await openSettings(page);
+    await openSettingsHost(page, serverId);
+    await openHostSection(page, serverId, "devices");
+    await expect.poll(hydration.responsesHeld).toBeGreaterThan(0);
+    await expect.poll(hydration.workspacesFetched).toBe(true);
+    await page.getByTestId("host-instruction-source").click();
+    await page.getByText("Instruction sender", { exact: true }).last().click();
+    await expect(page.getByTestId("host-instruction-policy")).toBeDisabled();
+    await expect(page.getByTestId("host-instruction-workspace")).toBeDisabled();
+
+    hydration.release();
+    await expect(page.getByTestId("host-instruction-policy")).toBeEnabled();
+    await expect(page.getByTestId("host-instruction-workspace")).toBeEnabled();
   });
 
   test("a failed remote daemon update remains visible in the host UI", async ({

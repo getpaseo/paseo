@@ -22,6 +22,14 @@ export function parseDaemonPermissions(values: readonly string[]): DaemonPermiss
 
 export const OWNER_PERMISSIONS: readonly DaemonPermission[] = DAEMON_PERMISSIONS;
 
+type HostInstructionsManagement = Extract<
+  SessionInboundMessage,
+  { type: "host.instructions.manage.request" }
+>;
+type InboundAuthorizationMessage =
+  | HostInstructionsManagement
+  | { type: Exclude<SessionInboundMessage["type"], HostInstructionsManagement["type"]> };
+
 export class SessionAuthorization {
   private permissions: ReadonlySet<DaemonPermission>;
 
@@ -29,8 +37,26 @@ export class SessionAuthorization {
     this.permissions = new Set(permissions);
   }
 
-  allowsInbound(message: Pick<SessionInboundMessage, "type">): boolean {
-    return this.allows(requiredPermissionForInbound(message.type));
+  allowsInbound(message: InboundAuthorizationMessage): boolean {
+    if (!this.allows(requiredPermissionForInbound(message.type))) return false;
+    if (message.type !== "host.instructions.manage.request") return true;
+
+    const command = message.command;
+    const promptAuthority = requiredPermissionForInbound("send_agent_message_request");
+    switch (command.action) {
+      case "set_policy":
+        // Host policies also expose a directory of the conversations they cover.
+        return (
+          this.allows(promptAuthority) &&
+          this.allows(requiredPermissionForInbound("fetch_agents_request"))
+        );
+      case "grant":
+        return this.allows(promptAuthority);
+      case "decide":
+        return !command.approve || this.allows(promptAuthority);
+      default:
+        return true;
+    }
   }
 
   allowsOutbound(message: SessionOutboundMessage): boolean {
