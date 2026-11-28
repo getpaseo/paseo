@@ -333,9 +333,15 @@ test("error and missing-child notifications never claim successful completion", 
   const state = await scenario();
   await state.service.register(intent);
   await until(() => state.observation.waits.length === 1);
-  state.observation.waits[0]!.result.resolve(outcome("error"));
+  state.observation.waits[0]!.result.resolve({
+    ...outcome("error"),
+    error: "Claude Code process exited with code 1",
+    lastMessage: null,
+  });
   await until(() => state.delivery.prompts.length === 1);
   expect(state.delivery.prompts[0]).toContain("errored");
+  expect(state.delivery.prompts[0]).toContain("Claude Code process exited with code 1");
+  expect(state.delivery.prompts[0]).toContain("get_agent_activity");
   await state.service.register({ ...intent, childAgentId: "missing-child" });
   await until(() => state.observation.waits.length === 2);
   state.observation.waits[1]!.result.resolve({

@@ -225,6 +225,7 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
           serverId: record.serverId ?? deps.serverId,
           title,
           reason,
+          error: result?.error ?? null,
           lastAssistantMessage: result?.lastMessage ?? null,
           permissionRequest: request,
           pendingWork: notice.work,
