@@ -572,7 +572,9 @@ describe("runAcpProvider", () => {
       id: "crash-replay",
       label: "Crash Replay",
       command: [process.execPath, script],
-      acpOptions: { loadReplayQuietPeriodMs: 100 },
+      // The exit has to be reported before the quiet period ends the replay, or the open
+      // succeeds. A Windows process exit can take longer than 100 ms.
+      acpOptions: { loadReplayQuietPeriodMs: 1_000 },
     }).connect({ versions: [1], capabilities: ["prompt.message", "session.persistence"] });
     const events: ProviderEvent[] = [];
     connection.onEvent((event) => events.push(event));

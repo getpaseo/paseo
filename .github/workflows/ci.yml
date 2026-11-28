@@ -8,13 +8,14 @@ on:
   merge_group:
   workflow_dispatch:
 
-# A newer push to the same ref cancels the run still in progress, main included.
-# A full run costs about 200 runner-minutes against the org's 20 concurrent
-# jobs, and a superseded main run only answers a question the newer commit
-# answers again.
+# A newer push cancels the run still in progress on every ref except main,
+# because a full run costs about 200 runner-minutes against the org's 20
+# concurrent jobs. A main run finishes: cancelling it mid-flight leaves CANCELLED
+# checks that paint the commit red. Each ref has one run in progress and one
+# pending, so a newer push replaces a pending main run before it starts any job.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   # CI does not use the CUDA execution provider, and the onnxruntime-node
