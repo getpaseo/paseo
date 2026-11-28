@@ -1017,3 +1017,212 @@ child.on("exit", (code) => process.exit(code ?? 1));
     await connection.close();
   }
 });
+
+it("advertises form elicitation and bridges Antigravity ask_question into a question card even in default Full access mode", async () => {
+  const { directory, launch } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+    let clientCapabilities = null;
+    let promptId = null;
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const message = JSON.parse(line);
+      if (message.method === "initialize") {
+        clientCapabilities = message.params.clientCapabilities;
+        send({ id: message.id, result: { protocolVersion: 1 } });
+        return;
+      }
+      if (message.method === "session/new") {
+        send({
+          id: message.id,
+          result: {
+            sessionId: "agy-q",
+            modes: {
+              currentModeId: "default",
+              availableModes: [{ id: "default", name: "Default" }],
+            },
+          },
+        });
+        send({
+          method: "session/update",
+          params: {
+            sessionId: "agy-q",
+            update: { sessionUpdate: "available_commands_update", availableCommands: [] },
+          },
+        });
+        return;
+      }
+      if (message.method === "session/prompt") {
+        promptId = message.id;
+        if (!clientCapabilities?.elicitation?.form) {
+          send({
+            method: "session/update",
+            params: {
+              sessionId: "agy-q",
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "- [1] Red\\n- [2] Blue" },
+              },
+            },
+          });
+          send({ id: message.id, result: { stopReason: "end_turn" } });
+          return;
+        }
+        send({
+          method: "session/update",
+          params: {
+            sessionId: "agy-q",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "ask-1",
+              name: "ask_question",
+              title: "Run ask_question",
+              kind: "other",
+              status: "in_progress",
+              rawInput: {
+                questions: [
+                  { question: "Pick a color:", options: ["Red", "Blue"], is_multi_select: false },
+                ],
+              },
+            },
+          },
+        });
+        send({
+          id: "elicit-1",
+          method: "elicitation/create",
+          params: {
+            sessionId: "agy-q",
+            toolCallId: "ask-1",
+            mode: "form",
+            message: "The agent has a question.",
+            requestedSchema: {
+              type: "object",
+              properties: {
+                q1: {
+                  type: "string",
+                  title: "Pick a color:",
+                  oneOf: [
+                    { const: "1", title: "Red" },
+                    { const: "2", title: "Blue" },
+                  ],
+                },
+                q1_other: {
+                  type: "string",
+                  title: "Other",
+                  description: "Optional free-form answer to: Pick a color:",
+                },
+              },
+            },
+          },
+        });
+        return;
+      }
+      if (message.id === "elicit-1") {
+        send({
+          method: "session/update",
+          params: {
+            sessionId: "agy-q",
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "ask-1",
+              status: "completed",
+            },
+          },
+        });
+        send({
+          method: "session/update",
+          params: {
+            sessionId: "agy-q",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "Answer: " + JSON.stringify(message.result) },
+            },
+          },
+        });
+        send({ id: promptId, result: { stopReason: "end_turn" } });
+        return;
+      }
+      if (message.method === "session/close") send({ id: message.id, result: {} });
+    });
+  `);
+  const connection = await createAntigravityProvider().connect({
+    launch,
+    versions: [1],
+    capabilities: ["prompt.message", "permission", "session.configure"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({
+      type: "session.open",
+      requestId: "open",
+      sessionId: "test",
+      history: "skip",
+      config: { cwd: directory, env: {}, mcpServers: {}, settings: {}, persist: false },
+    });
+    await expect.poll(() => events.find((event) => event.type === "session.ready")).toBeDefined();
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "test",
+      prompt: {
+        clientMessageId: "ask-turn",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "Ask me a color" }] },
+      },
+    });
+    await expect
+      .poll(() => events.find((event) => event.type === "session.permission"))
+      .toMatchObject({
+        type: "session.permission",
+        request: {
+          name: "ask_question",
+          kind: "question",
+          input: {
+            questions: [
+              expect.objectContaining({
+                header: "Question",
+                question: "Pick a color:",
+                options: [{ label: "Red" }, { label: "Blue" }],
+                allowOther: true,
+                allowEmpty: false,
+                placeholder: "Optional free-form answer to: Pick a color:",
+              }),
+            ],
+          },
+        },
+      });
+    const permission = events.find((event) => event.type === "session.permission");
+    if (permission?.type !== "session.permission") throw new Error("Expected permission");
+    await connection.send({
+      type: "session.permission",
+      sessionId: "test",
+      permissionId: permission.request.id,
+      response: { behavior: "allow", updatedInput: { answers: { Question: "Blue" } } },
+    });
+    await expect
+      .poll(() =>
+        events.find(
+          (event) =>
+            event.type === "session.permission_resolved" &&
+            event.permissionId === permission.request.id,
+        ),
+      )
+      .toBeDefined();
+    await expect
+      .poll(() =>
+        events.find(
+          (event) =>
+            event.type === "timeline.item" &&
+            event.item.type === "assistant_message" &&
+            event.item.text.includes('"q1":"2"'),
+        ),
+      )
+      .toBeDefined();
+    await expect
+      .poll(() =>
+        events.find((event) => event.type === "session.turn" && event.state === "completed"),
+      )
+      .toBeDefined();
+  } finally {
+    await connection.close();
+  }
+});
