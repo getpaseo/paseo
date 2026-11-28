@@ -567,7 +567,7 @@ describe("Codex active-turn steering admission", () => {
     await appServer.waitForRequest("turn/steer");
     appServer.disconnect();
 
-    await expect(steer).rejects.toThrow("Codex app-server exited");
+    await expect(steer).rejects.toThrow("Codex stopped unexpectedly.");
     expect(appServer.requests().filter((request) => request.method === "turn/steer")).toHaveLength(
       1,
     );

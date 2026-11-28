@@ -20,6 +20,11 @@ import {
 } from "./codex/test-utils/fake-app-server.js";
 
 const logger = createTestLogger();
+const unexpectedExitMessage = [
+  "Codex stopped unexpectedly.",
+  "Check any interrupted commands, then send a message to continue.",
+  "Technical details are in the host's daemon log.",
+].join("\n\n");
 
 interface PendingPlanLifecycle {
   close(): Promise<void>;
@@ -164,20 +169,16 @@ test("unexpected Codex app-server exit fails the active run and agent", async ()
     appServer.child.emit("exit", 17, null);
     appServer.child.emit("exit", 17, null);
 
-    await expect(run).rejects.toThrow(
-      "Codex app-server exited with code 17 and signal null\nprovider crashed",
-    );
+    await expect(run).rejects.toThrow(unexpectedExitMessage);
     await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("error");
-    expect(manager.getAgent(agent.id)?.lastError).toBe(
-      "Codex app-server exited with code 17 and signal null\nprovider crashed",
-    );
+    expect(manager.getAgent(agent.id)?.lastError).toBe(unexpectedExitMessage);
     expect(events).toContainEqual(
       expect.objectContaining({
         type: "agent_stream",
         agentId: agent.id,
         event: expect.objectContaining({
           type: "turn_failed",
-          error: "Codex app-server exited with code 17 and signal null\nprovider crashed",
+          error: unexpectedExitMessage,
         }),
       }),
     );
@@ -416,9 +417,7 @@ test("unexpected exit fails an autonomous Codex turn", async () => {
     appServer.child.emit("exit", 23, null);
 
     await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("error");
-    expect(manager.getAgent(agent.id)?.lastError).toBe(
-      "Codex app-server exited with code 23 and signal null\nautonomous provider crashed",
-    );
+    expect(manager.getAgent(agent.id)?.lastError).toBe(unexpectedExitMessage);
     expect(
       events.filter((event) => event.type === "agent_stream" && event.event.type === "turn_failed"),
     ).toHaveLength(1);
@@ -469,7 +468,7 @@ test("provider permissions do not survive an unexpected exit and reconnect", asy
 
     exitedAppServer.child.emit("exit", 17, null);
 
-    await expect(failedRun).rejects.toThrow("Codex app-server exited with code 17");
+    await expect(failedRun).rejects.toThrow(unexpectedExitMessage);
     expect(manager.getPendingPermissions(agent.id)).toEqual([]);
 
     const recoveredRun = manager.runAgent(agent.id, "continue after reconnect");

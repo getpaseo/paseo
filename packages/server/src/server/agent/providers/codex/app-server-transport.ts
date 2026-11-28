@@ -78,11 +78,13 @@ export class CodexAppServerExitError extends Error {
   readonly stderr: string;
 
   constructor(details: CodexAppServerExitDetails) {
-    const message =
-      details.exitCode === 0 && !details.exitSignal
-        ? "Codex app-server exited"
-        : `Codex app-server exited with code ${details.exitCode ?? "null"} and signal ${details.exitSignal ?? "null"}`;
-    super(`${message}\n${details.stderr}`.trim());
+    super(
+      [
+        "Codex stopped unexpectedly.",
+        "Check any interrupted commands, then send a message to continue.",
+        "Technical details are in the host's daemon log.",
+      ].join("\n\n"),
+    );
     this.name = "CodexAppServerExitError";
     this.exitCode = details.exitCode;
     this.exitSignal = details.exitSignal;
@@ -269,6 +271,11 @@ export class CodexAppServerClient {
     });
 
     const reportExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (this.disposed) return;
+      this.logger.error(
+        { ...this.getTraceContext(), pid: child.pid, code, signal, stderr: this.stderrBuffer },
+        "Codex app-server terminated unexpectedly",
+      );
       this.handleUnexpectedTermination(
         new CodexAppServerExitError({
           exitCode: code,

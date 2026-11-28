@@ -8,6 +8,81 @@ import {
 import { CodexAppServerClient, CodexAppServerExitError } from "./app-server-transport.js";
 
 describe("Codex app-server transport", () => {
+  test("shows a readable recovery message and logs technical details once after SIGKILL", async () => {
+    const child = createCodexAppServerChildProcess();
+    const logger = createTestLogger();
+    const logError = vi.spyOn(logger, "error");
+    const client = new CodexAppServerClient(child, logger);
+    const onTermination = vi.fn();
+    client.setUnexpectedTerminationHandler(onTermination);
+    const request = client.request("turn/start", {});
+    // Stderr chunks need not align with lines or ANSI escape sequences.
+    child.stderr.write("\u001b[31mCustom tool call output is missing for call id: call_");
+    child.stderr.write("123\u001b[0m\n");
+    child.stderr.write("write_stdin failed: Unknown process id 9076\n");
+    child.stderr.write("Custom tool call output is missing for call id: call_123\n");
+    child.emit("exit", null, "SIGKILL");
+    child.emit("exit", null, "SIGKILL");
+    child.emit("close", null, "SIGKILL");
+
+    const expectedMessage = [
+      "Codex stopped unexpectedly.",
+      "Check any interrupted commands, then send a message to continue.",
+      "Technical details are in the host's daemon log.",
+    ].join("\n\n");
+    await expect(request).rejects.toThrow(expectedMessage);
+    expect(onTermination).toHaveBeenCalledTimes(1);
+    expect(onTermination.mock.calls[0]![0].message).toBe(expectedMessage);
+    expect(logError).toHaveBeenCalledTimes(1);
+    expect(logError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: null,
+        signal: "SIGKILL",
+        stderr: expect.stringContaining("write_stdin failed: Unknown process id 9076"),
+      }),
+      "Codex app-server terminated unexpectedly",
+    );
+    expect(logError.mock.calls[0]![0]).toEqual(
+      expect.objectContaining({
+        stderr: expect.stringContaining("Custom tool call output is missing for call id: call_123"),
+      }),
+    );
+    await expect(client.request("model/list")).rejects.toThrow("client is closed");
+    child.stdout.end();
+    child.stderr.end();
+    child.stdin.end();
+  });
+
+  test("ordinary exits show recovery guidance and keep provider errors in logs", () => {
+    const child = createCodexAppServerChildProcess();
+    const logger = createTestLogger();
+    const logError = vi.spyOn(logger, "error");
+    const client = new CodexAppServerClient(child, logger);
+    const onTermination = vi.fn();
+    client.setUnexpectedTerminationHandler(onTermination);
+    child.stderr.write("\u001b[31mprovider crashed\u001b[0m\n");
+    child.emit("exit", 17, null);
+
+    expect(onTermination.mock.calls[0]![0].message).toBe(
+      [
+        "Codex stopped unexpectedly.",
+        "Check any interrupted commands, then send a message to continue.",
+        "Technical details are in the host's daemon log.",
+      ].join("\n\n"),
+    );
+    expect(logError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 17,
+        signal: null,
+        stderr: "\u001b[31mprovider crashed\u001b[0m\n",
+      }),
+      "Codex app-server terminated unexpectedly",
+    );
+    child.stdout.end();
+    child.stderr.end();
+    child.stdin.end();
+  });
+
   test("classifies startup diagnostics delivered after the child exits", async () => {
     const child = createCodexAppServerChildProcess();
     const client = new CodexAppServerClient(child, createTestLogger());
