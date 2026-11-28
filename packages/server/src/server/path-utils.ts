@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { isAbsolute, posix, resolve, win32 } from "node:path";
+import { isAbsolute, posix, relative, resolve, sep, win32 } from "node:path";
 
 export function assertAbsolutePath(cwd: string): void {
   if (!posix.isAbsolute(cwd) && !win32.isAbsolute(cwd)) {
@@ -38,5 +38,19 @@ export function isSameOrDescendantPath(basePath: string, candidatePath: string):
 
   return (
     normalizedCandidate === normalizedBase || normalizedCandidate.startsWith(normalizedBase + "/")
+  );
+}
+
+/**
+ * Resolve both paths before comparing so `..` segments cannot escape the root.
+ * `relative` also handles filesystem roots (`/`, `C:\`) without doubling their separator.
+ */
+export function isPathWithinRoot(rootPath: string, candidatePath: string): boolean {
+  const resolvedRoot = resolve(rootPath);
+  const resolvedCandidate = resolve(candidatePath);
+  const relativePath = relative(resolvedRoot, resolvedCandidate);
+  return (
+    relativePath === "" ||
+    (!isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith(`..${sep}`))
   );
 }

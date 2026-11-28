@@ -34,6 +34,7 @@ import {
 } from "./agent/background-work/index.js";
 import equal from "fast-deep-equal";
 import { WorkspaceSetupObservation } from "./workspace-setup-observation.js";
+import { isPathWithinRoot } from "./path-utils.js";
 import { SessionDelivery, type OwnedSubscription } from "./session/owned-subscriptions/index.js";
 import { v4 as uuidv4 } from "uuid";
 import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
@@ -1300,7 +1301,7 @@ export class Session {
       hasBinaryChannel: () => this.onBinaryMessage !== null,
       supportsChunkedReplay: (source) =>
         this.supportsForSource(CLIENT_CAPS.terminalChunkedReplay, source),
-      isPathWithinRoot: (rootPath, candidatePath) => this.isPathWithinRoot(rootPath, candidatePath),
+      isPathWithinRoot,
       sessionLogger: this.sessionLogger,
       listTerminalWorkspaceRefs: () => this.listActiveWorkspaceRefs(),
       isScriptTerminal: (terminal) =>
@@ -5663,15 +5664,6 @@ export class Session {
     }
   }
 
-  private isPathWithinRoot(rootPath: string, candidatePath: string): boolean {
-    const resolvedRoot = resolve(rootPath);
-    const resolvedCandidate = resolve(candidatePath);
-    if (resolvedCandidate === resolvedRoot) {
-      return true;
-    }
-    return resolvedCandidate.startsWith(resolvedRoot + sep);
-  }
-
   /**
    * Handle clearing agent attention flag
    */
@@ -8287,7 +8279,7 @@ export class Session {
       normalizedRepo = repo.displayName;
       const targetParent = resolve(expandTilde(request.targetDirectory.trim()));
       checkoutPath = resolve(targetParent, repo.name);
-      if (!this.isPathWithinRoot(targetParent, checkoutPath)) {
+      if (!isPathWithinRoot(targetParent, checkoutPath)) {
         throw new Error("Resolved checkout path must stay inside the target directory");
       }
 
