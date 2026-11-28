@@ -84,6 +84,18 @@ describe("plugin listing translations", () => {
 });
 
 describe("plugin listings sent to apps", () => {
+  it("keeps a git release tag when present on the listing artifact", () => {
+    const tagged = {
+      ...LEGACY_PLUGIN,
+      artifact: { ...LEGACY_PLUGIN.artifact, tag: "v1.2.0" },
+    };
+    const index = PluginListingIndexSchema.parse({
+      ...LEGACY_INDEX,
+      plugins: [tagged],
+    });
+    expect(index.plugins[0].artifact.tag).toBe("v1.2.0");
+  });
+
   it("keep a listing whose artifact kind or index version the app does not know", () => {
     const future = { ...LEGACY_PLUGIN, id: "acme/future", artifact: { kind: "oci", image: "x" } };
     const index = PluginListingIndexSchema.parse({

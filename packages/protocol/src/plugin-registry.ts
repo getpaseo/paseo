@@ -23,6 +23,7 @@ export const PluginRegistryArtifactSchema = z.discriminatedUnion("kind", [
     kind: z.literal("git"),
     remote: z.string().min(1),
     commit: z.string().regex(/^[0-9a-f]{40,64}$/),
+    tag: z.string().min(1).optional(),
     pluginPath: z
       .string()
       .regex(/^[^\\:]+$/)
@@ -90,6 +91,7 @@ const PluginListingArtifactSchema = z.object({
   package: z.string().optional(),
   version: z.string().optional(),
   commit: z.string().optional(),
+  tag: z.string().optional(),
 });
 export const PluginListingSchema = PublishedPluginSchema.extend({
   artifact: PluginListingArtifactSchema,

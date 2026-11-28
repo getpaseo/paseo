@@ -36,9 +36,9 @@ export function listingAuthorAvatar(listing: PluginListing): string {
   return `https://github.com/${encodeURIComponent(listing.author.github)}.png?size=40`;
 }
 
-/** The version a listing pins: the npm version, or the short Git commit. */
+/** The version a listing pins: a Git release tag, the npm version, or the short Git commit. */
 export function listingVersion(listing: PluginListing): string | undefined {
-  return listing.artifact.version ?? listing.artifact.commit?.slice(0, 7);
+  return listing.artifact.tag ?? listing.artifact.version ?? listing.artifact.commit?.slice(0, 7);
 }
 
 /** Where a listing's code comes from: the npm package, or the repository. */

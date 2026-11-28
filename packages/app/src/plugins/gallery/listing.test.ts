@@ -7,6 +7,7 @@ import {
   formatInstallCount,
   listingImages,
   listingText,
+  listingVersion,
 } from "./listing";
 
 function listing(id: string, overrides: Partial<PluginListing> = {}): PluginListing {
@@ -109,6 +110,30 @@ describe("listing presentation", () => {
       media: ["https://cdn.test/a.png", "https://cdn.test/demo.mp4", "https://cdn.test/b.webp"],
     });
     expect(listingImages(entry)).toEqual(["https://cdn.test/a.png", "https://cdn.test/b.webp"]);
+  });
+
+  it("prefers a Git release tag over a commit pin, and falls back to commit or version", () => {
+    expect(
+      listingVersion(
+        listing("acme/tagged", {
+          artifact: { kind: "git", tag: "v1.0.0", commit: "a".repeat(40) },
+        }),
+      ),
+    ).toBe("v1.0.0");
+    expect(
+      listingVersion(
+        listing("acme/untagged", {
+          artifact: { kind: "git", commit: "abcdef1234567890" },
+        }),
+      ),
+    ).toBe("abcdef1");
+    expect(
+      listingVersion(
+        listing("acme/pkg", {
+          artifact: { kind: "npm", package: "acme-pkg", version: "2.1.0" },
+        }),
+      ),
+    ).toBe("2.1.0");
   });
 
   it("features listed plugins in the maintainer's order and skips unlisted ones", () => {
