@@ -3,9 +3,8 @@ import { usePanelStore } from "@/stores/panel-store";
 import { CompactHeader } from "@/components/headers/compact-header";
 import { WorkspaceHeaderProjectRow } from "@/screens/workspace/workspace-header-project-row";
 import {
-  useWindowLayout,
-  resolveWorkspaceActionPlacement,
   resolveWorkspaceBarActions,
+  useWorkspaceActionPlacement,
   WindowLayoutActions,
 } from "@/window-layout";
 import { IconButtonChromeProvider } from "@/components/ui/icon-button-chrome";
@@ -43,7 +42,7 @@ export function CompactWorkspaceHeader({
   isRouteFocused,
   isCompact,
 }: CompactWorkspaceHeaderProps) {
-  const actionsInBar = resolveWorkspaceActionPlacement(useWindowLayout()) === "vertical-bar";
+  const actionsInBar = useWorkspaceActionPlacement() === "vertical-bar";
   const projectRow = useMemo(
     () => (
       <WorkspaceHeaderProjectRow

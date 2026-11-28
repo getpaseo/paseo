@@ -2920,6 +2920,9 @@ export const ru: TranslationResources = {
         contentWidthWide: "Широкий",
         contentWidthFull: "На всю ширину",
         contentWidthCustom: "Своя ширина · {{width}} пкс",
+        compactVerticalBar: "Использовать вертикальную панель",
+        compactVerticalBarHint:
+          "На узких экранах кнопки рабочего пространства отображаются в столбце под часами, а не в заголовке",
       },
       syntax: {
         title: "Синтаксис",

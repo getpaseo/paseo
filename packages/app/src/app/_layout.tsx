@@ -511,7 +511,11 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     themedSidebarChrome = <AppearanceStyleBoundary>{sidebarChrome}</AppearanceStyleBoundary>;
   }
   const workspaceChrome = (
-    <WindowLayoutSurface compact={isCompactLayout} style={rowStyle}>
+    <WindowLayoutSurface
+      compact={isCompactLayout}
+      compactVerticalBar={settings.compactVerticalBar || !isWorkspaceRoute}
+      style={rowStyle}
+    >
       <WorkspaceLayoutModePublisher />
       {!isCompactLayout ? (
         <WindowChromeRegion corners={appChromeLayout.sidebarCorners}>

@@ -2836,6 +2836,8 @@ export const zhCN: TranslationResources = {
         contentWidthWide: "宽版",
         contentWidthFull: "全宽",
         contentWidthCustom: "自定义宽度 · {{width}} px",
+        compactVerticalBar: "使用竖向栏",
+        compactVerticalBarHint: "在窄屏上，将工作区按钮显示在时钟下方的竖列中，而不是标题栏中",
       },
       syntax: {
         title: "语法",

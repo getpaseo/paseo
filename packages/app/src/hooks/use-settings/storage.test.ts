@@ -228,6 +228,16 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.chatOutlineEnabled).toBe(false);
   });
 
+  it("uses the compact vertical bar by default and loads the opt-out", async () => {
+    expect((await loadAppSettingsFromStorage(makeDeps())).compactVerticalBar).toBe(true);
+    const optedOut = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ compactVerticalBar: false }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(optedOut)).compactVerticalBar).toBe(false);
+  });
+
   it("uses Enter to send by default", async () => {
     const deps = makeDeps();
 

@@ -2902,6 +2902,9 @@ export const ar: TranslationResources = {
         contentWidthWide: "عريض",
         contentWidthFull: "كامل",
         contentWidthCustom: "عرض مخصص · {{width}} بكسل",
+        compactVerticalBar: "استخدام الشريط العمودي",
+        compactVerticalBarHint:
+          "على الشاشات الضيقة، اعرض أزرار مساحة العمل في العمود أسفل الساعة بدلًا من الترويسة",
       },
       syntax: {
         title: "بناء الجملة",

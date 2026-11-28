@@ -54,7 +54,7 @@ async function renderSidebar(overlay: boolean) {
       <GestureHandlerRootView style={fill}>
         <SafeAreaInsetsContext.Provider value={statusBarInsets}>
           <WindowLayoutProvider>
-            <WindowLayoutSurface compact={false} style={fill}>
+            <WindowLayoutSurface compact={false} compactVerticalBar style={fill}>
               <MobilePanelsProvider>
                 <MobilePanelOverlay
                   panel="agent-list"

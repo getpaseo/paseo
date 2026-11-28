@@ -602,7 +602,7 @@ function ComposerNearTop(): ReactNode {
 function WideSurfaceScreen(): ReactNode {
   return (
     <View style={SCREEN_STYLE}>
-      <WindowLayoutSurface compact={false} style={SURFACE_STYLE}>
+      <WindowLayoutSurface compact={false} compactVerticalBar style={SURFACE_STYLE}>
         <ComposerNearTop />
       </WindowLayoutSurface>
       <FloatingPanelPortalHost />
