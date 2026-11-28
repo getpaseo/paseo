@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 
-async function runWorker(worker: string, publicationDelay = 0) {
+async function runWorker(worker: string, publicationDelay = 0, timeoutMs = 5_000) {
   const home = await mkdtemp(path.join(tmpdir(), "paseo-readiness-"));
   const workerPath = path.join(home, "worker.mjs");
   const runnerPath = path.join(home, "runner.mjs");
@@ -49,7 +49,7 @@ async function runWorker(worker: string, publicationDelay = 0) {
       const timer = setTimeout(() => {
         child.kill("SIGKILL");
         reject(new Error(output));
-      }, 5_000);
+      }, timeoutMs);
       child.once("error", reject);
       child.once("close", (exitCode) => {
         clearTimeout(timer);
@@ -120,3 +120,35 @@ test("requested shutdown before first readiness exits successfully", async () =>
   expect(result.code).toBe(0);
   expect(result.events).toEqual([null]);
 });
+
+test("a worker that stays alive after a fatal V8 out-of-memory error is replaced", async () => {
+  const result = await runWorker(
+    `
+    import { existsSync, writeFileSync } from "node:fs";
+    const marker = process.argv[1] + ".started";
+    if (existsSync(marker)) {
+      process.on("message", message => {
+        if (message.type === "paseo:graceful-shutdown") process.exit(0);
+      });
+      process.send({ type: "paseo:ready", listen: "replacement", serverId: "srv_test" });
+      process.send({ type: "paseo:shutdown", reason: "test_done" });
+    } else {
+      writeFileSync(marker, "started");
+      process.send({ type: "paseo:ready", listen: "stuck", serverId: "srv_test" }, () => {
+        // What V8 prints before abort(), split across writes; the process then stays
+        // alive the way it does while a large core dump is collected.
+        process.stderr.write("\\n<--- Last few GCs --->\\n\\nFATAL ERROR: Reached heap limit Allocation failed - Java");
+        setTimeout(() => process.stderr.write("Script heap out of memory\\n"), 50);
+        process.on("SIGTERM", () => {});
+        // Outlives the termination grace; exits on its own if the supervisor never kills it.
+        setTimeout(() => process.exit(1), 60_000);
+      });
+    }
+  `,
+    0,
+    20_000,
+  );
+  expect(result.code, result.output).toBe(0);
+  expect(result.output).toContain("Worker crashed (SIGKILL). Restarting worker...");
+  expect(result.events).toEqual(["stuck", null, "replacement", null]);
+}, 30_000);
