@@ -304,6 +304,10 @@ export class CodexAppServerClient {
     return this.pending.size > 0 || this.activeProviderRequests > 0;
   }
 
+  isDisposed(): boolean {
+    return this.disposed;
+  }
+
   request(method: string, params?: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unknown> {
     if (this.disposed) {
       return Promise.reject(new Error("Codex app-server client is closed"));

@@ -9071,9 +9071,52 @@ test("Codex runtime safety queries live terminals and retains unsupported app se
         .requests()
         .findLast((request) => request.method === "thread/backgroundTerminals/list"),
     ).toMatchObject({ params: { threadId: "thread-1" } });
+    const requestCount = appServer.requests().length;
+    appServer.disconnect();
+    expect(await session.canStopRuntime()).toBe(true);
+    expect(appServer.requests()).toHaveLength(requestCount);
     appServer.assertNoErrors();
   } finally {
     await session.close();
+  }
+});
+
+test("Codex runtime safety vetoes collection while command listing reconnects a disposed transport", async () => {
+  const initialize = deferred<Record<string, unknown>>();
+  const first = createFakeCodexAppServer();
+  const replacement = createFakeCodexAppServer({ initialize: () => initialize.promise });
+  const codexHome = await mkdtemp(path.join(tmpdir(), "codex-runtime-reconnect-"));
+  let spawns = 0;
+  const session = new CodexAppServerAgentSession(
+    createConfig(),
+    null,
+    createTestLogger(),
+    async () => (++spawns === 1 ? first.child : replacement.child),
+    { codexHome },
+  );
+  let commands: Promise<AgentSlashCommand[]> | null = null;
+  try {
+    await session.startTurn("hello");
+    await first.waitForTurnStart();
+    first.completeTurn();
+    await expect.poll(() => session.canStopRuntime()).toBe(true);
+    first.disconnect();
+    commands = session.listCommands();
+    await replacement.waitForRequest("initialize");
+    expect(await session.canStopRuntime()).toBe(false);
+    initialize.resolve({ userAgent: "codex/0.150.0" });
+    await expect(commands).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "compact" })]),
+    );
+    expect(await session.canStopRuntime()).toBe(true);
+    expect(spawns).toBe(2);
+    first.assertNoErrors();
+    replacement.assertNoErrors();
+  } finally {
+    initialize.resolve({ userAgent: "codex/0.150.0" });
+    await commands;
+    await session.close();
+    rmSync(codexHome, { recursive: true, force: true });
   }
 });
 
