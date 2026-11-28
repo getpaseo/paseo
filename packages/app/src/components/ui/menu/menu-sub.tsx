@@ -8,7 +8,7 @@ import {
 } from "react";
 import { Text, View, type PointerEvent } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ChevronRight } from "lucide-react-native";
+import { Check, ChevronRight } from "lucide-react-native";
 import type { Theme } from "@/styles/theme";
 import { useMenuContext, useMenuDepth } from "./menu-context";
 import { isSubPageOpen } from "./menu-navigation";
@@ -17,6 +17,7 @@ import { MenuItem } from "./menu-item";
 import { isHoverPointer } from "./menu-pointer";
 
 const ThemedChevronRight = withUnistyles(ChevronRight);
+const ThemedCheck = withUnistyles(Check);
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 /**
@@ -33,6 +34,7 @@ export function MenuSubTrigger({
   id,
   value,
   indicator = false,
+  selected,
   leading,
   disabled,
   testID,
@@ -44,6 +46,8 @@ export function MenuSubTrigger({
   value?: string;
   /** Marks the branch as holding a non-default setting, e.g. an active filter. */
   indicator?: boolean;
+  /** This submenu row is the selected choice. */
+  selected?: boolean;
   /**
    * A mark for the leading slot. Root rows go without one — see docs/menus.md — but a trigger
    * standing in a list of options has to keep their rail, or it reads as a row that slipped out
@@ -88,8 +92,8 @@ export function MenuSubTrigger({
   );
 
   const trailing = useMemo(
-    () => <MenuSubTrailing value={value} indicator={indicator} />,
-    [value, indicator],
+    () => <MenuSubTrailing value={value} indicator={indicator} selected={selected} />,
+    [value, indicator, selected],
   );
 
   return (
@@ -105,6 +109,7 @@ export function MenuSubTrigger({
         disabled={disabled}
         onSelect={handleSelect}
         leading={leading}
+        selected={selected}
         trailing={trailing}
         testID={testID}
       >
@@ -117,9 +122,11 @@ export function MenuSubTrigger({
 function MenuSubTrailing({
   value,
   indicator,
+  selected,
 }: {
   value?: string;
   indicator: boolean;
+  selected?: boolean;
 }): ReactElement {
   return (
     <View style={styles.trailing}>
@@ -129,6 +136,9 @@ function MenuSubTrailing({
         </Text>
       ) : null}
       {indicator ? <View style={styles.indicator} testID="menu-sub-indicator" /> : null}
+      {selected ? (
+        <ThemedCheck size={16} uniProps={mutedIconMapping} testID="menu-sub-selected-check" />
+      ) : null}
       <ThemedChevronRight size={14} uniProps={mutedIconMapping} />
     </View>
   );
