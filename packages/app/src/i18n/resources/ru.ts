@@ -228,7 +228,6 @@ export const ru: TranslationResources = {
     thinking: {
       title: "Рассуждения",
       unknown: "Неизвестно",
-      extraHigh: "Очень высокий",
       select: "Выбрать уровень рассуждений",
       selectWithValue: "Выбрать уровень рассуждений ({{value}})",
     },

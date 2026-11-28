@@ -229,7 +229,6 @@ export const fr: TranslationResources = {
     thinking: {
       title: "Réflexion",
       unknown: "Inconnu",
-      extraHigh: "Très élevé",
       select: "Choisir le niveau de réflexion",
       selectWithValue: "Choisir le niveau de réflexion ({{value}})",
     },
