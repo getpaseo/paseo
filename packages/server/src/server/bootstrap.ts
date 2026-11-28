@@ -1394,6 +1394,8 @@ export async function createPaseoDaemon(
     const workspace = await workspaceProvisioning.createWorkspaceForDirectory(
       input.cwd,
       resolveFirstAgentPromptTitle(input.firstAgentContext),
+      undefined,
+      { inheritWorktreeProject: true },
     );
     workspaceAutoName.scheduleForDirectory({
       workspaceId: workspace.workspaceId,

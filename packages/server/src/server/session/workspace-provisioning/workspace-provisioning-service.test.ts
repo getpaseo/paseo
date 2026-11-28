@@ -210,6 +210,38 @@ test("fresh non-git directory creates a directory workspace at the exact path", 
   expect(workspace.cwd).toBe(dir);
 });
 
+test("a managed worktree without a source workspace can inherit its repository project", async () => {
+  const repo = path.join(tmpDir, "repo");
+  const cwd = path.join(tmpDir, "worktree");
+  mkdirSync(path.join(cwd, ".git"), { recursive: true });
+  gitRoots.add(repo);
+  gitRoots.add(cwd);
+  const git = gitService();
+  const service = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
+    workspaceRegistry,
+    projectRegistry,
+    workspaceGitService: {
+      ...git,
+      getCheckout: async (directory) => ({
+        ...(await git.getCheckout(directory)),
+        isPaseoOwnedWorktree: directory === cwd,
+        mainRepoRoot: directory === cwd ? repo : null,
+      }),
+    },
+    isDirectory,
+    logger,
+  });
+  const project = await service.findOrCreateProjectForDirectory(repo);
+
+  const workspace = await service.createWorkspaceForDirectory(cwd, null, undefined, {
+    inheritWorktreeProject: true,
+  });
+
+  expect(workspace).toMatchObject({ cwd, projectId: project.projectId });
+  expect(await projectRegistry.list()).toEqual([project]);
+});
+
 test("workspace parentage survives reload and parent archive without changing placement", async () => {
   const cwd = path.join(tmpDir, "plain");
   const parent = await provisioning.createWorkspaceForDirectory(cwd);
