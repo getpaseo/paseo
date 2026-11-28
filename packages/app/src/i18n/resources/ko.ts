@@ -2,6 +2,14 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  clientCertificate: {
+    title: "클라이언트 인증서(mTLS)",
+    none: "선택한 클라이언트 인증서 없음",
+    scope: "{{host}}:{{port}}에만 사용됩니다. 변경 후 다시 연결하세요.",
+    choose: "인증서 선택",
+    remove: "선택 해제",
+    failed: "클라이언트 인증서를 업데이트할 수 없습니다. 다시 시도하세요.",
+  },
   pluginCombobox: {
     searching: "검색 중…",
     empty: "결과 없음",

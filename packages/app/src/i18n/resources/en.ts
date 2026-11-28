@@ -1,6 +1,14 @@
 import { pluginGallery } from "./plugin-gallery";
 
 export const en = {
+  clientCertificate: {
+    title: "Client certificate (mTLS)",
+    none: "No client certificate selected",
+    scope: "Only for {{host}}:{{port}}. Reconnect after changing.",
+    choose: "Choose certificate",
+    remove: "Remove selection",
+    failed: "Unable to update the client certificate. Try again.",
+  },
   pluginCombobox: {
     searching: "Searching…",
     empty: "No results",

@@ -38,6 +38,8 @@ import {
 } from "@/types/host-connection";
 import { formatLatency } from "@/utils/latency";
 
+import { ClientCertificateField } from "@/components/mtls/client-certificate-field";
+
 const ThemedPlus = withUnistyles(Plus);
 const ThemedServer = withUnistyles(Server);
 const ThemedTrash2 = withUnistyles(Trash2);
@@ -263,14 +265,23 @@ function ClientHostRouteRow({
   );
 
   return (
-    <SettingsRow label={title} labelAccessory={activeBadge} hint={endpoint}>
-      <View style={styles.routeTrailing}>
-        <Text style={latencyError ? styles.latencyError : styles.latencyText}>{latencyText}</Text>
-        <Button variant="ghost" textStyle={styles.destructiveText} onPress={handlePressRemove}>
-          {t("settings.host.connections.removeAction")}
-        </Button>
-      </View>
-    </SettingsRow>
+    <View>
+      <SettingsRow label={title} labelAccessory={activeBadge} hint={endpoint}>
+        <View style={styles.routeTrailing}>
+          <Text style={latencyError ? styles.latencyError : styles.latencyText}>{latencyText}</Text>
+          <Button variant="ghost" textStyle={styles.destructiveText} onPress={handlePressRemove}>
+            {t("settings.host.connections.removeAction")}
+          </Button>
+        </View>
+      </SettingsRow>
+      {connection.type === "directTcp" ? (
+        <ClientCertificateField
+          host={connection.endpoint}
+          port="6767"
+          useTls={connection.useTls ?? false}
+        />
+      ) : null}
+    </View>
   );
 }
 

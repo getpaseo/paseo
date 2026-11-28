@@ -18,6 +18,8 @@ import { Button } from "@/components/ui/button";
 import { PairingTargetTracker } from "@/components/pair-link-credentials";
 import { buildDirectConnectionUri } from "@/components/direct-connection-host";
 
+import { ClientCertificateField } from "@/components/mtls/client-certificate-field";
+
 const FLEX_ONE_STYLE = { flex: 1 } as const;
 
 interface DirectConnectionDraft {
@@ -487,6 +489,8 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
         </View>
         <Text style={styles.label}>{t("pairing.direct.fields.useSsl")}</Text>
       </PressHighlight>
+
+      <ClientCertificateField host={host} port={port} useTls={useTls} disabled={isSaving} />
 
       <View style={styles.field}>
         <Text style={styles.label}>{t("pairing.direct.fields.password")}</Text>

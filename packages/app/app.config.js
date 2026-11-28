@@ -7,6 +7,7 @@ const withAndroidOptionalCamera = require("./plugins/with-android-optional-camer
 const withAndroidProfileable = require("./plugins/with-android-profileable");
 const withFdroidAutolinking = require("./plugins/with-fdroid-autolinking");
 const withPasteInput = require("./plugins/with-paste-input");
+const withAndroidMtls = require("./modules/paseo-mtls/app.plugin");
 const withAndroidScroll = require("./modules/paseo-scroll/app.plugin");
 const withAndroidDisplayMetrics = require("./modules/paseo-display-metrics/app.plugin");
 const { getNativeReleaseVersion } = require("./native-release-version");
@@ -148,6 +149,7 @@ export default {
       "expo-router",
       withPasteInput,
       withAndroidScroll,
+      withAndroidMtls,
       withAndroidDisplayMetrics,
       withAndroidIgnoreBoldText,
       [withAndroidAsyncStorageSize, 64],

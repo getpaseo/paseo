@@ -2,6 +2,14 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  clientCertificate: {
+    title: "客户端证书（mTLS）",
+    none: "未选择客户端证书",
+    scope: "仅用于 {{host}}:{{port}}。更改后请重新连接。",
+    choose: "选择证书",
+    remove: "取消选择",
+    failed: "无法更新客户端证书。请重试。",
+  },
   pluginCombobox: {
     searching: "搜索中…",
     empty: "无结果",

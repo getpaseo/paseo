@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { File as FSFile, Paths } from "expo-file-system";
-import * as LegacyFileSystem from "expo-file-system/legacy";
+import { downloadFile } from "@/native/download-file";
 import * as Sharing from "expo-sharing";
 import type { HostProfile } from "@/types/host-connection";
 import { buildDaemonWebSocketUrl } from "@/utils/daemon-endpoints";
@@ -156,13 +156,13 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
 
       const downloadStartTime = Date.now();
       const targetFile = resolveDownloadTargetFile(resolvedFileName);
-      const downloadResumable = LegacyFileSystem.createDownloadResumable(
-        downloadUrl,
-        targetFile.uri,
-        downloadTarget.authHeader
-          ? { headers: { Authorization: downloadTarget.authHeader } }
+      const savedUri = await downloadFile({
+        url: downloadUrl,
+        destination: targetFile.uri,
+        headers: downloadTarget.authHeader
+          ? { Authorization: downloadTarget.authHeader }
           : undefined,
-        (data) => {
+        onProgress: (data) => {
           const now = Date.now();
           const { totalBytesWritten, totalBytesExpectedToWrite } = data;
 
@@ -184,16 +184,11 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
             eta,
           });
         },
-      );
-
-      const result = await downloadResumable.downloadAsync();
-      if (!result) {
-        throw new Error(i18n.t("downloads.cancelled"));
-      }
+      });
 
       get().completeDownload(id);
 
-      await shareSavedFile(result.uri, tokenResponse.mimeType, resolvedFileName);
+      await shareSavedFile(savedUri, tokenResponse.mimeType, resolvedFileName);
     } catch (error) {
       const message = error instanceof Error ? error.message : i18n.t("downloads.failed");
       get().failDownload(id, message);
