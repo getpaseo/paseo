@@ -28,6 +28,12 @@ import {
   type SDKSystemMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import pLimit from "p-limit";
+import {
+  archiveSession as claudeArchiveSession,
+  getSessionInfo as claudeGetSessionInfo,
+  unarchiveSession as claudeUnarchiveSession,
+} from "@anthropic-ai/claude-agent-sdk";
 import type { Logger } from "pino";
 import {
   mapClaudeCanceledToolCall,
@@ -105,7 +111,12 @@ import {
   type ClaudeRewindSdk,
 } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
-import { claudeConfigDir, claudeProjectDirSync, claudeTranscriptPath } from "./project-dir.js";
+import {
+  claudeConfigDir,
+  claudeProjectDir,
+  claudeProjectDirSync,
+  claudeTranscriptPath,
+} from "./project-dir.js";
 import {
   compareWithLatestRelease,
   fetchHomebrewCaskVersion,
@@ -1997,12 +2008,37 @@ export class ClaudeAgentClient implements AgentClient {
     signal.throwIfAborted();
     if (!rootExists) return [];
     const limit = options?.limit ?? 20;
-    const scanLimit = Math.min(options?.scanLimit ?? limit * 3, 500);
-    const candidates = await collectRecentClaudeSessions(sessionsRoot, scanLimit, {
+    const scanLimit = Math.min(options?.scanLimit ?? limit * 3, CLAUDE_IMPORT_SCAN_CAP);
+    // Sessions Claude Code reports archived don't use up the scan: it reads on past them, up to the scan cap.
+    const recent = await collectRecentClaudeSessions(sessionsRoot, CLAUDE_IMPORT_SCAN_CAP, {
       rootIsProjectDir: Boolean(options?.cwd),
       logger: this.logger,
     });
-    const results = await this.scheduleImportDescriptors(candidates, signal);
+    const checkArchive = claudeSdkUsesConfigDir(configDir);
+    const archiveCheck = pLimit(8);
+    const results: ClaudeImportDescriptorResult[] = [];
+    let budget = scanLimit;
+    let next = 0;
+    while (budget > 0 && next < recent.length) {
+      const batch = recent.slice(next, next + budget);
+      next += batch.length;
+      const read = await this.scheduleImportDescriptors(batch, signal);
+      const archived = checkArchive
+        ? await untilAborted(
+            Promise.all(
+              batch.map((candidate, index) =>
+                archiveCheck(() => this.isNativelyArchived(candidate, read[index]!, configDir)),
+              ),
+            ),
+            signal,
+          )
+        : [];
+      for (const [index, result] of read.entries()) {
+        if (archived[index]) continue;
+        results.push(result);
+        budget -= 1;
+      }
+    }
     const failures = results.filter((result) => result.type === "unreadable");
     if (failures.length > 0 && failures.length === results.length) {
       const errors = failures.map((result) => result.error);
@@ -2069,6 +2105,89 @@ export class ClaudeAgentClient implements AgentClient {
       resumeSession: this.resumeSession.bind(this),
       ...(renamedTitle ? { config: { title: renamedTitle } } : {}),
     });
+  }
+
+  async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+    const sessionId = this.nativeArchiveSessionId(handle, "archive");
+    if (sessionId) await claudeArchiveSession(sessionId);
+  }
+
+  async unarchiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+    const sessionId = this.nativeArchiveSessionId(handle, "unarchive");
+    if (!sessionId) return;
+    try {
+      // Only a session archived beside some copy of its transcript: unarchiving writes a mark beside every copy, and
+      // resuming works without it (a prompt sent after the archive unarchives the session).
+      const projects = path.join(claudeConfigDir(this.buildProviderEnv()), "projects");
+      const folders = await fsPromises.readdir(projects).catch(() => [] as string[]);
+      const marks = await Promise.all(
+        folders.map((folder) =>
+          archivedSince(path.join(projects, folder, sessionId, "archived.json")),
+        ),
+      );
+      if (marks.some((at) => at !== null)) await claudeUnarchiveSession(sessionId);
+    } catch (error) {
+      this.logger.warn(
+        { err: error, sessionId },
+        "Failed to unarchive native Claude session (best-effort)",
+      );
+    }
+  }
+
+  private nativeArchiveSessionId(
+    handle: AgentPersistenceHandle,
+    action: "archive" | "unarchive",
+  ): string | null {
+    const sessionId = handle.nativeHandle ?? handle.sessionId;
+    if (!sessionId) return null;
+    const configDir = claudeConfigDir(this.buildProviderEnv());
+    if (claudeSdkUsesConfigDir(configDir)) return sessionId;
+    this.logger.warn(
+      { sessionId, configDir, sdkConfigDir: claudeConfigDir(process.env) },
+      "Skipping native Claude " +
+        action +
+        ": the Agent SDK only reads the daemon's own Claude config dir",
+    );
+    return null;
+  }
+
+  // Whether Claude Code reports this transcript's session archived (archiveSession above, or any other SDK client).
+  // Only a transcript with an archived.json beside it costs more than a stat; for those the SDK decides, since a
+  // prompt sent after the archive unarchives the session. The SDK marks every copy of a session, so the lookup names
+  // the transcript's own project when its cwd leads there, and another copy doesn't answer for this one.
+  private async isNativelyArchived(
+    candidate: ClaudeSessionCandidate,
+    result: ClaudeImportDescriptorResult,
+    configDir: string,
+  ): Promise<boolean> {
+    if (result.type !== "parsed" || !result.descriptor) return false;
+    const sessionId = path.basename(candidate.path, ".jsonl");
+    const projectDir = path.dirname(candidate.path);
+    // No mark, or one that says unarchived (unarchiveSession leaves it behind), is not archived for the SDK either.
+    const archivedAt = await archivedSince(path.join(projectDir, sessionId, "archived.json"));
+    if (archivedAt === null) return false;
+    // Written to since the archive: the session was used again. The SDK finds a later prompt only in the first and
+    // last 64 KiB of the transcript, so a prompt followed by a long reply would read as still archived; listed instead.
+    const stats = await fsPromises.stat(candidate.path).catch(() => null);
+    if (!stats || stats.mtimeMs > archivedAt + 1000) return false;
+    const cwd = result.descriptor.cwd;
+    const ownProject = Boolean(cwd) && (await claudeProjectDir(cwd, { configDir })) === projectDir;
+    try {
+      const info = await claudeGetSessionInfo(sessionId, ownProject ? { dir: cwd } : undefined);
+      // The SDK may have read another copy (this one's project no longer matches its cwd): its answer counts only
+      // for the transcript it read, so a copy it can't be shown to have read stays listed rather than hidden.
+      return (
+        info?.archived === true &&
+        info.fileSize === stats.size &&
+        info.lastModified === stats.mtime.getTime()
+      );
+    } catch (error) {
+      this.logger.warn(
+        { err: error, path: candidate.path },
+        "Cannot read Claude session archive state",
+      );
+      return false;
+    }
   }
 
   async isAvailable(): Promise<boolean> {
@@ -7339,6 +7458,43 @@ function createAsyncMessageInput<T>(): AsyncMessageInput<T> {
       },
     },
   };
+}
+
+const CLAUDE_IMPORT_SCAN_CAP = 500;
+
+// The work's result, or the signal's reason as soon as it aborts (the work itself is left to settle).
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
+// When an archive mark that says archived was written (the SDK writes {archived, at, by}), in ms (-Infinity for an
+// unreadable time), or null: no mark, one that says unarchived, or one that can't be read or parsed, as the SDK's own
+// reader treats it.
+async function archivedSince(mark: string): Promise<number | null> {
+  try {
+    const record = JSON.parse(await fsPromises.readFile(mark, "utf8")) as {
+      archived?: unknown;
+      at?: unknown;
+    };
+    if (record.archived !== true) return null;
+    const at = typeof record.at === "string" ? Date.parse(record.at) : Number.NaN;
+    return Number.isNaN(at) ? Number.NEGATIVE_INFINITY : at;
+  } catch {
+    return null;
+  }
+}
+
+// The Agent SDK's session functions (archiveSession, getSessionInfo, …) look under the daemon's own CLAUDE_CONFIG_DIR
+// (or ~/.claude) and take no config dir. A provider that points Claude Code elsewhere through its env would have its
+// archive marks written to, and read from, the wrong home, so its sessions get none.
+function claudeSdkUsesConfigDir(configDir: string): boolean {
+  const resolved = (dir: string) => path.resolve(dir).normalize("NFC");
+  return resolved(configDir) === resolved(claudeConfigDir(process.env));
 }
 
 interface ClaudeSessionCandidate {
