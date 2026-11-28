@@ -92,9 +92,6 @@ appImage:
 win:
   artifactName: "Paseo-Setup-${version}-${arch}.${ext}"
   icon: assets/icon.ico
-  extraResources:
-    - from: bin/paseo.cmd
-      to: bin/paseo.cmd
   target:
     - target: nsis
       arch:

@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { resolveCliInstallSourcePath, resolveCliShimPath } from "./path";
+import { cliTargetFileName, resolveCliInstallSourcePath, resolveCliShimPath } from "./path";
+import {
+  canReplaceWindowsCliExecutable,
+  isLegacyWindowsCliTrampoline,
+  isWindowsCliForwardTarget,
+  legacyWindowsCmdTrampoline,
+  windowsCliForwardTargetContents,
+} from "./windows-cli-install";
 
 describe("cli-install-path", () => {
   it("uses the bundled shim for packaged macOS installs", () => {
@@ -44,9 +51,9 @@ describe("cli-install-path", () => {
         platform: "win32",
         isPackaged: true,
         executablePath: "C:\\Users\\user\\AppData\\Local\\Programs\\Paseo\\Paseo.exe",
-        shimPath: "C:\\Users\\user\\AppData\\Local\\Programs\\Paseo\\resources\\bin\\paseo.cmd",
+        shimPath: "C:\\Users\\user\\AppData\\Local\\Programs\\Paseo\\resources\\bin\\paseo.exe",
       }),
-    ).toBe("C:\\Users\\user\\AppData\\Local\\Programs\\Paseo\\resources\\bin\\paseo.cmd");
+    ).toBe("C:\\Users\\user\\AppData\\Local\\Programs\\Paseo\\resources\\bin\\paseo.exe");
 
     expect(
       resolveCliInstallSourcePath({
@@ -72,6 +79,35 @@ describe("CLI executable selection", () => {
         resolveWorkspaceCli,
       }),
     ).toBe(resolveWorkspaceCli());
+  });
+
+  it("uses the packaged Windows exe so PowerShell does not rewrite CLI arguments", () => {
+    expect(
+      resolveCliShimPath({
+        platform: "win32",
+        isPackaged: true,
+        executablePath: "C:\\Users\\user\\AppData\\Local\\Programs\\Paseo\\Paseo.exe",
+        resolveWorkspaceCli,
+      }),
+    ).toBe("C:\\Users\\user\\AppData\\Local\\Programs\\Paseo\\resources\\bin\\paseo.exe");
+    expect(cliTargetFileName("win32", true)).toBe("paseo.exe");
+    expect(cliTargetFileName("win32", false)).toBe("paseo.cmd");
+  });
+
+  it("recognizes the legacy Windows cmd trampoline that points at the bundled cmd", () => {
+    const bundledExe =
+      "C:\\Users\\user\\AppData\\Local\\Programs\\Paseo\\resources\\bin\\paseo.exe";
+    const legacyCmd = "C:\\Users\\user\\AppData\\Local\\Programs\\Paseo\\resources\\bin\\paseo.cmd";
+    const trampoline = legacyWindowsCmdTrampoline(legacyCmd);
+
+    expect(isLegacyWindowsCliTrampoline(trampoline, bundledExe)).toBe(true);
+    expect(isWindowsCliForwardTarget(windowsCliForwardTargetContents(bundledExe), bundledExe)).toBe(
+      true,
+    );
+    expect(isLegacyWindowsCliTrampoline(trampoline, "C:\\other\\paseo.exe")).toBe(false);
+    expect(canReplaceWindowsCliExecutable(false, false)).toBe(true);
+    expect(canReplaceWindowsCliExecutable(true, true)).toBe(true);
+    expect(canReplaceWindowsCliExecutable(true, false)).toBe(false);
   });
 
   it("uses the application shim for a packaged launcher", () => {

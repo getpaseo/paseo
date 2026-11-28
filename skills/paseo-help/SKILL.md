@@ -79,7 +79,7 @@ If diagnosing the bundled daemon on a computer with Paseo Desktop installed, but
 
 - macOS: `/Applications/Paseo.app/Contents/Resources/bin/paseo`
 - Linux: `<install-dir>/resources/bin/paseo`
-- Windows: `C:\Program Files\Paseo\resources\bin\paseo.cmd`
+- Windows: `%LOCALAPPDATA%\Programs\Paseo\resources\bin\paseo.exe`
 
 Offer to fix the PATH or symlink; do not change shell configuration silently.
 
