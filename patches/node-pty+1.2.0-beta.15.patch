@@ -1,0 +1,16 @@
+diff --git a/node_modules/node-pty/lib/windowsPtyAgent.js b/node_modules/node-pty/lib/windowsPtyAgent.js
+index 90ffd8f..d9567b1 100644
+--- a/node_modules/node-pty/lib/windowsPtyAgent.js
++++ b/node_modules/node-pty/lib/windowsPtyAgent.js
+@@ -21,7 +21,10 @@ var conptyNative;
+  * has started.
+  */
+ var FLUSH_DATA_INTERVAL = 1000;
+-var CONNECTION_TIMEOUT = 5000;
++// Paseo: the output worker is a worker thread that reports ready by message. A busy event loop
++// or a loaded machine can delay that message past 5 s, and the spawn then fails with exit
++// code -1 before the program starts. Wait 30 s instead; a worker that fails still errors at once.
++var CONNECTION_TIMEOUT = 30000;
+ var defaultWindowsPtyAgentOptions = {
+     connectionTimeout: CONNECTION_TIMEOUT,
+     conoutConnectionFactory: function (conoutPipeName, useConptyDll) { return new windowsConoutConnection_1.ConoutConnection(conoutPipeName, useConptyDll); }
