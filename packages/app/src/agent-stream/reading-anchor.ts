@@ -10,7 +10,7 @@ const edgeOf = (row: RowGeometry, edge: DisclosureTriggerEdge) =>
   edge === "top" ? row.top : row.top + row.height;
 
 // A row must clear the reading line before the next row takes ownership.
-const READING_POSITION_OFFSET_PX = 8;
+export const READING_POSITION_OFFSET_PX = 8;
 export interface ReadingRowReplacements {
   get(id: string): string | undefined;
 }

@@ -1,6 +1,6 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONTENT_MAX_WIDTH } from "@/styles/theme";
 import type { StreamItem } from "@/types/stream";
 import type { DisclosureTriggerEdge, StreamRenderInput, StreamViewportHandle } from "./strategy";
@@ -57,11 +57,12 @@ type OlderHistoryInput = Pick<
 interface MountTimelineOptions {
   olderHistory?: OlderHistoryInput;
   isMobileBreakpoint?: boolean;
+  onReadingPositionChange?: StreamRenderInput["onReadingPositionChange"];
 }
 
 function mountTimeline(
   historyMounted: StreamItem[],
-  { olderHistory, isMobileBreakpoint = true }: MountTimelineOptions = {},
+  { olderHistory, isMobileBreakpoint = true, onReadingPositionChange }: MountTimelineOptions = {},
 ) {
   const strategy = createWebStreamStrategy({ isMobileBreakpoint });
   const viewportRef = React.createRef<StreamViewportHandle>();
@@ -80,6 +81,7 @@ function mountTimeline(
     routeBottomAnchorRequest: null,
     isAuthoritativeHistoryReady: true,
     onNearBottomChange: () => {},
+    onReadingPositionChange,
     onNearHistoryStart: async () => true,
     isLoadingOlderHistory: false,
     hasOlderHistory: false,
@@ -104,6 +106,8 @@ function mountTimeline(
   };
 
   return {
+    rowElement,
+    scrollContainer,
     render: (segments: Partial<StreamRenderInput["segments"]>) => act(() => render(segments)),
     hold: (rowId: string, apply: () => void, triggerEdge: DisclosureTriggerEdge = "top") =>
       act(() => viewportRef.current!.holdRow(rowId, apply, triggerEdge)),
@@ -137,6 +141,41 @@ function mountTimeline(
       }),
   };
 }
+
+it("follows new output and reports the visible row without measuring offscreen history", async () => {
+  const history = Array.from({ length: 32 }, (_, index) => row(index));
+  const onReadingPositionChange = vi.fn();
+  const timeline = mountTimeline(history, { onReadingPositionChange });
+  await timeline.settle();
+  expect(onReadingPositionChange).toHaveBeenLastCalledWith("message-30");
+
+  const offscreenMeasurement = vi.spyOn(timeline.rowElement("message-0"), "getBoundingClientRect");
+  timeline.render({ liveHead: [row(32)] });
+  await timeline.settle();
+
+  expect(timeline.distanceFromEnd()).toBe(0);
+  expect(onReadingPositionChange).toHaveBeenLastCalledWith("message-31");
+  expect(offscreenMeasurement).not.toHaveBeenCalled();
+});
+
+it("waits for layout before following a mutation inside a message", async () => {
+  const timeline = mountTimeline(Array.from({ length: 8 }, (_, index) => row(index)));
+  await timeline.settle();
+  const scrollTo = vi.spyOn(timeline.scrollContainer, "scrollTo");
+  const extraContent = document.createElement("div");
+  extraContent.style.height = "40px";
+
+  await act(async () => {
+    timeline.rowElement("message-7").append(extraContent);
+    // MutationObserver is delivered in this microtask checkpoint, before a frame.
+    await Promise.resolve();
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+  await timeline.settle();
+
+  expect(timeline.distanceFromEnd()).toBe(0);
+  expect(scrollTo).toHaveBeenCalled();
+});
 
 describe("web disclosure hold", () => {
   it.each([{ isMobileBreakpoint: true }, { isMobileBreakpoint: false }])(

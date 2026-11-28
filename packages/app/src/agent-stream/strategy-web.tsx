@@ -26,7 +26,7 @@ import type { Theme } from "@/styles/theme";
 import { WEB_SCROLLBAR_SIZE_PX } from "@/styles/web-scrollbar";
 import { DomOverlayScrollbar } from "@/components/ui/overlay-scrollbar/dom-overlay-scrollbar";
 import { estimateStreamItemHeight } from "./web-virtualization";
-import { createReadingAnchor } from "./reading-anchor";
+import { createReadingAnchor, READING_POSITION_OFFSET_PX } from "./reading-anchor";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
 import { useRevisedHistoryRows } from "./history-row-revision";
 import { createStreamStrategy } from "./strategy";
@@ -666,14 +666,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   );
 
   const scheduleStickToBottom = useCallback(() => {
-    if (!isActiveRef.current) {
-      return;
-    }
-    const scrollContainer = scrollContainerRef.current;
-    if (scrollContainer && isScrollContainerOverscrolledPastBottom(scrollContainer)) {
-      return;
-    }
-    if (pendingAutoScrollFrameRef.current !== null) {
+    if (!isActiveRef.current || pendingAutoScrollFrameRef.current !== null) {
       return;
     }
     pendingAutoScrollFrameRef.current = window.requestAnimationFrame(() => {
@@ -704,6 +697,22 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     const contentNode = contentRef.current;
     if (!scrollContainer || !contentNode) {
       onReadingPositionChange(null);
+      return;
+    }
+    if (followOutputRef.current) {
+      // Rows are mounted in vertical order. Find the first row crossing the reading
+      // line without taking a full anchor snapshot while following output.
+      const rows = contentNode.querySelectorAll<HTMLElement>("[data-history-row-id]");
+      const readingLine = scrollContainer.getBoundingClientRect().top + READING_POSITION_OFFSET_PX;
+      let first = 0;
+      let end = rows.length;
+      while (first < end) {
+        const middle = (first + end) >>> 1;
+        const bounds = rows[middle]!.getBoundingClientRect();
+        if (bounds.top + bounds.height > readingLine) end = middle;
+        else first = middle + 1;
+      }
+      onReadingPositionChange(rows[Math.min(first, rows.length - 1)]?.dataset.historyRowId ?? null);
       return;
     }
     onReadingPositionChange(readingAnchor.getReadingRowId(scrollContainer.scrollTop));
@@ -751,9 +760,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const reconcileReadingPosition = useStableEvent(() => {
     const container = scrollContainerRef.current;
     if (!isActiveRef.current || !container) return;
+    if (followOutputRef.current) {
+      readingAnchor.reset();
+      return;
+    }
     const rows = measureRows();
     if (!rows) return;
-    const shouldAnchor = !followOutputRef.current && !isJumpSettling();
+    const shouldAnchor = !isJumpSettling();
     if (!shouldAnchor) readingAnchor.reset();
     const correctedTop = readingAnchor.reconcile(
       container.scrollTop,
@@ -788,6 +801,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     reconcileReadingPosition();
   }, [
     contentWidth,
+    followOutput,
     isActive,
     segments,
     virtualRows,
@@ -800,6 +814,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     cancelPendingStickToBottom();
     if (followOutputRef.current) {
       setFollowOutput(false);
+      reconcileReadingPosition();
     }
     rearmHistoryStartFromUserIntent();
   });
@@ -1014,11 +1029,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     if (contentNode) {
       observer.observe(contentNode);
     }
-    // Paced reveal commits inside a message without rerendering this viewport.
-    // Observe those commits too, so the next frame sees the grown content at the
-    // bottom instead of waiting for the resize notification after animation frames.
+    // Paced reveal mutates individual messages. Coalesce those changes into one
+    // pending frame without forcing layout in the mutation observer. The resize
+    // observer still corrects changed geometry before paint.
     const contentChanges = new MutationObserver(() => {
-      if (isActiveRef.current && followOutputRef.current) forceStickToBottom();
+      if (followOutputRef.current) scheduleStickToBottom();
     });
     if (contentNode)
       contentChanges.observe(contentNode, { childList: true, characterData: true, subtree: true });
@@ -1034,6 +1049,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     scheduleHistoryStartPrependSettle,
     isHistoryStartSettling,
     forceStickToBottom,
+    scheduleStickToBottom,
     updateScrollMetrics,
     measureVirtualizedRows,
   ]);

@@ -209,6 +209,32 @@ test("sorts by creation or human prompt without changing picker name order", () 
   ]);
 });
 
+test("sorts project and workspace names numerically, breaking equivalent names by identity", () => {
+  const sessions = [
+    {
+      serverId: "host",
+      projects: [
+        project({ id: "p10", key: "p10", root: "/p10", name: "Project 10" }),
+        project({ id: "p2b", key: "p2b", root: "/p2b", name: "Project 2" }),
+        project({ id: "p2a", key: "p2a", root: "/p2a", name: "project 02" }),
+      ],
+      workspaces: [
+        { ...workspace("w10", "p2a", "/p2a"), name: "Workspace 10" },
+        { ...workspace("w2b", "p2a", "/p2a"), name: "Workspace 2" },
+        { ...workspace("w2a", "p2a", "/p2a"), name: "workspace 02" },
+      ],
+    },
+  ];
+
+  const sorted = buildWorkspaceStructureProjects({ sessions });
+
+  expect(sorted.map(({ viewKey, workspaceKeys }) => [viewKey, workspaceKeys])).toEqual([
+    ["p2a", ["host:w2a", "host:w2b", "host:w10"]],
+    ["p2b", []],
+    ["p10", []],
+  ]);
+});
+
 test("time ties use workspace identity so renaming cannot move Created rows", () => {
   const a = { ...workspace("a", "p", "/p"), name: "Z", createdAt: new Date("2026-01-01") };
   const b = { ...workspace("b", "p", "/p"), name: "A", createdAt: a.createdAt };

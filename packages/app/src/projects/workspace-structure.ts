@@ -49,6 +49,10 @@ interface ProjectDraft {
   workspaces: WorkspaceSortItem[];
 }
 
+// Sorting large directories calls this repeatedly. Supplying options to localeCompare
+// constructs a collator for each comparison.
+const compareNames = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" }).compare;
+
 /** The single app boundary that turns host-local projects into grouped display projects. */
 export function buildWorkspaceStructureProjects(input: {
   sessions: WorkspaceStructureSession[];
@@ -114,10 +118,8 @@ export function buildWorkspaceStructureProjects(input: {
     }))
     .sort(
       (left, right) =>
-        left.projectName.localeCompare(right.projectName, undefined, {
-          numeric: true,
-          sensitivity: "base",
-        }) || left.viewKey.localeCompare(right.viewKey),
+        compareNames(left.projectName, right.projectName) ||
+        left.viewKey.localeCompare(right.viewKey),
     );
 }
 
@@ -207,10 +209,8 @@ function getOrCreate<K, V>(map: Map<K, V>, key: K, create: () => V): V {
 
 function compareWorkspaceStructureItems(left: WorkspaceSortItem, right: WorkspaceSortItem): number {
   return (
-    left.workspaceName.localeCompare(right.workspaceName, undefined, {
-      numeric: true,
-      sensitivity: "base",
-    }) || left.workspaceKey.localeCompare(right.workspaceKey)
+    compareNames(left.workspaceName, right.workspaceName) ||
+    left.workspaceKey.localeCompare(right.workspaceKey)
   );
 }
 
