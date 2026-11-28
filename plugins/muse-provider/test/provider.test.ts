@@ -46,6 +46,7 @@ async function harness(
   scenario = "text-reasoning",
   env: Record<string, string> = {},
   providerOptions?: Record<string, unknown>,
+  connectCapabilities: readonly string[] = PROVIDER_CAPABILITIES,
 ) {
   const root = await mkdtemp(path.join(os.tmpdir(), "muse-provider-test-"));
   roots.push(root);
@@ -63,7 +64,7 @@ async function harness(
   const connection = await provider.connect({
     launch,
     versions: [1],
-    capabilities: PROVIDER_CAPABILITIES,
+    capabilities: connectCapabilities,
   });
   connections.push(connection);
   const events: ProviderEvent[] = [];
@@ -1300,6 +1301,20 @@ for (const variant of ["tool", "dedicated", "workflow"]) {
     ).toHaveLength(1);
   });
 }
+
+test("subagent children are not projected when session.subsession is not negotiated", async () => {
+  const h = await harness(
+    "subagent",
+    { MUSE_TEST_CHILD: "tool" },
+    undefined,
+    PROVIDER_CAPABILITIES.filter((capability) => capability !== "session.subsession"),
+  );
+  await h.open();
+  await h.prompt();
+  await h.wait((e) => e.type === "session.turn" && e.state === "completed");
+  expect(h.events.filter((e) => e.type === "session.opened" && e.parentSessionId)).toHaveLength(0);
+  expect((await h.recorded()).filter((f) => f.method === "session/read")).toEqual([]);
+});
 test("gap backfill repairs a missing completion without duplicating item revisions", async () => {
   const h = await harness("text-reasoning", { MUSE_TEST_GAP: "1" });
   await h.open();
