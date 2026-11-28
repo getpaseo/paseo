@@ -18,6 +18,7 @@ import {
   Text,
   Pressable,
   Platform,
+  type LayoutChangeEvent,
   type PressableStateCallbackType,
   type StyleProp,
   type ViewStyle,
@@ -73,7 +74,7 @@ import {
 import { ToolCallSheetProvider } from "@/components/tool-call-sheet";
 import { createStreamPresentation } from "./presentation";
 import { OverviewToolCallGroupView } from "@/tool-calls/detail-level/overview/view";
-import { IndentRail } from "@/components/indent-rail";
+import { IndentRail, INDENT_RAIL_CONTENT_OFFSET } from "@/components/indent-rail";
 import { TurnSummaryLine } from "./turn-collapse/summary-line";
 import { type AgentStreamRenderModel, buildAgentStreamRenderModel } from "./model";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
@@ -118,6 +119,19 @@ import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
 import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins/timeline";
+import { ItemTimeLine } from "./item-time-line";
+import { readMeasuredWidth } from "@/hooks/use-container-width";
+import { SPACING } from "@/styles/theme";
+import {
+  continuesAssistantMessage,
+  groupItemTime,
+  itemTimeKind,
+  resolveItemTimeSideWidth,
+  showsItemTime,
+  timeHistory,
+  timeItems,
+  type ItemTime,
+} from "./item-times";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -367,6 +381,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const { t } = useTranslation();
     const autoExpandReasoning = useSettings((settings) => settings.autoExpandReasoning);
     const chatDisplay = useSettings((settings) => settings.chatDisplay);
+    const itemTimes = useSettings((settings) => settings.itemTimes);
     const contentMaxWidth = useSettings(resolveContentMaxWidth);
     const viewportRef = useRef<StreamViewportHandle | null>(null);
     const pendingClientMessageIds = useMemo(
@@ -616,6 +631,34 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     }, [baseRenderModel.segments.liveHead, mountedHistoryMessageIds]);
     const outlineRail = useChatOutlineRail();
     const outlineInset = outlineRail.inset;
+    // Item times go in the margin beside the chat column when the pane leaves room for them.
+    // Only the stepped label width is state, so resizing the window does not redraw every row.
+    const paneWidthRef = useRef<number | null>(null);
+    const [itemTimeSideWidth, setItemTimeSideWidth] = useState<number | null>(null);
+    const updateItemTimeSideWidth = useCallback(() => {
+      const paneWidth = paneWidthRef.current;
+      if (paneWidth === null) return;
+      const next = resolveItemTimeSideWidth({
+        paneWidth,
+        contentMaxWidth,
+        listPaddingHorizontal: SPACING[4],
+        columnPaddingHorizontal: SPACING[2],
+        outlineInset,
+      });
+      setItemTimeSideWidth((current) => (current === next ? current : next));
+    }, [contentMaxWidth, outlineInset]);
+    useEffect(() => {
+      updateItemTimeSideWidth();
+    }, [updateItemTimeSideWidth]);
+    const handlePaneLayout = useCallback(
+      (event: LayoutChangeEvent) => {
+        const paneWidth = readMeasuredWidth(event);
+        if (paneWidth === null) return;
+        paneWidthRef.current = paneWidth;
+        updateItemTimeSideWidth();
+      },
+      [updateItemTimeSideWidth],
+    );
     const chatOutline = useChatOutline({
       agentId,
       serverId: resolvedServerId,
@@ -851,6 +894,33 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const getToolCallGroup = useStableEvent((hostId: string) =>
       presentation.groupsByHostId.get(hostId),
     );
+    // Times come from the source rows, before turns fold and tool calls group, so a step is
+    // timed from the row that really came before it. History is timed once per history array;
+    // only the live rows are timed on each streamed update.
+    const timedHistory = useMemo(() => timeHistory(effectiveStreamItems), [effectiveStreamItems]);
+    const liveItemTimes = useMemo(() => {
+      const times = new Map<string, ItemTime>();
+      timeItems(effectiveStreamHead ?? EMPTY_STREAM_HEAD, timedHistory.end, times);
+      return times;
+    }, [effectiveStreamHead, timedHistory]);
+    const getItemTime = useStableEvent(
+      (itemId: string): ItemTime | undefined =>
+        liveItemTimes.get(itemId) ?? timedHistory.times.get(itemId),
+    );
+    const resolveRowItemTime = useCallback(
+      (layoutItem: StreamLayoutItem): ItemTime | undefined => {
+        const item = layoutItem.item;
+        const kind = itemTimeKind(item);
+        if (!kind || !showsItemTime(itemTimes, kind)) return undefined;
+        if (continuesAssistantMessage(item, layoutItem.belowItem)) return undefined;
+        if (item.kind === "tool_call" || item.kind === "thought") {
+          const group = getToolCallGroup(item.id);
+          if (group) return groupItemTime(group.run.calls, getItemTime);
+        }
+        return getItemTime(item.id);
+      },
+      [getItemTime, getToolCallGroup, itemTimes],
+    );
     const renderToolCallItem = useCallback(
       (
         layoutItem: StreamLayoutItem,
@@ -964,11 +1034,39 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const renderStreamItem = useCallback<RenderStreamItem>(
       (item, layoutItem) => {
-        const content = renderStreamItemContent(item, layoutItem);
+        const rowContent = renderStreamItemContent(item, layoutItem);
+        const time = rowContent ? resolveRowItemTime(layoutItem) : undefined;
+        const turnIndent = getTurnIndent(layoutItem);
+        let content = rowContent;
+        if (time) {
+          const align = layoutItem.item.kind === "user_message" ? "end" : "start";
+          const indented = turnIndent === "nested" || turnIndent === "lastNested";
+          const timeLine = (
+            <ItemTimeLine
+              time={time}
+              align={align}
+              sideWidth={itemTimeSideWidth}
+              sideInset={align === "start" && indented ? INDENT_RAIL_CONTENT_OFFSET : 0}
+            />
+          );
+          // A margin time line is placed against its row, so the row gets a box of its own.
+          content =
+            itemTimeSideWidth === null ? (
+              <>
+                {rowContent}
+                {timeLine}
+              </>
+            ) : (
+              <View>
+                {rowContent}
+                {timeLine}
+              </View>
+            );
+        }
         return renderStreamItemWithTurnFooter({
           content,
           layoutItem,
-          turnIndent: getTurnIndent(layoutItem),
+          turnIndent,
           strategy: streamRenderStrategy,
           supportsTimelineCursor: supportsAgentForkContextCursor,
           onForkAssistantTurn: readOnly ? undefined : handleForkAssistantTurn,
@@ -977,8 +1075,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [
         getTurnIndent,
         handleForkAssistantTurn,
+        itemTimeSideWidth,
         readOnly,
         renderStreamItemContent,
+        resolveRowItemTime,
         streamRenderStrategy,
         supportsAgentForkContextCursor,
       ],
@@ -1206,6 +1306,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 </UserMessageExpansionContext.Provider>
               </ToolCallExpansionContext.Provider>
             </MessageOuterSpacingProvider>
+            <View style={stylesheet.paneMeasure} pointerEvents="none" onLayout={handlePaneLayout} />
             {outlineInset > 0 && chatOutline.prompts.length >= 2 ? (
               <ChatOutlineRail
                 prompts={chatOutline.prompts}
@@ -1714,6 +1815,13 @@ const stylesheet = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.surface0,
+  },
+  paneMeasure: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    height: 0,
   },
   contentWrapper: {
     width: "100%",

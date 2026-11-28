@@ -256,6 +256,9 @@ export const ja: TranslationResources = {
     empty: "このエージェントとチャットを始めましょう...",
     scrollToBottom: "下にスクロール",
     historyLoadFailed: "エージェントの履歴を読み込めませんでした",
+    itemTime: {
+      withDuration: "{{time}} · 所要 {{duration}}",
+    },
     messageCapped: "このメッセージは上限で切り詰められました（{{bytes}}バイト）。",
     permission: {
       rejectedPlan: "却下されたプラン",
@@ -2694,6 +2697,17 @@ export const ja: TranslationResources = {
         label: "ターミナルスクロールバック",
         description: "組み込みターミナルバッファに保持する行数",
         accessibilityLabel: "ターミナルスクロールバック行数",
+      },
+      itemTimes: {
+        title: "項目の時刻",
+        enabled: {
+          label: "項目の時刻を表示",
+          description: "各項目が終了した時刻と、そのステップにかかった時間を項目の下に表示します",
+        },
+        assistant: "返信",
+        toolCalls: "ツール呼び出し",
+        thinking: "思考",
+        user: "自分のメッセージ",
       },
       autoExpandReasoning: {
         label: "常に思考プロセスを展開",

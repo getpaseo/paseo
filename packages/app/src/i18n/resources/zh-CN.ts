@@ -254,6 +254,9 @@ export const zhCN: TranslationResources = {
     empty: "开始和这个 Agent 对话...",
     scrollToBottom: "滚动到底部",
     historyLoadFailed: "无法加载智能体历史记录",
+    itemTime: {
+      withDuration: "{{time}} · 用时 {{duration}}",
+    },
     messageCapped: "此消息已被截断（{{bytes}} 字节）。",
     permission: {
       rejectedPlan: "已拒绝的计划",
@@ -2640,6 +2643,17 @@ export const zhCN: TranslationResources = {
         label: "终端回滚",
         description: "内置终端缓冲区保留的行数",
         accessibilityLabel: "终端回滚行数",
+      },
+      itemTimes: {
+        title: "条目时间",
+        enabled: {
+          label: "显示条目时间",
+          description: "在每个条目下方显示其完成时间及该步骤所用时长",
+        },
+        assistant: "回复",
+        toolCalls: "工具调用",
+        thinking: "思考",
+        user: "你的消息",
       },
       autoExpandReasoning: {
         label: "始终展开推理过程",

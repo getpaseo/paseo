@@ -228,6 +228,42 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.chatOutlineEnabled).toBe(false);
   });
 
+  it("shows item times for agent rows by default, also for settings saved before them", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ chatOutlineEnabled: true }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.itemTimes).toEqual({
+      enabled: true,
+      assistant: true,
+      toolCalls: true,
+      thinking: true,
+      user: false,
+    });
+  });
+
+  it("fills an item-times preference that misses a field and keeps the rest", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ itemTimes: { enabled: false, toolCalls: false } }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.itemTimes).toEqual({
+      enabled: false,
+      assistant: true,
+      toolCalls: false,
+      thinking: true,
+      user: false,
+    });
+  });
+
   it("uses Enter to send by default", async () => {
     const deps = makeDeps();
 

@@ -153,6 +153,39 @@ export function formatMessageTimestamp(date: Date, now: Date = new Date()): stri
   return `${dateLabel}, ${time}`;
 }
 
+let cachedSecondsFormatter: Intl.DateTimeFormat | null = null;
+function getSecondsFormatter(): Intl.DateTimeFormat {
+  if (cachedSecondsFormatter) return cachedSecondsFormatter;
+  cachedSecondsFormatter = new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: getTimeFormatter().resolvedOptions().hourCycle,
+  });
+  return cachedSecondsFormatter;
+}
+
+/**
+ * Format the time a chat row finished, to the second, because the steps of one turn are often
+ * seconds apart. Days are named the way `formatMessageTimestamp` names them.
+ */
+export function formatItemTimestamp(date: Date, now: Date = new Date()): string {
+  const time = getSecondsFormatter().format(date);
+  const daysAgo = localCalendarDaysBetween(date, now);
+  if (daysAgo === 0) {
+    return time;
+  }
+  if (daysAgo > 0 && daysAgo < 7) {
+    return `${date.toLocaleDateString(undefined, { weekday: "long" })} ${time}`;
+  }
+  const dateLabel = date.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+  return `${dateLabel}, ${time}`;
+}
+
 /**
  * Format a duration as a compact human-readable string.
  * - 0-60s: whole seconds ("47s")

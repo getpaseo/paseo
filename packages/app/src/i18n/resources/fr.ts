@@ -257,6 +257,9 @@ export const fr: TranslationResources = {
     empty: "Commencez à discuter avec cet agent…",
     scrollToBottom: "Faire défiler vers le bas",
     historyLoadFailed: "Impossible de charger l’historique de l’agent",
+    itemTime: {
+      withDuration: "{{time}} · a pris {{duration}}",
+    },
     messageCapped: "Ce message a été tronqué ({{bytes}} octets).",
     permission: {
       rejectedPlan: "Plan refusé",
@@ -2731,6 +2734,18 @@ export const fr: TranslationResources = {
         label: "Historique du terminal",
         description: "Lignes conservées dans le tampon du terminal intégré",
         accessibilityLabel: "Lignes d’historique du terminal",
+      },
+      itemTimes: {
+        title: "Heures des éléments",
+        enabled: {
+          label: "Afficher l'heure des éléments",
+          description:
+            "Affiche l'heure de fin de chaque élément et la durée de son étape, sous l'élément",
+        },
+        assistant: "Réponses",
+        toolCalls: "Appels d'outils",
+        thinking: "Réflexion",
+        user: "Vos messages",
       },
       autoExpandReasoning: {
         label: "Toujours afficher le raisonnement",

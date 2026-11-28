@@ -254,6 +254,9 @@ export const ko: TranslationResources = {
     empty: "이 에이전트와 대화를 시작하세요...",
     scrollToBottom: "맨 아래로 스크롤",
     historyLoadFailed: "에이전트 기록을 로드할 수 없습니다.",
+    itemTime: {
+      withDuration: "{{time}} · {{duration}} 소요",
+    },
     messageCapped: "이 메시지는 길이 제한으로 잘렸습니다({{bytes}}바이트).",
     permission: {
       rejectedPlan: "거부된 계획",
@@ -2683,6 +2686,17 @@ export const ko: TranslationResources = {
         label: "터미널 스크롤백",
         description: "내장 터미널 버퍼에 보관되는 줄 수",
         accessibilityLabel: "터미널 스크롤백 줄 수",
+      },
+      itemTimes: {
+        title: "항목 시간",
+        enabled: {
+          label: "항목 시간 표시",
+          description: "각 항목이 끝난 시각과 해당 단계에 걸린 시간을 항목 아래에 표시합니다",
+        },
+        assistant: "응답",
+        toolCalls: "도구 호출",
+        thinking: "생각",
+        user: "내 메시지",
       },
       autoExpandReasoning: {
         label: "추론 항상 펼치기",

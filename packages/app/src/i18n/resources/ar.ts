@@ -254,6 +254,9 @@ export const ar: TranslationResources = {
     empty: "ابدأ الدردشة مع هذا الوكيل...",
     scrollToBottom: "قم بالتمرير إلى الأسفل",
     historyLoadFailed: "تعذر تحميل سجل الوكيل",
+    itemTime: {
+      withDuration: "{{time}} · استغرق {{duration}}",
+    },
     messageCapped: "تم اقتطاع هذه الرسالة ({{bytes}} بايت).",
     permission: {
       rejectedPlan: "خطة مرفوضة",
@@ -2704,6 +2707,17 @@ export const ar: TranslationResources = {
         label: "التمرير Terminal",
         description: "يتم الاحتفاظ بالخطوط في المخزن المؤقت الطرفي المدمج",
         accessibilityLabel: "خطوط التمرير Terminal",
+      },
+      itemTimes: {
+        title: "أوقات العناصر",
+        enabled: {
+          label: "إظهار أوقات العناصر",
+          description: "عرض وقت انتهاء كل عنصر والمدة التي استغرقتها خطوته، أسفل العنصر",
+        },
+        assistant: "الردود",
+        toolCalls: "استدعاءات الأدوات",
+        thinking: "التفكير",
+        user: "رسائلك",
       },
       autoExpandReasoning: {
         label: "عرض التفكير دائماً",

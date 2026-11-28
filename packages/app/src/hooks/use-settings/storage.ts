@@ -50,6 +50,33 @@ export type SidebarWorkspaceTrailing = "diff" | "timestamp" | "none";
 /** How much of an agent's work the chat shows between the user's message and the reply. */
 export type ChatDisplay = "full" | "collapseToolCalls" | "collapseTurns";
 
+/** The time each chat row finished, and how long its step took, shown under the row. */
+export interface ItemTimesPreferences {
+  enabled: boolean;
+  assistant: boolean;
+  toolCalls: boolean;
+  thinking: boolean;
+  user: boolean;
+}
+
+export const DEFAULT_ITEM_TIMES_PREFERENCES: ItemTimesPreferences = {
+  enabled: true,
+  assistant: true,
+  toolCalls: true,
+  thinking: true,
+  user: false,
+};
+
+const ItemTimesPreferencesSchema = z
+  .object({
+    enabled: z.boolean().catch(DEFAULT_ITEM_TIMES_PREFERENCES.enabled),
+    assistant: z.boolean().catch(DEFAULT_ITEM_TIMES_PREFERENCES.assistant),
+    toolCalls: z.boolean().catch(DEFAULT_ITEM_TIMES_PREFERENCES.toolCalls),
+    thinking: z.boolean().catch(DEFAULT_ITEM_TIMES_PREFERENCES.thinking),
+    user: z.boolean().catch(DEFAULT_ITEM_TIMES_PREFERENCES.user),
+  })
+  .catch(DEFAULT_ITEM_TIMES_PREFERENCES);
+
 const ThemePreferenceSchema = z.enum([
   ...THEME_OPTIONS.map((option) => option.name),
   PLUGIN_THEME_PREFERENCE,
@@ -115,6 +142,7 @@ export interface AppSettings {
   autoExpandReasoning: boolean;
   chatDisplay: ChatDisplay;
   chatOutlineEnabled: boolean;
+  itemTimes: ItemTimesPreferences;
   vimKeybindings: boolean;
   sendShortcut: SendShortcut;
   filePanelAssociations: Record<string, string>;
@@ -174,6 +202,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   autoExpandReasoning: false,
   chatDisplay: "collapseTurns",
   chatOutlineEnabled: true,
+  itemTimes: DEFAULT_ITEM_TIMES_PREFERENCES,
   vimKeybindings: false,
   sendShortcut: "enter",
   filePanelAssociations: {},
@@ -283,6 +312,9 @@ const StoredAppSettingsSchema = z
     // COMPAT(compactToolCalls): migrated in v0.1.105, remove after 2027-01-12.
     compactToolCalls: z.boolean().optional().catch(undefined),
     chatOutlineEnabled: z.boolean().catch(true),
+    itemTimes: ItemTimesPreferencesSchema.optional().transform(
+      (value) => value ?? DEFAULT_ITEM_TIMES_PREFERENCES,
+    ),
     vimKeybindings: z.boolean().catch(false),
     sendShortcut: z.enum(["enter", "mod-enter"]).catch("enter"),
     filePanelAssociations: z.record(z.string(), z.string()).catch({}),

@@ -256,6 +256,9 @@ export const es: TranslationResources = {
     empty: "Comience a chatear con este agente...",
     scrollToBottom: "Desplazarse hacia abajo",
     historyLoadFailed: "No se pudo cargar el historial del agente",
+    itemTime: {
+      withDuration: "{{time}} · tardó {{duration}}",
+    },
     messageCapped: "Este mensaje fue truncado ({{bytes}} bytes).",
     permission: {
       rejectedPlan: "Plan rechazado",
@@ -2732,6 +2735,18 @@ export const es: TranslationResources = {
         label: "Historial de terminal",
         description: "Líneas mantenidas en el búfer de terminal incorporado",
         accessibilityLabel: "Líneas del historial de terminal",
+      },
+      itemTimes: {
+        title: "Tiempos de los elementos",
+        enabled: {
+          label: "Mostrar tiempos de los elementos",
+          description:
+            "Muestra cuándo terminó cada elemento y cuánto tardó su paso, debajo del elemento",
+        },
+        assistant: "Respuestas",
+        toolCalls: "Llamadas a herramientas",
+        thinking: "Razonamiento",
+        user: "Tus mensajes",
       },
       autoExpandReasoning: {
         label: "Siempre expandir razonamiento",

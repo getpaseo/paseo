@@ -252,6 +252,9 @@ export const en = {
     empty: "Start chatting with this agent...",
     scrollToBottom: "Scroll to bottom",
     historyLoadFailed: "Couldn't load agent history",
+    itemTime: {
+      withDuration: "{{time}} · took {{duration}}",
+    },
     messageCapped: "This message was capped ({{bytes}} bytes).",
     permission: {
       rejectedPlan: "Rejected plan",
@@ -2802,6 +2805,17 @@ export const en = {
         label: "Terminal scrollback",
         description: "Lines kept in the built-in terminal buffer",
         accessibilityLabel: "Terminal scrollback lines",
+      },
+      itemTimes: {
+        title: "Item times",
+        enabled: {
+          label: "Show item times",
+          description: "Show when each item finished and how long its step took, under the item",
+        },
+        assistant: "Replies",
+        toolCalls: "Tool calls",
+        thinking: "Thinking",
+        user: "Your messages",
       },
       autoExpandReasoning: {
         label: "Always expand reasoning",

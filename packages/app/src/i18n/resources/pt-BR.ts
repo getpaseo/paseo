@@ -255,6 +255,9 @@ export const ptBR: TranslationResources = {
     empty: "Comece a conversar com este agente...",
     scrollToBottom: "Rolar para o fim",
     historyLoadFailed: "Não foi possível carregar o histórico do agente",
+    itemTime: {
+      withDuration: "{{time}} · levou {{duration}}",
+    },
     messageCapped: "Esta mensagem foi truncada ({{bytes}} bytes).",
     permission: {
       rejectedPlan: "Plano rejeitado",
@@ -2714,6 +2717,18 @@ export const ptBR: TranslationResources = {
         label: "Scrollback do terminal",
         description: "Linhas mantidas no buffer do terminal integrado",
         accessibilityLabel: "Linhas do scrollback do terminal",
+      },
+      itemTimes: {
+        title: "Horários dos itens",
+        enabled: {
+          label: "Mostrar horários dos itens",
+          description:
+            "Mostra quando cada item terminou e quanto tempo levou sua etapa, abaixo do item",
+        },
+        assistant: "Respostas",
+        toolCalls: "Chamadas de ferramentas",
+        thinking: "Raciocínio",
+        user: "Suas mensagens",
       },
       autoExpandReasoning: {
         label: "Sempre expandir raciocínio",

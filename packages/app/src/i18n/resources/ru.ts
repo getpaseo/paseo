@@ -256,6 +256,9 @@ export const ru: TranslationResources = {
     empty: "Начните общаться с этим агентом...",
     scrollToBottom: "Прокрутить вниз",
     historyLoadFailed: "Не удалось загрузить историю агента",
+    itemTime: {
+      withDuration: "{{time}} · заняло {{duration}}",
+    },
     messageCapped: "Это сообщение было обрезано ({{bytes}} байт).",
     permission: {
       rejectedPlan: "Отклонённый план",
@@ -2717,6 +2720,18 @@ export const ru: TranslationResources = {
         label: "Буфер прокрутки терминала",
         description: "Количество строк, сохраняемых во встроенном буфере терминала",
         accessibilityLabel: "Количество строк в буфере прокрутки терминала",
+      },
+      itemTimes: {
+        title: "Время элементов",
+        enabled: {
+          label: "Показывать время элементов",
+          description:
+            "Показывает, когда завершился каждый элемент и сколько занял его шаг, под элементом",
+        },
+        assistant: "Ответы",
+        toolCalls: "Вызовы инструментов",
+        thinking: "Размышления",
+        user: "Ваши сообщения",
       },
       autoExpandReasoning: {
         label: "Всегда разворачивать размышления",
