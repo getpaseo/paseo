@@ -864,6 +864,26 @@ function splitClaudeToolResultImages(content: unknown): {
   return { images, text };
 }
 
+function normalizeClaudeAdvisorToolResultBlock(block: ClaudeContentChunk): ClaudeContentChunk {
+  if (block.type !== "advisor_tool_result") {
+    return block;
+  }
+  const record = toObjectRecord(block.content);
+  if (!record) {
+    return block;
+  }
+  if (record.type === "advisor_redacted_result") {
+    return { ...block, content: "" };
+  }
+  if (record.type === "advisor_result" && typeof record.text === "string") {
+    return { ...block, content: record.text };
+  }
+  if (record.type === "advisor_tool_result_error") {
+    return { ...block, is_error: true };
+  }
+  return block;
+}
+
 function normalizeClaudeTranscriptText(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -6402,6 +6422,7 @@ class ClaudeAgentSession implements AgentSession {
       case "code_execution_tool_result":
       case "bash_code_execution_tool_result":
       case "text_editor_code_execution_tool_result":
+      case "advisor_tool_result":
         await this.handleToolResult(block, context.items);
         break;
       default:
@@ -6461,18 +6482,20 @@ class ClaudeAgentSession implements AgentSession {
         ? block.tool_use_id
         : (entry?.id ?? null);
 
+    const normalizedBlock = normalizeClaudeAdvisorToolResultBlock(block);
+
     // Pull image blocks out of the result so base64 never reaches the tool output, and render each
     // one as an assistant_message markdown image after the tool_call (matching how Codex emits).
-    const { images, text } = splitClaudeToolResultImages(block.content);
-    const output = this.buildToolOutput(text, block, entry);
+    const { images, text } = splitClaudeToolResultImages(normalizedBlock.content);
+    const output = this.buildToolOutput(text, normalizedBlock, entry);
 
-    const settledToolCall = block.is_error
+    const settledToolCall = normalizedBlock.is_error
       ? mapClaudeFailedToolCall({
           name: toolName,
           callId,
           input: entry?.input ?? null,
           output: output ?? null,
-          error: { ...block, content: text },
+          error: { ...normalizedBlock, content: text },
         })
       : mapClaudeCompletedToolCall({
           name: toolName,
