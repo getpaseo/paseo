@@ -192,7 +192,8 @@ function curateProjectedActivityEntries(
         entries.push(activityEntry(`[Error] ${item.message}`));
         break;
       case "compaction":
-        entries.push(activityEntry("[Compacted]"));
+        // A compaction opens a marker when it starts and closes it when it ends.
+        if (item.status === "completed") entries.push(activityEntry("[Compacted]"));
         break;
     }
   }

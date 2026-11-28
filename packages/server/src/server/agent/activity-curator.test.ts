@@ -373,6 +373,36 @@ second line'`,
     expect(result).toContain("[Compacted]");
   });
 
+  it("prints one [Compacted] marker per compaction instead of one per status", () => {
+    // The log from #10046: a loading item when it starts, a completed one when it ends.
+    const timeline: AgentTimelineItem[] = [
+      { type: "user_message", text: "/compact" },
+      { type: "compaction", status: "loading" },
+      { type: "user_message", text: "Reply exactly: SECOND_AFTER" },
+      { type: "compaction", status: "completed", trigger: "manual" },
+      { type: "assistant_message", text: "SECOND_AFTER" },
+    ];
+
+    const result = curateAgentActivity(timeline);
+
+    expect(result.split("\n").filter((line) => line === "[Compacted]")).toHaveLength(1);
+    expect(result.split("\n")).toEqual([
+      "[User] /compact",
+      "[User] Reply exactly: SECOND_AFTER",
+      "[Compacted]",
+      "SECOND_AFTER",
+    ]);
+  });
+
+  it("leaves out a compaction that never finished", () => {
+    const timeline: AgentTimelineItem[] = [
+      { type: "user_message", text: "/compact" },
+      { type: "compaction", status: "loading" },
+    ];
+
+    expect(curateAgentActivity(timeline)).toBe("[User] /compact");
+  });
+
   it("truncates to maxItems", () => {
     const timeline: AgentTimelineItem[] = [
       { type: "user_message", text: "Message 1" },
