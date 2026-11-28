@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -210,7 +210,7 @@ describe("resolveAgentPrompt uploaded images", () => {
   });
 
   async function makeHome() {
-    const home = await mkdtemp(join(tmpdir(), "paseo-prompt-img-"));
+    const home = await realpath(await mkdtemp(join(tmpdir(), "paseo-prompt-img-")));
     tempDirs.push(home);
     await mkdir(join(home, "uploads", "upload_1"), { recursive: true });
     return home;
